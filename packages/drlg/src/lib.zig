@@ -173,14 +173,52 @@ pub fn generate(
 }
 
 /// One room's world rectangle + type, extracted from a generated RoomEx.
-pub const RoomRect = struct { x: i32, y: i32, w: i32, h: i32, n_type: i32, n_preset_type: i32 };
+/// `picked_file` = the room's DS1 selector (D2DrlgPresetRoomStrc.nPickedFile for a
+/// preset room, D2DrlgRoomExDataMazeStrc.nSubThemePicked for an outdoor/maze room,
+/// -1 if the room carries neither). x/y are WORLD TILES, w/h TILES.
+pub const RoomRect = struct { x: i32, y: i32, w: i32, h: i32, n_type: i32, n_preset_type: i32, picked_file: i32 };
 
 /// One level's id + its generated rooms (owned by the ActResult's allocator).
 /// `placed` = the level was positioned by the act placement graph (part of the
 /// connected surface overworld); false = it fell back to the Depend offset chain
 /// (an interior: cave/crypt/tomb, entered via warp, with a local origin).
 /// `drlg_type` mirrors Levels.txt DrlgType (1 maze, 2 preset, 3 wilderness).
-pub const LevelRooms = struct { level_id: i32, drlg_type: i32, placed: bool, rooms: []RoomRect };
+/// `origin_x/y` + `width/height` are the level's generated WorldPosition/WorldSize
+/// in TILES (multiply by 5 for the subtile frame DBM reports; room x/y are world
+/// tiles, so a room's level-local subtile is (room.x - origin_x) * 5).
+pub const LevelRooms = struct {
+    level_id: i32,
+    drlg_type: i32,
+    placed: bool,
+    origin_x: i32,
+    origin_y: i32,
+    width: i32,
+    height: i32,
+    rooms: []RoomRect,
+};
+
+/// A room's DS1/theme selector, for the DBM roomNo/subNo field: a preset room
+/// (nPresetType==2) reports its picked DS1 file variant; an outdoor/maze room
+/// (nPresetType==1) reports its picked subtheme variant; -1 otherwise.
+pub fn roomPickedFile(p: *abi.D2RoomExStrc) i32 {
+    const data = p.pRoomExData orelse return -1;
+    if (p.nPresetType == 2) {
+        const rd: *abi.D2DrlgPresetRoomStrc = @ptrCast(@alignCast(data));
+        return rd.nPickedFile;
+    }
+    if (p.nPresetType == 1) {
+        const rd: *abi.D2DrlgRoomExDataMazeStrc = @ptrCast(@alignCast(data));
+        return rd.nSubThemePicked;
+    }
+    return -1;
+}
+
+/// Levels.txt LevelName (the in-game display name) for a level id, or "" if unknown.
+/// Borrows the Ctx's table storage — valid until the Ctx is destroyed.
+pub fn levelDisplayName(ctx: *Ctx, level_id: i32) []const u8 {
+    const lv = ctx.act.level(level_id) orelse return "";
+    return lv.level_name;
+}
 
 /// The whole-act result: every level in the act with its rooms, positioned in a
 /// shared world-coord space via the real inter-level placement (act.coords).
@@ -267,14 +305,21 @@ pub fn generateAct(
                 .h = p.sCoords.WorldSize.y,
                 .n_type = p.nType,
                 .n_preset_type = p.nPresetType,
+                .picked_file = roomPickedFile(p),
             });
         }
         const placed = act.positions.get(lid) != null;
         const dtype: i32 = if (ctx.act.level(lid)) |lv| @intFromEnum(lv.drlg_type) else 0;
+        const lpos = pLevel.sCoordinatesAndSize.WorldPosition;
+        const lsize = pLevel.sCoordinatesAndSize.WorldSize;
         try out.append(out_alloc, .{
             .level_id = lid,
             .drlg_type = dtype,
             .placed = placed,
+            .origin_x = lpos.x,
+            .origin_y = lpos.y,
+            .width = lsize.x,
+            .height = lsize.y,
             .rooms = try rooms.toOwnedSlice(out_alloc),
         });
     }

@@ -26,6 +26,7 @@ typedef struct D2DrlgRoom {
     int32_t h;
     int32_t n_type;         /* RoomEx.nType */
     int32_t n_preset_type;  /* RoomEx.nPresetType */
+    int32_t picked_file;    /* preset nPickedFile / outdoor nSubThemePicked; -1 if neither */
 } D2DrlgRoom;
 
 /* Loads the game tables. Returns NULL on failure. */
@@ -64,6 +65,20 @@ int32_t d2drlg_act_level_room_count(D2DrlgAct *act, int32_t level_index);
  * FULL room count (>=0, may exceed `cap` => truncated) or a negative error code.
  */
 int32_t d2drlg_act_rooms(D2DrlgAct *act, int32_t level_index, D2DrlgRoom *out, int32_t cap);
+
+/*
+ * The level's generated world ORIGIN / SIZE in TILES (multiply by 5 for the subtile
+ * frame DBM reports). Write the pair and return 0, or a negative error (outputs 0).
+ */
+int32_t d2drlg_act_level_origin(D2DrlgAct *act, int32_t level_index, int32_t *ox, int32_t *oy);
+int32_t d2drlg_act_level_size(D2DrlgAct *act, int32_t level_index, int32_t *w, int32_t *h);
+
+/*
+ * Write a level's Levels.txt LevelName (in-game display name) into `buf`, NUL-terminated
+ * if it fits. Returns the byte length (>=0; may exceed `cap` => truncated), or negative on
+ * error. Length 0 for an unknown id.
+ */
+int32_t d2drlg_level_name(D2DrlgCtx *ctx, int32_t level_id, char *buf, int32_t cap);
 
 /*
  * Generate a level's composited subtile-collision grid (one byte per subtile:

@@ -5,25 +5,33 @@ const { readFile } = require('node:fs/promises') as typeof import('node:fs/promi
 const { join } = require('node:path') as typeof import('node:path');
 
 const PAGE = 65536;
-const ROOM = 24; // sizeof(D2DrlgRoom): 6 x int32
+const ROOM = 28; // sizeof(D2DrlgRoom): 7 x int32
 const SHRINE = 12; // sizeof(D2DrlgShrine): 3 x int32
 const PRESET = 16; // sizeof(D2DrlgPreset): 4 x int32
 
-export interface D2Room {
+/** One room in the low-level `generateAct` view: world TILE rect + engine type fields. */
+export interface D2ActRoom {
   x: number; y: number; w: number; h: number;
   /** RoomEx.nType */
   nType: number;
-  /** RoomEx.nPresetType */
+  /** RoomEx.nPresetType (1 outdoor/maze, 2 preset) */
   nPresetType: number;
+  /** preset nPickedFile / outdoor nSubThemePicked; -1 if neither */
+  pickedFile: number;
 }
-export interface D2Level {
+/** One level in the low-level `generateAct` view (world TILE coords). */
+export interface D2ActLevel {
   /** Levels.txt id */
   id: number;
   /** 1 maze, 2 preset, 3 wilderness */
   drlgType: number;
   /** placed on the surface by the act placement graph (vs. interior) */
   placed: boolean;
-  rooms: D2Room[];
+  /** generated world origin in TILES [x, y] */
+  origin: [number, number];
+  /** generated world size in TILES [w, h] */
+  size: [number, number];
+  rooms: D2ActRoom[];
 }
 export interface D2Act {
   seed: number;
@@ -31,6 +39,49 @@ export interface D2Act {
   difficulty: number;
   /** 0-based act number (0 = Act I) */
   act: number;
+  levels: D2ActLevel[];
+}
+
+/** One room in the DeadlyBossMods map shape: level-local SUBTILE rect + DS1 pick. */
+export interface D2Room {
+  /** level-local subtile X */
+  x: number;
+  /** level-local subtile Y */
+  y: number;
+  /** subtile width (tile width * 5) */
+  sizeX: number;
+  /** subtile height (tile height * 5) */
+  sizeY: number;
+  /** the room's DS1 pick (preset nPickedFile / outdoor nSubThemePicked) */
+  roomNo: number;
+  /** same source as roomNo (DBM reports them equal) */
+  subNo: number;
+}
+/** One level in the DeadlyBossMods map shape. */
+export interface D2Level {
+  /** Levels.txt id */
+  levelNo: number;
+  /** DBM canonical level name (TitleCase display name, no spaces) */
+  name: string;
+  /** Levels.txt LevelName (the in-game display name) */
+  displayName: string;
+  /** 1-based act number (Act I = 1) */
+  act: number;
+  /** world origin in SUBTILES [x, y] (tile origin * 5) */
+  origin: [number, number];
+  /** world size in SUBTILES [w, h] (tile size * 5) */
+  size: [number, number];
+  rooms: D2Room[];
+  /** preset units (objects / npc markers), DBM shape */
+  presets: D2Preset[];
+  /** adjacent levels (filled by a later phase) */
+  adjacents: number[];
+  /** navigation tells (filled by a later phase) */
+  tells: unknown[];
+}
+/** A whole act's map in the DeadlyBossMods response shape. */
+export interface D2Map {
+  seed: number;
   levels: D2Level[];
 }
 export interface D2Preset {
@@ -74,6 +125,9 @@ interface Exports {
   d2drlg_act_level_placed(act: number, i: number): number;
   d2drlg_act_level_room_count(act: number, i: number): number;
   d2drlg_act_rooms(act: number, i: number, out: number, cap: number): number;
+  d2drlg_act_level_origin(act: number, i: number, ox: number, oy: number): number;
+  d2drlg_act_level_size(act: number, i: number, w: number, h: number): number;
+  d2drlg_level_name(ctx: number, levelId: number, buf: number, cap: number): number;
   d2drlg_level_shrines(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_level_presets(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_object_name(txtFileNo: number, buf: number, cap: number): number;
@@ -84,6 +138,27 @@ interface Exports {
 function scratch(memory: WebAssembly.Memory, bytes: number): number {
   const prev = memory.grow(Math.ceil((bytes || 1) / PAGE) || 1);
   return prev * PAGE;
+}
+
+// DBM's `name` field is the canonical level enum name: the display name with each
+// word TitleCased and joined (spaces removed). A few ids keep their classic short
+// enum name; those are overridden explicitly.
+const DBM_NAME_OVERRIDE: Record<number, string> = { 1: 'RogueCamp', 39: 'CowLevel' };
+function dbmLevelName(levelNo: number, displayName: string): string {
+  const o = DBM_NAME_OVERRIDE[levelNo];
+  if (o) return o;
+  return displayName
+    .split(' ')
+    .filter((w) => w.length > 0)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join('');
+}
+
+// DBM's displayName for a few ids diverges from Levels.txt LevelName (an internal
+// string). Override to the canonical in-game name DBM reports.
+const DBM_DISPLAY_OVERRIDE: Record<number, string> = { 39: 'The Secret Cow Level' };
+function dbmDisplayName(levelNo: number, raw: string): string {
+  return DBM_DISPLAY_OVERRIDE[levelNo] ?? raw;
 }
 
 async function open(): Promise<Drlg> {
@@ -105,26 +180,33 @@ class Drlg {
     const act = ex.d2drlg_gen_act(this.#ctx, seed >>> 0, difficulty, actNo);
     if (!act) throw new Error('d2drlg: gen_act failed');
     try {
-      const levels: D2Level[] = [];
+      const levels: D2ActLevel[] = [];
       const n = ex.d2drlg_act_level_count(act);
       for (let i = 0; i < n; i++) {
         const roomCount = ex.d2drlg_act_level_room_count(act, i);
-        const base = scratch(ex.memory, roomCount * ROOM);
+        const OUT = 16;
+        const base = scratch(ex.memory, roomCount * ROOM + OUT);
+        const outp = base + roomCount * ROOM;
         ex.d2drlg_act_rooms(act, i, base, roomCount);
+        ex.d2drlg_act_level_origin(act, i, outp, outp + 4);
+        ex.d2drlg_act_level_size(act, i, outp + 8, outp + 12);
         const dv = new DataView(ex.memory.buffer);
-        const rooms: D2Room[] = [];
+        const rooms: D2ActRoom[] = [];
         for (let r = 0; r < roomCount; r++) {
           const b = base + r * ROOM;
           rooms.push({
             x: dv.getInt32(b, true), y: dv.getInt32(b + 4, true),
             w: dv.getInt32(b + 8, true), h: dv.getInt32(b + 12, true),
             nType: dv.getInt32(b + 16, true), nPresetType: dv.getInt32(b + 20, true),
+            pickedFile: dv.getInt32(b + 24, true),
           });
         }
         levels.push({
           id: ex.d2drlg_act_level_id(act, i),
           drlgType: ex.d2drlg_act_level_drlg_type(act, i),
           placed: ex.d2drlg_act_level_placed(act, i) === 1,
+          origin: [dv.getInt32(outp, true), dv.getInt32(outp + 4, true)],
+          size: [dv.getInt32(outp + 8, true), dv.getInt32(outp + 12, true)],
           rooms,
         });
       }
@@ -132,6 +214,46 @@ class Drlg {
     } finally {
       ex.d2drlg_act_free(act);
     }
+  }
+
+  #levelName(levelId: number): string {
+    const ex = this.#ex;
+    const CAP = 128;
+    const buf = scratch(ex.memory, CAP);
+    const len = ex.d2drlg_level_name(this.#ctx, levelId, buf, CAP);
+    if (len <= 0) return '';
+    const n = Math.min(len, CAP);
+    return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(ex.memory.buffer, buf, n));
+  }
+
+  render(seed: number, actNo = 0, difficulty = 0): D2Map {
+    const s = seed >>> 0;
+    const act = this.generateAct(s, difficulty, actNo);
+    const levels: D2Level[] = act.levels.map((lv) => {
+      const [ox, oy] = lv.origin; // tiles
+      const displayName = dbmDisplayName(lv.id, this.#levelName(lv.id));
+      const rooms: D2Room[] = lv.rooms.map((r) => ({
+        x: (r.x - ox) * 5,
+        y: (r.y - oy) * 5,
+        sizeX: r.w * 5,
+        sizeY: r.h * 5,
+        roomNo: r.pickedFile,
+        subNo: r.pickedFile,
+      }));
+      return {
+        levelNo: lv.id,
+        name: dbmLevelName(lv.id, displayName),
+        displayName,
+        act: actNo + 1,
+        origin: [ox * 5, oy * 5],
+        size: [lv.size[0] * 5, lv.size[1] * 5],
+        rooms,
+        presets: this.presets(s, lv.id, difficulty),
+        adjacents: [],
+        tells: [],
+      };
+    });
+    return { seed: s, levels };
   }
 
   shrines(seed: number, levelId: number, difficulty = 0, actNo = 0): D2Shrine[] {
@@ -212,6 +334,9 @@ const inst = (): Promise<Drlg> => (_p ??= open());
 async function generateAct(seed: number, difficulty = 0, actNo = 0): Promise<D2Act> {
   return (await inst()).generateAct(seed, difficulty, actNo);
 }
+async function render(seed: number, actNo = 0, difficulty = 0): Promise<D2Map> {
+  return (await inst()).render(seed, actNo, difficulty);
+}
 async function shrines(seed: number, levelId: number, difficulty = 0, actNo = 0): Promise<D2Shrine[]> {
   return (await inst()).shrines(seed, levelId, difficulty, actNo);
 }
@@ -222,5 +347,5 @@ async function abiVersion(): Promise<number> {
   return (await inst()).abiVersion();
 }
 
-module.exports = { generateAct, shrines, presets, abiVersion, open, Drlg };
+module.exports = { generateAct, render, shrines, presets, abiVersion, open, Drlg };
 module.exports.default = generateAct;
