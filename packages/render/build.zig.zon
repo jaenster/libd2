@@ -1,0 +1,21 @@
+.{
+    .name = .d2_render,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xd06d3191461e1190,
+
+    // The automap + DT1-tile-art layer extracted out of drlg. It is a pure
+    // post-generation consumer: it drives d2-drlg's generation API and turns the
+    // output into automap sprite cells + real DT1 pixel tiles. Parsers come from
+    // d2-formats.
+    .dependencies = .{
+        .d2_drlg = .{ .path = "../drlg" },
+        .d2_formats = .{ .path = "../formats" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

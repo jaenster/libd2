@@ -10,7 +10,6 @@ test {
     _ = @import("d2-formats").dt1pix;
     _ = @import("d2-fog").memory;
     _ = @import("collision.zig");
-    _ = @import("render.zig");
     _ = @import("oracle.zig");
     _ = @import("verify.zig");
     _ = @import("lib.zig");
@@ -18,7 +17,6 @@ test {
     _ = @import("serial.zig");
     _ = @import("act.zig");
     _ = @import("d2-formats").dc6;
-    _ = @import("automap.zig");
     _ = @import("objects.zig");
 
     // DRLG closure — leaf support (src/drlg/*)

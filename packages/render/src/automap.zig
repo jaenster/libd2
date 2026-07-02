@@ -3,10 +3,12 @@
 //! level type, tile orientation, style/index and sub-index range all match, then
 //! returns one of that row's Cel columns (the DC6 frame number). RE-confirmed.
 //!
-//! Data (committed): src/excel/AutoMap.txt + src/excel/LvlTypes.txt.
+//! Data: AutoMap.txt + LvlTypes.txt, embedded in d2-drlg's excel tree and reached
+//! here via `d2-drlg`'s `gen` surface (single source of truth — no duplication).
 
 const std = @import("std");
-const txt = @import("txt.zig");
+const d2drlg = @import("d2-drlg");
+const txt = d2drlg.gen.txt;
 
 const WILDCARD: i32 = 0xff;
 
@@ -30,9 +32,9 @@ pub const AutomapTable = struct {
     resolved: usize,
 
     pub fn load(gpa: std.mem.Allocator) !AutomapTable {
-        var lvl_types = try txt.Table.parse(gpa, @embedFile("excel/LvlTypes.txt"));
+        var lvl_types = try txt.Table.parse(gpa, d2drlg.gen.lvltypes_txt);
         defer lvl_types.deinit();
-        var amap = try txt.Table.parse(gpa, @embedFile("excel/AutoMap.txt"));
+        var amap = try txt.Table.parse(gpa, d2drlg.gen.automap_txt);
         defer amap.deinit();
 
         var list: std.ArrayListUnmanaged(Row) = .empty;
