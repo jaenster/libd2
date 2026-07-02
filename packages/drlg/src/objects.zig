@@ -13,15 +13,35 @@ const txt = @import("txt.zig");
 /// HasCollision0==0 (shrines that only block on interact, décor, etc.) never block.
 pub const Coll = struct { has: bool, sx: i32, sy: i32 };
 
+/// One object row's dynamic-light emitter. Faithful to 1.14d
+/// OBJECT_SetLightRGB (@0x4bc580) -> AllocLightMap (@0x474160): the light
+/// COLOR is Objects.txt Red/Green/Blue verbatim; the light DIAMETER is the
+/// per-mode `Lit` column, and the engine sets radius = (Lit>>1) subtiles,
+/// clamped to a max diameter of 0x12 (=> max radius 18 subtiles). We take the
+/// brightest lit mode (max Lit0..7) as the object's "when lit" emit value; a
+/// row with all Lit==0 does not emit (`radius`==0).
+pub const Light = struct { r: u8, g: u8, b: u8, radius: i32 };
+
 pub const Table = struct {
     /// cel[objectRowIndex] = AutoMap value (0 = no marker).
     cel: []i32,
     coll: []Coll,
+    /// light[objectRowIndex] = dynamic-light emitter (radius==0 => none).
+    light: []Light,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *Table) void {
         self.allocator.free(self.cel);
         self.allocator.free(self.coll);
+        self.allocator.free(self.light);
+    }
+
+    /// Dynamic-light emitter for an objects.txt row, or null if the row emits
+    /// no light (all Lit modes zero) or the id is out of range.
+    pub fn emitter(self: *const Table, id: i32) ?Light {
+        if (id < 0 or id >= self.light.len) return null;
+        const l = self.light[@intCast(id)];
+        return if (l.radius > 0) l else null;
     }
 
     /// AutoMap cel for a DS1 object id (row index), or -1 when the object has no
@@ -49,12 +69,28 @@ pub fn load(gpa: std.mem.Allocator) !Table {
     const cel = try gpa.alloc(i32, n);
     errdefer gpa.free(cel);
     const coll = try gpa.alloc(Coll, n);
+    errdefer gpa.free(coll);
+    const light = try gpa.alloc(Light, n);
     var i: usize = 0;
     while (i < n) : (i += 1) {
         cel[i] = @intCast(t.int(i, "AutoMap"));
         coll[i] = .{ .has = t.int(i, "HasCollision0") != 0, .sx = @intCast(t.int(i, "SizeX")), .sy = @intCast(t.int(i, "SizeY")) };
+        // Brightest lit mode -> emit diameter; engine radius = (Lit>>1) clamped
+        // to 18 subtiles. Color is Red/Green/Blue verbatim.
+        var max_lit: i64 = 0;
+        inline for (.{ "Lit0", "Lit1", "Lit2", "Lit3", "Lit4", "Lit5", "Lit6", "Lit7" }) |col| {
+            const v = t.int(i, col);
+            if (v > max_lit) max_lit = v;
+        }
+        const radius: i32 = @intCast(@min(@divTrunc(max_lit, 2), 18));
+        light[i] = .{
+            .r = @intCast(std.math.clamp(t.int(i, "Red"), 0, 255)),
+            .g = @intCast(std.math.clamp(t.int(i, "Green"), 0, 255)),
+            .b = @intCast(std.math.clamp(t.int(i, "Blue"), 0, 255)),
+            .radius = radius,
+        };
     }
-    return .{ .cel = cel, .coll = coll, .allocator = gpa };
+    return .{ .cel = cel, .coll = coll, .light = light, .allocator = gpa };
 }
 
 const testing = std.testing;

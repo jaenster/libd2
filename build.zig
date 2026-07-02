@@ -10,7 +10,7 @@ const std = @import("std");
 // package's own test suite. It intentionally does not re-wrap the packages — the
 // per-package build.zig files are the source of truth for how each one builds.
 pub fn build(b: *std.Build) void {
-    const packages = [_][]const u8{ "drlg", "items", "sim" };
+    const packages = [_][]const u8{ "formats", "fog", "drlg", "items", "sim" };
 
     const test_step = b.step("test", "Run every package's test suite");
 

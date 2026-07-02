@@ -10,7 +10,7 @@
 const std = @import("std");
 /// Re-exported so the generator (a separate build module) shares this exact dt1
 /// module instance — keeping dt1.Dt1 one type across pack and unpack.
-pub const dt1 = @import("dt1.zig");
+pub const dt1 = @import("d2-formats").dt1;
 const ds1blob = @import("ds1_blob.zig");
 
 pub const MAGIC = ds1blob.MAGIC;

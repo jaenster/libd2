@@ -43,8 +43,8 @@ const DrlgGrid = @import("DrlgGrid.zig");
 const DrlgRoom = @import("DrlgRoom.zig");
 const Border = @import("outdoors/Border.zig");
 const tilegen = @import("tilegen.zig");
-const dt1 = @import("../dt1.zig");
-const ds1 = @import("../ds1.zig");
+const dt1 = @import("d2-formats").dt1;
+const ds1 = @import("d2-formats").ds1;
 const collision = @import("../collision.zig");
 const lib = @import("../lib.zig");
 const dt1blob = @import("../dt1_blob.zig");
@@ -54,7 +54,7 @@ const dpool = @import("pool.zig");
 const dtables = @import("tables.zig");
 const drlgmod = @import("drlg.zig");
 const act_mod = @import("../act.zig");
-const fog = @import("../fog/memory.zig");
+const fog = @import("d2-fog").memory;
 
 const SUBTILES = collision.SUBTILES_PER_TILE;
 

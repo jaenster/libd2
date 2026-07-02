@@ -14,6 +14,12 @@ pub fn build(b: *std.Build) void {
     const opts = b.addOptions();
     opts.addOption(bool, "ds1_disk", false);
 
+    // Sibling packages factored out of drlg: the pure DS1/DT1 parsers and the
+    // Fog::Memory pool allocator. drlg's sources reach them via
+    // `@import("d2-formats")` / `@import("d2-fog")`.
+    const formats = b.dependency("d2_formats", .{ .target = target, .optimize = optimize });
+    const fog = b.dependency("d2_fog", .{ .target = target, .optimize = optimize });
+
     // Consumable library module: the faithful DRLG generator + collision (+ the
     // native render-data API). Consumers depend on this via
     // `.@"d2-drlg" = .{ .path = "../drlg" }` and `dep.module("d2-drlg")`.
@@ -23,6 +29,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     mod.addOptions("build_options", opts);
+    mod.addImport("d2-formats", formats.module("d2-formats"));
+    mod.addImport("d2-fog", fog.module("d2-fog"));
 
     const exe = b.addExecutable(.{
         .name = "d2-drlg",
@@ -33,6 +41,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addOptions("build_options", opts);
+    exe.root_module.addImport("d2-formats", formats.module("d2-formats"));
+    exe.root_module.addImport("d2-fog", fog.module("d2-fog"));
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -49,6 +59,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
     tests.root_module.addOptions("build_options", opts);
+    tests.root_module.addImport("d2-formats", formats.module("d2-formats"));
+    tests.root_module.addImport("d2-fog", fog.module("d2-fog"));
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
