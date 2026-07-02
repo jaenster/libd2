@@ -35,14 +35,19 @@ npm install @jaenster/d2drlg
 ```
 
 ```ts
-import { generateAct } from '@jaenster/d2drlg';
+import { shrines } from '@jaenster/d2drlg';
 
-// Generate Act I from a seed. The wasm loads lazily on first call — no setup.
-const act = await generateAct(305419896, 0 /* normal */, 0 /* Act I */);
-console.log(`${act.levels.length} levels; town has ${act.levels[0].rooms.length} rooms`);
+// Cold Plains (level 3) for seed 1337. The wasm loads lazily on first call — no setup.
+const s = await shrines(1337, 3);
+console.log(`${s.length} shrines/wells:`);
+for (const sh of s) console.log(`  ${sh.isWell ? 'well ' : 'shrine'} at tile (${sh.tileX}, ${sh.tileY})`);
 
-for (const room of act.levels[0].rooms)
-  console.log(`room ${room.w}×${room.h} at (${room.x}, ${room.y})`);
+// 5 shrines/wells:
+//   shrine at tile (995, 1124)
+//   shrine at tile (994, 1114)
+//   shrine at tile (1050, 1098)
+//   well   at tile (1010, 1091)
+//   shrine at tile (1002, 1090)
 ```
 
 Tiny typed shim, ESM + CommonJS, runs natively on modern Node/Bun/Deno. Same
