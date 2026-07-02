@@ -327,6 +327,180 @@ pub fn generateAct(
     return .{ .levels = try out.toOwnedSlice(out_alloc) };
 }
 
+/// One level of a generate-once whole-act result: its rooms/meta (LevelRooms) plus the
+/// per-level fields the DBM-shaped shim pulls (preset units, warp adjacents, and the raw
+/// u16 CollMap composite). Everything is owned by the ActFullResult's allocator and freed
+/// wholesale by deinit — but the C-ABI Act handle keeps them alive in its arena instead.
+pub const LevelFull = struct {
+    meta: LevelRooms,
+    presets: []PresetUnit,
+    adjacents: []LevelAdjacent,
+    coll_w: i32,
+    coll_h: i32,
+    coll_cells: []u16, // raw Colbit per subtile, row-major (coll_w*coll_h); empty if none
+};
+
+pub const ActFullResult = struct {
+    levels: []LevelFull,
+
+    pub fn deinit(self: *ActFullResult, alloc: std.mem.Allocator) void {
+        for (self.levels) |l| {
+            alloc.free(l.meta.rooms);
+            alloc.free(l.presets);
+            alloc.free(l.adjacents);
+            if (l.coll_cells.len != 0) alloc.free(l.coll_cells);
+        }
+        alloc.free(self.levels);
+    }
+};
+
+/// Generate an ENTIRE act ONCE and pull EVERY per-level field the DBM shim needs from
+/// that single generation: rooms/meta, preset units, warp adjacents, and the raw u16
+/// CollMap composite. This is the memory/time win behind the C-ABI Act handle — one fog
+/// pool + one D2DrlgStrc for the whole act, instead of re-generating the act separately
+/// for each of `generateAct` / `generateLevelPresets` / `generateLevelAdjacents` /
+/// `generateActCompositeRaw` per level. The generation (pass1 coords → preset picks →
+/// orths → pass2 InitLevel every level in id order) is byte-identical to those; the
+/// per-level extraction is pure post-generation read (shared `collectLevel*` helpers +
+/// materialize/composite), so output matches the per-seed accessors cell-for-cell.
+/// `act_no` is 0-based (Act I = 0 … Act V = 4). Caller owns the result.
+pub fn generateActFull(
+    ctx: *Ctx,
+    out_alloc: std.mem.Allocator,
+    act_no: i32,
+    seed: u32,
+    diff: Difficulty,
+) !ActFullResult {
+    var pool = fog.PoolManager.init(ctx.gpa);
+    defer pool.deinit();
+    const saved_alloc = dpool.allocator;
+    const saved_tables = dtables.g_lvl_tables;
+    defer {
+        dpool.allocator = saved_alloc;
+        dtables.g_lvl_tables = saved_tables;
+    }
+    dtables.g_lvl_tables = &ctx.lvl;
+    dpool.allocator = pool.allocator();
+    dpool.resetRegistry();
+    ctx.lvl.resetGenCache();
+
+    var act = try act_mod.build(ctx.gpa, &ctx.act, act_no, seed);
+    defer act.deinit(ctx.gpa);
+
+    var pDrlg: abi.D2DrlgStrc = undefined;
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+
+    var ids: std.ArrayListUnmanaged(i32) = .empty;
+    defer ids.deinit(out_alloc);
+    var row: usize = 0;
+    while (row < ctx.act.levelCount()) : (row += 1) {
+        if (ctx.act.levelAtRow(row)) |lv| {
+            if (lv.act == act_no) try ids.append(out_alloc, @intCast(lv.id));
+        }
+    }
+
+    // Pass 1: real world coords BEFORE orths.
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const c = act.coords(&ctx.act, lid);
+        pLevel.sCoordinatesAndSize = .{
+            .WorldPosition = .{ .x = c.x, .y = c.y },
+            .WorldSize = .{ .x = c.w, .y = c.h },
+        };
+    }
+    if (act_no == 0) drlg.applyAct1PresetPicks(&pDrlg, &ctx.act, seed);
+    if (act_no == 1) drlg.applyAct2PresetPicks(&pDrlg, &ctx.act, seed);
+    drlg.buildInterLevelOrths(&pDrlg);
+
+    const idx = dt1Index();
+
+    // Per-level SCRATCH arena for the transient work (DT1/DS1 unpacks, per-room grids,
+    // dedup hashmaps). Only the FINAL slices are duped into `out_alloc` (the persistent
+    // handle arena); the scratch is reset each level so the transient high-water is ONE
+    // level's worth — not all 39 accumulated. This is the memory win: without it, every
+    // transient would live in the never-freeing handle arena until act_free.
+    var scratch = std.heap.ArenaAllocator.init(ctx.gpa);
+    defer scratch.deinit();
+
+    // Pass 2: generate each level once; pull rooms + presets + adjacents + raw collision
+    // from the live rooms before the pool is torn down.
+    var out: std.ArrayListUnmanaged(LevelFull) = .empty;
+    errdefer {
+        for (out.items) |l| {
+            out_alloc.free(l.meta.rooms);
+            out_alloc.free(l.presets);
+            out_alloc.free(l.adjacents);
+            if (l.coll_cells.len != 0) out_alloc.free(l.coll_cells);
+        }
+        out.deinit(out_alloc);
+    }
+    for (ids.items) |lid| {
+        _ = scratch.reset(.free_all);
+        const sa = scratch.allocator();
+
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        drlg.InitLevel(pLevel);
+
+        var rooms: std.ArrayListUnmanaged(RoomRect) = .empty;
+        errdefer rooms.deinit(out_alloc);
+        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+        while (pr) |p| : (pr = p.pRoomExNext) {
+            try rooms.append(out_alloc, .{
+                .x = p.sCoords.WorldPosition.x,
+                .y = p.sCoords.WorldPosition.y,
+                .w = p.sCoords.WorldSize.x,
+                .h = p.sCoords.WorldSize.y,
+                .n_type = p.nType,
+                .n_preset_type = p.nPresetType,
+                .picked_file = roomPickedFile(p),
+            });
+        }
+        const placed = act.positions.get(lid) != null;
+        const dtype: i32 = if (ctx.act.level(lid)) |lv| @intFromEnum(lv.drlg_type) else 0;
+        const lpos = pLevel.sCoordinatesAndSize.WorldPosition;
+        const lsize = pLevel.sCoordinatesAndSize.WorldSize;
+
+        const presets = try out_alloc.dupe(PresetUnit, try collectLevelPresets(sa, pLevel));
+        errdefer out_alloc.free(presets);
+        const adjacents = try out_alloc.dupe(LevelAdjacent, try collectLevelAdjacents(sa, pLevel));
+        errdefer out_alloc.free(adjacents);
+
+        // Raw u16 CollMap composite — identical to generateActCompositeRaw's per-level
+        // output (materializeLevelColl → compositeLevelRaw). All intermediates go in the
+        // scratch arena; only the composited cells are duped into the handle arena.
+        var coll_w: i32 = 0;
+        var coll_h: i32 = 0;
+        var coll_cells: []u16 = &.{};
+        if (try materializeLevelColl(sa, ctx, idx, pLevel, lid)) |lc| {
+            if (try compositeLevelRaw(sa, lc)) |rc| {
+                coll_w = @intCast(rc.w);
+                coll_h = @intCast(rc.h);
+                coll_cells = try out_alloc.dupe(u16, rc.cells);
+            }
+        }
+
+        try out.append(out_alloc, .{
+            .meta = .{
+                .level_id = lid,
+                .drlg_type = dtype,
+                .placed = placed,
+                .origin_x = lpos.x,
+                .origin_y = lpos.y,
+                .width = lsize.x,
+                .height = lsize.y,
+                .rooms = try rooms.toOwnedSlice(out_alloc),
+            },
+            .presets = presets,
+            .adjacents = adjacents,
+            .coll_w = coll_w,
+            .coll_h = coll_h,
+            .coll_cells = coll_cells,
+        });
+    }
+
+    return .{ .levels = try out.toOwnedSlice(out_alloc) };
+}
+
 // ---- collision maps --------------------------------------------------------
 
 /// A rasterized subtile collision grid for one preset DrlgMap, positioned in
@@ -1676,6 +1850,20 @@ pub fn generateLevelPresets(
     if (act_no == 1) drlg.applyAct2PresetPicks(&pDrlg, &ctx.act, seed);
     drlg.buildInterLevelOrths(&pDrlg);
 
+    var result: []PresetUnit = &.{};
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        drlg.InitLevel(pLevel);
+        if (lid == level_id) result = try collectLevelPresets(out_alloc, pLevel);
+    }
+    return result;
+}
+
+/// Collect one already-generated LIVE level's PRESET UNITS in the DBM shape (see
+/// generateLevelPresets for the unit sources + coordinate frame). Pure read of the
+/// live `pLevel` — no generation, no DRLG-pool allocation — so it is shared by the
+/// per-seed accessor and the generate-once whole-act path. Caller owns the slice.
+fn collectLevelPresets(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelStrc) ![]PresetUnit {
     var out: std.ArrayListUnmanaged(PresetUnit) = .empty;
     errdefer out.deinit(out_alloc);
     var seen: std.AutoHashMapUnmanaged(u64, void) = .empty;
@@ -1683,83 +1871,78 @@ pub fn generateLevelPresets(
     var seen_map: std.AutoHashMapUnmanaged(usize, void) = .empty;
     defer seen_map.deinit(out_alloc);
 
-    for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
-        drlg.InitLevel(pLevel);
-        if (lid != level_id) continue;
+    const lvlPos = pLevel.sCoordinatesAndSize.WorldPosition;
+    const ox = lvlPos.x * SUB;
+    const oy = lvlPos.y * SUB;
+    // Level rect in subtiles: units outside it are on the outer border ring (the
+    // engine copies them but they sit past the playable rect); DBM clips them.
+    const bw = pLevel.sCoordinatesAndSize.WorldSize.x * SUB;
+    const bh = pLevel.sCoordinatesAndSize.WorldSize.y * SUB;
 
-        const lvlPos = pLevel.sCoordinatesAndSize.WorldPosition;
-        const ox = lvlPos.x * SUB;
-        const oy = lvlPos.y * SUB;
-        // Level rect in subtiles: units outside it are on the outer border ring (the
-        // engine copies them but they sit past the playable rect); DBM clips them.
-        const bw = pLevel.sCoordinatesAndSize.WorldSize.x * SUB;
-        const bh = pLevel.sCoordinatesAndSize.WorldSize.y * SUB;
+    const Emit = struct {
+        fn add(o_alloc: std.mem.Allocator, list: *std.ArrayListUnmanaged(PresetUnit), sset: *std.AutoHashMapUnmanaged(u64, void), et: i32, cls: i32, lx: i32, ly: i32, w: i32, h: i32) !void {
+            if (lx < 0 or ly < 0 or lx >= w or ly >= h) return; // outside the level rect
+            const k = (@as(u64, @bitCast(@as(i64, et))) << 56) ^
+                (@as(u64, @bitCast(@as(i64, cls))) << 40) ^
+                (@as(u64, @intCast(lx & 0xfffff)) << 20) ^ @as(u64, @intCast(ly & 0xfffff));
+            if ((try sset.getOrPut(o_alloc, k)).found_existing) return;
+            try list.append(o_alloc, .{ .etype = et, .txt_file_no = cls, .x = lx, .y = ly });
+        }
+    };
 
-        const Emit = struct {
-            fn add(o_alloc: std.mem.Allocator, list: *std.ArrayListUnmanaged(PresetUnit), sset: *std.AutoHashMapUnmanaged(u64, void), et: i32, cls: i32, lx: i32, ly: i32, w: i32, h: i32) !void {
-                if (lx < 0 or ly < 0 or lx >= w or ly >= h) return; // outside the level rect
-                const k = (@as(u64, @bitCast(@as(i64, et))) << 56) ^
-                    (@as(u64, @bitCast(@as(i64, cls))) << 40) ^
-                    (@as(u64, @intCast(lx & 0xfffff)) << 20) ^ @as(u64, @intCast(ly & 0xfffff));
-                if ((try sset.getOrPut(o_alloc, k)).found_existing) return;
-                try list.append(o_alloc, .{ .etype = et, .txt_file_no = cls, .x = lx, .y = ly });
+    var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+    while (pr) |p| : (pr = p.pRoomExNext) {
+        const pmap = roomPMap(p) orelse continue;
+        const mapkey = @intFromPtr(pmap);
+        if ((try seen_map.getOrPut(out_alloc, mapkey)).found_existing) continue;
+
+        if (pmap.pPresetUnit != null) {
+            // Engine-populated chain (world coords, copy-filter already applied).
+            var pu: ?*abi.D2PresetUnitStrc = pmap.pPresetUnit;
+            while (pu) |u| : (pu = u.pPresetUnitNext) {
+                const et: i32 = u.eType;
+                if (et != 1 and et != 2) continue;
+                // Monsters report the DBM/oracle preset code (unambiguous SU/MonPlace
+                // numbering carried on the unit); objects keep the Objects.txt row.
+                const code: i32 = if (et == 1 and u.nDbmCode >= 0) u.nDbmCode else u.nClassId;
+                try Emit.add(out_alloc, &out, &seen, et, code, u.nPosX - ox, u.nPosY - oy, bw, bh);
             }
-        };
-
-        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
-        while (pr) |p| : (pr = p.pRoomExNext) {
-            const pmap = roomPMap(p) orelse continue;
-            const mapkey = @intFromPtr(pmap);
-            if ((try seen_map.getOrPut(out_alloc, mapkey)).found_existing) continue;
-
-            if (pmap.pPresetUnit != null) {
-                // Engine-populated chain (world coords, copy-filter already applied).
-                var pu: ?*abi.D2PresetUnitStrc = pmap.pPresetUnit;
-                while (pu) |u| : (pu = u.pPresetUnitNext) {
-                    const et: i32 = u.eType;
-                    if (et != 1 and et != 2) continue;
-                    // Monsters report the DBM/oracle preset code (unambiguous SU/MonPlace
-                    // numbering carried on the unit); objects keep the Objects.txt row.
-                    const code: i32 = if (et == 1 and u.nDbmCode >= 0) u.nDbmCode else u.nClassId;
-                    try Emit.add(out_alloc, &out, &seen, et, code, u.nPosX - ox, u.nPosY - oy, bw, bh);
+        } else {
+            // Gated wilderness map: replay the DS1 objects through the engine's
+            // world transform (CopyPresetUnit: pos + nRealOffset*SUB).
+            const rel = preset.presetDs1Path(pmap) orelse continue;
+            var d = preset.unpackDs1(out_alloc, rel) orelse continue;
+            defer d.deinit();
+            const wox = pmap.nRealOffsetX * SUB;
+            const woy = pmap.nRealOffsetY * SUB;
+            for (d.objects) |o| {
+                var et: i32 = undefined;
+                var classId: i32 = undefined;
+                switch (o.kind) {
+                    1 => {
+                        et = 1;
+                        // DBM/oracle preset code (not the folded classId) for monsters.
+                        classId = presettables.dbmMonsterCode(d.act_id, o.id);
+                    },
+                    2 => {
+                        et = 2;
+                        classId = presettables.objectClassId(d.act_id, o.id);
+                    },
+                    else => continue,
                 }
-            } else {
-                // Gated wilderness map: replay the DS1 objects through the engine's
-                // world transform (CopyPresetUnit: pos + nRealOffset*SUB).
-                const rel = preset.presetDs1Path(pmap) orelse continue;
-                var d = preset.unpackDs1(out_alloc, rel) orelse continue;
-                defer d.deinit();
-                const wox = pmap.nRealOffsetX * SUB;
-                const woy = pmap.nRealOffsetY * SUB;
-                for (d.objects) |o| {
-                    var et: i32 = undefined;
-                    var classId: i32 = undefined;
-                    switch (o.kind) {
-                        1 => {
-                            et = 1;
-                            // DBM/oracle preset code (not the folded classId) for monsters.
-                            classId = presettables.dbmMonsterCode(d.act_id, o.id);
-                        },
-                        2 => {
-                            et = 2;
-                            classId = presettables.objectClassId(d.act_id, o.id);
-                        },
-                        else => continue,
-                    }
-                    if (classId < 0) continue; // recon Preset.cpp:350 — classId < 0 dropped
-                    try Emit.add(out_alloc, &out, &seen, et, classId, o.x + wox - ox, o.y + woy - oy, bw, bh);
-                }
+                if (classId < 0) continue; // recon Preset.cpp:350 — classId < 0 dropped
+                try Emit.add(out_alloc, &out, &seen, et, classId, o.x + wox - ox, o.y + woy - oy, bw, bh);
             }
         }
-
-        // Seeded outdoor shrines/wells (SpawnAct12Shrines) — DBM lists them as presets.
-        var shrines: std.ArrayListUnmanaged(OutdoorShrine) = .empty;
-        defer shrines.deinit(out_alloc);
-        try appendOutdoorShrines(pLevel, &shrines, out_alloc);
-        for (shrines.items) |sh|
-            try Emit.add(out_alloc, &out, &seen, 2, sh.class_id, sh.x - ox, sh.y - oy, bw, bh);
     }
+
+    // Seeded outdoor shrines/wells (SpawnAct12Shrines) — DBM lists them as presets.
+    var shrines: std.ArrayListUnmanaged(OutdoorShrine) = .empty;
+    defer shrines.deinit(out_alloc);
+    try appendOutdoorShrines(pLevel, &shrines, out_alloc);
+    for (shrines.items) |sh|
+        try Emit.add(out_alloc, &out, &seen, 2, sh.class_id, sh.x - ox, sh.y - oy, bw, bh);
+
     return out.toOwnedSlice(out_alloc);
 }
 
@@ -1824,33 +2007,41 @@ pub fn generateLevelAdjacents(
     if (act_no == 1) drlg.applyAct2PresetPicks(&pDrlg, &ctx.act, seed);
     drlg.buildInterLevelOrths(&pDrlg);
 
-    var out: std.ArrayListUnmanaged(LevelAdjacent) = .empty;
-    errdefer out.deinit(out_alloc);
-
+    var result: []LevelAdjacent = &.{};
     for (ids.items) |lid| {
         const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
         drlg.InitLevel(pLevel);
-        if (lid != level_id) continue;
+        if (lid == level_id) result = try collectLevelAdjacents(out_alloc, pLevel);
+    }
+    return result;
+}
 
-        const lvlPos = pLevel.sCoordinatesAndSize.WorldPosition;
-        const ox = lvlPos.x * SUB;
-        const oy = lvlPos.y * SUB;
+/// Collect one already-generated LIVE level's WARP/ADJACENCY BRIDGE TILES in the DBM
+/// shape (see generateLevelAdjacents). Pure read of the live `pLevel` — no generation,
+/// no DRLG-pool allocation — shared by the per-seed accessor and the whole-act path.
+/// Caller owns the slice.
+fn collectLevelAdjacents(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelStrc) ![]LevelAdjacent {
+    var out: std.ArrayListUnmanaged(LevelAdjacent) = .empty;
+    errdefer out.deinit(out_alloc);
 
-        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
-        while (pr) |p| : (pr = p.pRoomExNext) {
-            if (!p.eRoomExFlags.anyWarp()) continue;
-            // Room centre in world subtiles (== DRLGWARP_InitLevelWarpCoordinates), then
-            // rebased to the level-local DBM frame.
-            const cx = (@divTrunc(p.sCoords.WorldSize.x, 2) + p.sCoords.WorldPosition.x) * SUB - ox;
-            const cy = (@divTrunc(p.sCoords.WorldSize.y, 2) + p.sCoords.WorldPosition.y) * SUB - oy;
-            var slot: u3 = 0;
-            while (true) : (slot += 1) {
-                if (p.eRoomExFlags.warpSlot(slot)) {
-                    const dest = DrlgWarp.getWarpDestinationFromArray(pLevel, slot);
-                    if (dest != -1) try out.append(out_alloc, .{ .dest_level_id = dest, .x = cx, .y = cy });
-                }
-                if (slot == 7) break;
+    const lvlPos = pLevel.sCoordinatesAndSize.WorldPosition;
+    const ox = lvlPos.x * SUB;
+    const oy = lvlPos.y * SUB;
+
+    var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+    while (pr) |p| : (pr = p.pRoomExNext) {
+        if (!p.eRoomExFlags.anyWarp()) continue;
+        // Room centre in world subtiles (== DRLGWARP_InitLevelWarpCoordinates), then
+        // rebased to the level-local DBM frame.
+        const cx = (@divTrunc(p.sCoords.WorldSize.x, 2) + p.sCoords.WorldPosition.x) * SUB - ox;
+        const cy = (@divTrunc(p.sCoords.WorldSize.y, 2) + p.sCoords.WorldPosition.y) * SUB - oy;
+        var slot: u3 = 0;
+        while (true) : (slot += 1) {
+            if (p.eRoomExFlags.warpSlot(slot)) {
+                const dest = DrlgWarp.getWarpDestinationFromArray(pLevel, slot);
+                if (dest != -1) try out.append(out_alloc, .{ .dest_level_id = dest, .x = cx, .y = cy });
             }
+            if (slot == 7) break;
         }
     }
     return out.toOwnedSlice(out_alloc);

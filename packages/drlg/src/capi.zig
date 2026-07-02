@@ -30,11 +30,13 @@ pub const Ctx = struct {
     inner: lib.Ctx,
 };
 
-/// Opaque generated-act handle: owns an arena holding the whole ActResult (levels
-/// + their room slices). Freed wholesale by `d2drlg_act_free`.
+/// Opaque generated-act handle: owns an arena holding the whole ActFullResult (every
+/// level's rooms/meta + presets + adjacents + raw CollMap, pulled from ONE act
+/// generation). Freed wholesale by `d2drlg_act_free`. The act-handle accessors read
+/// straight from this — no regeneration — so building a whole DBM map costs one act gen.
 pub const Act = struct {
     arena: std.heap.ArenaAllocator,
-    result: lib.ActResult,
+    result: lib.ActFullResult,
 };
 
 /// Loads the game tables. Returns null on any failure.
@@ -76,7 +78,7 @@ export fn d2drlg_gen_act(ctx: ?*Ctx, seed: u32, difficulty: i32, act_no: i32) ?*
     const act = pa.create(Act) catch return null;
     act.arena = std.heap.ArenaAllocator.init(pa);
     const a = act.arena.allocator();
-    act.result = lib.generateAct(&c.inner, a, act_no, seed, diff) catch {
+    act.result = lib.generateActFull(&c.inner, a, act_no, seed, diff) catch {
         act.arena.deinit();
         pa.destroy(act);
         return null;
@@ -101,14 +103,14 @@ export fn d2drlg_act_level_count(act: ?*Act) i32 {
 export fn d2drlg_act_level_id(act: ?*Act, level_index: i32) i32 {
     const a = act orelse return -1;
     if (level_index < 0 or level_index >= a.result.levels.len) return -1;
-    return a.result.levels[@intCast(level_index)].level_id;
+    return a.result.levels[@intCast(level_index)].meta.level_id;
 }
 
 /// The level's DrlgType (1 maze, 2 preset, 3 wilderness), or -1 if out of range.
 export fn d2drlg_act_level_drlg_type(act: ?*Act, level_index: i32) i32 {
     const a = act orelse return -1;
     if (level_index < 0 or level_index >= a.result.levels.len) return -1;
-    return a.result.levels[@intCast(level_index)].drlg_type;
+    return a.result.levels[@intCast(level_index)].meta.drlg_type;
 }
 
 /// 1 if the level was placed by the act placement graph (surface overworld), 0 if
@@ -116,14 +118,14 @@ export fn d2drlg_act_level_drlg_type(act: ?*Act, level_index: i32) i32 {
 export fn d2drlg_act_level_placed(act: ?*Act, level_index: i32) i32 {
     const a = act orelse return -1;
     if (level_index < 0 or level_index >= a.result.levels.len) return -1;
-    return if (a.result.levels[@intCast(level_index)].placed) 1 else 0;
+    return if (a.result.levels[@intCast(level_index)].meta.placed) 1 else 0;
 }
 
 /// Room count of the level at `level_index`, or -1 if out of range.
 export fn d2drlg_act_level_room_count(act: ?*Act, level_index: i32) i32 {
     const a = act orelse return -1;
     if (level_index < 0 or level_index >= a.result.levels.len) return -1;
-    return @intCast(a.result.levels[@intCast(level_index)].rooms.len);
+    return @intCast(a.result.levels[@intCast(level_index)].meta.rooms.len);
 }
 
 /// Writes up to `cap` rooms of the level at `level_index` into `out`; returns the
@@ -132,7 +134,7 @@ export fn d2drlg_act_rooms(act: ?*Act, level_index: i32, out: [*]D2DrlgRoom, cap
     const a = act orelse return -1;
     if (cap < 0) return -2;
     if (level_index < 0 or level_index >= a.result.levels.len) return -3;
-    const rooms = a.result.levels[@intCast(level_index)].rooms;
+    const rooms = a.result.levels[@intCast(level_index)].meta.rooms;
     const cap_us: usize = @intCast(cap);
     const n = @min(rooms.len, cap_us);
     var i: usize = 0;
@@ -159,7 +161,7 @@ export fn d2drlg_act_level_origin(act: ?*Act, level_index: i32, ox: *i32, oy: *i
     oy.* = 0;
     const a = act orelse return -1;
     if (level_index < 0 or level_index >= a.result.levels.len) return -2;
-    const lr = a.result.levels[@intCast(level_index)];
+    const lr = a.result.levels[@intCast(level_index)].meta;
     ox.* = lr.origin_x;
     oy.* = lr.origin_y;
     return 0;
@@ -172,10 +174,76 @@ export fn d2drlg_act_level_size(act: ?*Act, level_index: i32, w: *i32, h: *i32) 
     h.* = 0;
     const a = act orelse return -1;
     if (level_index < 0 or level_index >= a.result.levels.len) return -2;
-    const lr = a.result.levels[@intCast(level_index)];
+    const lr = a.result.levels[@intCast(level_index)].meta;
     w.* = lr.width;
     h.* = lr.height;
     return 0;
+}
+
+/// Writes up to `cap` of the level-at-`level_index`'s PRESET UNITS (npc/obj, deduped,
+/// level-local subtile coords) into `out`, read straight from the already-generated act
+/// handle (no regeneration). Returns the FULL count (>=0, may exceed `cap` => truncated)
+/// or a negative error code. Same shape as `d2drlg_level_presets`, keyed by act index.
+export fn d2drlg_act_level_presets(act: ?*Act, level_index: i32, out: [*]D2DrlgPreset, cap: i32) i32 {
+    const a = act orelse return -1;
+    if (cap < 0) return -2;
+    if (level_index < 0 or level_index >= a.result.levels.len) return -3;
+    const presets = a.result.levels[@intCast(level_index)].presets;
+    const cap_us: usize = @intCast(cap);
+    const n = @min(presets.len, cap_us);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        out[i] = .{ .etype = presets[i].etype, .txt_file_no = presets[i].txt_file_no, .x = presets[i].x, .y = presets[i].y };
+    }
+    return @intCast(presets.len);
+}
+
+/// Writes up to `cap` of the level-at-`level_index`'s WARP/ADJACENCY BRIDGE TILES into
+/// `out`, read straight from the already-generated act handle (no regeneration). Returns
+/// the FULL count (>=0, may exceed `cap` => truncated) or a negative error code. Same
+/// shape as `d2drlg_level_adjacents`, keyed by act index.
+export fn d2drlg_act_level_adjacents(act: ?*Act, level_index: i32, out: [*]D2DrlgAdjacent, cap: i32) i32 {
+    const a = act orelse return -1;
+    if (cap < 0) return -2;
+    if (level_index < 0 or level_index >= a.result.levels.len) return -3;
+    const adj = a.result.levels[@intCast(level_index)].adjacents;
+    const cap_us: usize = @intCast(cap);
+    const n = @min(adj.len, cap_us);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        out[i] = .{ .dest_level_id = adj[i].dest_level_id, .bridge_x = adj[i].x, .bridge_y = adj[i].y };
+    }
+    return @intCast(adj.len);
+}
+
+/// Writes up to `cap` little-endian u16 RAW CollMap cells of the level-at-`level_index`
+/// into `out`, read straight from the already-generated act handle (no regeneration), and
+/// always sets *out_w / *out_h to the full grid dims (so truncation is detectable). Returns
+/// the FULL cell count (w*h, >=0, may exceed `cap`), 0 if the level has no collision grid,
+/// or a negative error code. Same bytes as `d2drlg_level_collision_raw`, keyed by act index.
+export fn d2drlg_act_level_collision(
+    act: ?*Act,
+    level_index: i32,
+    out: [*]u16,
+    cap: i32,
+    out_w: *i32,
+    out_h: *i32,
+) i32 {
+    out_w.* = 0;
+    out_h.* = 0;
+    const a = act orelse return -1;
+    if (cap < 0) return -2;
+    if (level_index < 0 or level_index >= a.result.levels.len) return -3;
+    const lf = a.result.levels[@intCast(level_index)];
+    if (lf.coll_cells.len == 0) return 0; // no collision grid for this level
+    out_w.* = lf.coll_w;
+    out_h.* = lf.coll_h;
+    const total = lf.coll_cells.len;
+    const cap_us: usize = @intCast(cap);
+    const n = @min(total, cap_us);
+    var i: usize = 0;
+    while (i < n) : (i += 1) out[i] = std.mem.nativeToLittle(u16, lf.coll_cells[i]);
+    return @intCast(total);
 }
 
 /// Write a level's Levels.txt LevelName (in-game display name) into `buf` (NUL-terminated
@@ -442,5 +510,5 @@ fn writeCStr(s: []const u8, buf: [*]u8, cap: i32) i32 {
 }
 
 export fn d2drlg_abi_version() u32 {
-    return 1;
+    return 2;
 }

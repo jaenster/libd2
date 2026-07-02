@@ -1,7 +1,7 @@
 #pragma once
 /*
  * d2drlg — C ABI for the faithful D2 1.14d map-generation (DRLG) engine.
- * ABI version 1. See d2drlg_abi_version().
+ * ABI version 2. See d2drlg_abi_version().
  *
  * Generates an entire act's room layout (byte-exact seeds/placement where ported)
  * and, optionally, a composited subtile-collision grid per level.
@@ -169,6 +169,19 @@ int32_t d2drlg_level_adjacents(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty
                                int32_t level_id, D2DrlgAdjacent *out, int32_t cap);
 
 /*
+ * GENERATE-ONCE act-handle accessors. These read a level's presets / adjacents / raw
+ * CollMap straight from an already-generated D2DrlgAct handle (from d2drlg_gen_act) —
+ * NO regeneration — so assembling a whole DBM map costs ONE act generation instead of
+ * re-generating the act for each level. Semantics/shape match the seed-based
+ * d2drlg_level_presets / d2drlg_level_adjacents / d2drlg_level_collision_raw, but keyed
+ * by 0-based act `level_index` (as d2drlg_act_rooms) rather than a Levels.txt id.
+ */
+int32_t d2drlg_act_level_presets(D2DrlgAct *act, int32_t level_index, D2DrlgPreset *out, int32_t cap);
+int32_t d2drlg_act_level_adjacents(D2DrlgAct *act, int32_t level_index, D2DrlgAdjacent *out, int32_t cap);
+int32_t d2drlg_act_level_collision(D2DrlgAct *act, int32_t level_index, uint16_t *out, int32_t cap,
+                                   int32_t *out_w, int32_t *out_h);
+
+/*
  * Write an object row's Objects.txt "Name" (d2drlg_object_name) or description
  * (d2drlg_object_desc, column "description - not loaded") into `buf`, NUL-terminated if
  * it fits. Returns the string's byte length (>=0; may exceed `cap` => truncated), or a
@@ -178,7 +191,7 @@ int32_t d2drlg_level_adjacents(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty
 int32_t d2drlg_object_name(int32_t txt_file_no, char *buf, int32_t cap);
 int32_t d2drlg_object_desc(int32_t txt_file_no, char *buf, int32_t cap);
 
-/* Returns the ABI version (currently 1). */
+/* Returns the ABI version (currently 2). */
 uint32_t d2drlg_abi_version(void);
 
 #ifdef __cplusplus

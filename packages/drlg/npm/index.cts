@@ -164,6 +164,11 @@ interface Exports {
   d2drlg_act_rooms(act: number, i: number, out: number, cap: number): number;
   d2drlg_act_level_origin(act: number, i: number, ox: number, oy: number): number;
   d2drlg_act_level_size(act: number, i: number, w: number, h: number): number;
+  // Generate-once accessors: pull a level's presets/adjacents/collision straight from an
+  // already-generated act handle (no regeneration). Keyed by 0-based act level index.
+  d2drlg_act_level_presets(act: number, i: number, out: number, cap: number): number;
+  d2drlg_act_level_adjacents(act: number, i: number, out: number, cap: number): number;
+  d2drlg_act_level_collision(act: number, i: number, out: number, cap: number, outW: number, outH: number): number;
   d2drlg_level_name(ctx: number, levelId: number, buf: number, cap: number): number;
   d2drlg_level_shrines(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_level_presets(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
@@ -174,10 +179,6 @@ interface Exports {
   d2drlg_abi_version(): number;
 }
 
-function scratch(memory: WebAssembly.Memory, bytes: number): number {
-  const prev = memory.grow(Math.ceil((bytes || 1) / PAGE) || 1);
-  return prev * PAGE;
-}
 
 // DBM's `name` field is the canonical level enum name: the display name with each
 // word TitleCased and joined (spaces removed). A few ids keep their classic short
@@ -214,6 +215,24 @@ class Drlg {
   #ctx: number;
   constructor(ex: Exports, ctx: number) { this.#ex = ex; this.#ctx = ctx; }
 
+  // A SINGLE reusable scratch region in wasm linear memory. Unlike a per-call grow (which
+  // never reclaims and makes memory climb forever), this grows only when a request needs
+  // MORE than the current region, then hands back the same base for every smaller request.
+  // Callers must copy their bytes out before the next #scratch call (the region is reused).
+  // grow() detaches the ArrayBuffer, so re-read `memory.buffer` after any call that grows.
+  #sbase = 0;
+  #scap = 0;
+  #scratch(bytes: number): number {
+    const need = bytes || 1;
+    if (need > this.#scap) {
+      const pages = Math.ceil(need / PAGE);
+      const prev = this.#ex.memory.grow(pages);
+      this.#sbase = prev * PAGE;
+      this.#scap = pages * PAGE;
+    }
+    return this.#sbase;
+  }
+
   generateAct(seed: number, difficulty = 0, actNo = 0): D2Act {
     const ex = this.#ex;
     const act = ex.d2drlg_gen_act(this.#ctx, seed >>> 0, difficulty, actNo);
@@ -224,7 +243,7 @@ class Drlg {
       for (let i = 0; i < n; i++) {
         const roomCount = ex.d2drlg_act_level_room_count(act, i);
         const OUT = 16;
-        const base = scratch(ex.memory, roomCount * ROOM + OUT);
+        const base = this.#scratch(roomCount * ROOM + OUT);
         const outp = base + roomCount * ROOM;
         ex.d2drlg_act_rooms(act, i, base, roomCount);
         ex.d2drlg_act_level_origin(act, i, outp, outp + 4);
@@ -258,7 +277,7 @@ class Drlg {
   #levelName(levelId: number): string {
     const ex = this.#ex;
     const CAP = 128;
-    const buf = scratch(ex.memory, CAP);
+    const buf = this.#scratch(CAP);
     const len = ex.d2drlg_level_name(this.#ctx, levelId, buf, CAP);
     if (len <= 0) return '';
     const n = Math.min(len, CAP);
@@ -270,7 +289,7 @@ class Drlg {
   // (wasm memory.grow may detach the backing buffer after this returns).
   #collisionRaw(seed: number, levelId: number, difficulty: number): D2Collision {
     const ex = this.#ex;
-    const probe = scratch(ex.memory, 8);
+    const probe = this.#scratch(8);
     const total = ex.d2drlg_level_collision_raw(this.#ctx, seed >>> 0, difficulty, levelId, probe, 0, probe, probe + 4);
     if (total < 0) throw new Error('d2drlg: level_collision_raw failed (' + total + ')');
     const dv = new DataView(ex.memory.buffer);
@@ -278,7 +297,7 @@ class Drlg {
     const height = dv.getInt32(probe + 4, true);
     if (total === 0 || width <= 0 || height <= 0) return { width: 0, height: 0, cells: new Uint16Array(0) };
     const cells = width * height;
-    const base = scratch(ex.memory, cells * 2 + 8);
+    const base = this.#scratch(cells * 2 + 8);
     const outp = base + cells * 2;
     ex.d2drlg_level_collision_raw(this.#ctx, seed >>> 0, difficulty, levelId, base, cells, outp, outp + 4);
     const u16 = new Uint16Array(ex.memory.buffer, base, cells).slice();
@@ -289,55 +308,78 @@ class Drlg {
     return this.#collisionRaw(seed, levelId, difficulty);
   }
 
+  // GENERATE ONCE: the act is generated a SINGLE time (`d2drlg_gen_act`) and every
+  // per-level field is pulled from that one handle via the act-index accessors, instead
+  // of re-generating the whole act per level for rooms/collision/presets/adjacents.
   render(seed: number, actNo = 0, difficulty = 0): D2Map {
+    const ex = this.#ex;
     const s = seed >>> 0;
-    const act = this.generateAct(s, difficulty, actNo);
-    const levels: D2Level[] = act.levels.map((lv) => {
-      const [ox, oy] = lv.origin; // tiles
-      const displayName = dbmDisplayName(lv.id, this.#levelName(lv.id));
-      const rooms: D2Room[] = lv.rooms.map((r) => ({
-        x: (r.x - ox) * 5,
-        y: (r.y - oy) * 5,
-        sizeX: r.w * 5,
-        sizeY: r.h * 5,
-        roomNo: r.pickedFile,
-        subNo: r.pickedFile,
-      }));
-      const coll = this.#collisionRaw(s, lv.id, difficulty);
-      const cw = coll.width || lv.size[0] * 5;
-      const ch = coll.height || lv.size[1] * 5;
-      const cellCount = cw * ch;
-      const u16 = coll.cells.length === cellCount ? coll.cells : new Uint16Array(cellCount).fill(0xffff);
-      const collisionDeflateB64 = deflateSync(Buffer.from(u16.buffer, u16.byteOffset, u16.byteLength)).toString('base64');
-      return {
-        levelNo: lv.id,
-        name: dbmLevelName(lv.id, displayName),
-        displayName,
-        act: actNo + 1,
-        origin: [ox * 5, oy * 5],
-        size: [lv.size[0] * 5, lv.size[1] * 5],
-        rooms,
-        presets: this.presets(s, lv.id, difficulty),
-        adjacents: this.adjacents(s, lv.id, difficulty),
-        tells: [],
-        collisionWidth: cw,
-        collisionHeight: ch,
-        collisionDeflateB64,
-      };
-    });
-    return { seed: s, levels };
+    const act = ex.d2drlg_gen_act(this.#ctx, s, difficulty, actNo);
+    if (!act) throw new Error('d2drlg: gen_act failed');
+    try {
+      const n = ex.d2drlg_act_level_count(act);
+      const levels: D2Level[] = [];
+      for (let i = 0; i < n; i++) {
+        const levelNo = ex.d2drlg_act_level_id(act, i);
+        // Rooms + world origin/size (TILES) — copied into JS before any later #scratch
+        // reuse detaches or overwrites the region.
+        const roomCount = ex.d2drlg_act_level_room_count(act, i);
+        const OUT = 16;
+        const rbase = this.#scratch(roomCount * ROOM + OUT);
+        const outp = rbase + roomCount * ROOM;
+        ex.d2drlg_act_rooms(act, i, rbase, roomCount);
+        ex.d2drlg_act_level_origin(act, i, outp, outp + 4);
+        ex.d2drlg_act_level_size(act, i, outp + 8, outp + 12);
+        const dv = new DataView(ex.memory.buffer);
+        const ox = dv.getInt32(outp, true), oy = dv.getInt32(outp + 4, true); // tiles
+        const sw = dv.getInt32(outp + 8, true), sh = dv.getInt32(outp + 12, true); // tiles
+        const rooms: D2Room[] = [];
+        for (let r = 0; r < roomCount; r++) {
+          const b = rbase + r * ROOM;
+          const rx = dv.getInt32(b, true), ry = dv.getInt32(b + 4, true);
+          const rw = dv.getInt32(b + 8, true), rh = dv.getInt32(b + 12, true);
+          const pickedFile = dv.getInt32(b + 24, true);
+          rooms.push({ x: (rx - ox) * 5, y: (ry - oy) * 5, sizeX: rw * 5, sizeY: rh * 5, roomNo: pickedFile, subNo: pickedFile });
+        }
+        const displayName = dbmDisplayName(levelNo, this.#levelName(levelNo));
+        const coll = this.#actCollision(act, i);
+        const cw = coll.width || sw * 5;
+        const ch = coll.height || sh * 5;
+        const cellCount = cw * ch;
+        const u16 = coll.cells.length === cellCount ? coll.cells : new Uint16Array(cellCount).fill(0xffff);
+        const collisionDeflateB64 = deflateSync(Buffer.from(u16.buffer, u16.byteOffset, u16.byteLength)).toString('base64');
+        levels.push({
+          levelNo,
+          name: dbmLevelName(levelNo, displayName),
+          displayName,
+          act: actNo + 1,
+          origin: [ox * 5, oy * 5],
+          size: [sw * 5, sh * 5],
+          rooms,
+          presets: this.#actPresets(act, i),
+          adjacents: this.#actAdjacents(act, i),
+          tells: [],
+          collisionWidth: cw,
+          collisionHeight: ch,
+          collisionDeflateB64,
+        });
+      }
+      return { seed: s, levels };
+    } finally {
+      ex.d2drlg_act_free(act);
+    }
   }
 
   shrines(seed: number, levelId: number, difficulty = 0, actNo = 0): D2Shrine[] {
     void actNo; // the owning act is derived from levelId; actNo accepted for API symmetry
     const ex = this.#ex;
     let cap = 64;
-    let base = scratch(ex.memory, cap * SHRINE);
+    let base = this.#scratch(cap * SHRINE);
     let n = ex.d2drlg_level_shrines(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
     if (n < 0) throw new Error('d2drlg: level_shrines failed (' + n + ')');
     if (n > cap) {
       cap = n;
-      base = scratch(ex.memory, cap * SHRINE);
+      base = this.#scratch(cap * SHRINE);
       n = ex.d2drlg_level_shrines(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
     }
     const dv = new DataView(ex.memory.buffer);
@@ -365,29 +407,48 @@ class Drlg {
   presets(seed: number, levelId: number, difficulty = 0): D2Preset[] {
     const ex = this.#ex;
     let cap = 128;
-    let base = scratch(ex.memory, cap * PRESET);
+    let base = this.#scratch(cap * PRESET);
     let n = ex.d2drlg_level_presets(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
     if (n < 0) throw new Error('d2drlg: level_presets failed (' + n + ')');
     if (n > cap) {
       cap = n;
-      base = scratch(ex.memory, cap * PRESET);
+      base = this.#scratch(cap * PRESET);
       n = ex.d2drlg_level_presets(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
     }
-    const STRCAP = 128;
-    const strBuf = scratch(ex.memory, STRCAP);
+    return this.#buildPresets(base, n);
+  }
+
+  // A level's presets read from an already-generated act handle (no regeneration).
+  #actPresets(act: number, i: number): D2Preset[] {
+    const ex = this.#ex;
+    let cap = 128;
+    let base = this.#scratch(cap * PRESET);
+    let n = ex.d2drlg_act_level_presets(act, i, base, cap);
+    if (n < 0) throw new Error('d2drlg: act_level_presets failed (' + n + ')');
+    if (n > cap) { cap = n; base = this.#scratch(cap * PRESET); n = ex.d2drlg_act_level_presets(act, i, base, cap); }
+    return this.#buildPresets(base, n);
+  }
+
+  // Decode `n` D2DrlgPreset records at `base` into the DBM shape. Two-phase: copy every
+  // (etype,txt,x,y) tuple out of the shared scratch region FIRST, then resolve obj
+  // name/description strings (those reuse the scratch region, so they must run after the
+  // array is fully read out).
+  #buildPresets(base: number, n: number): D2Preset[] {
+    const ex = this.#ex;
     const dv = new DataView(ex.memory.buffer);
-    const out: D2Preset[] = [];
+    const tuples: Array<[number, number, number, number]> = [];
     for (let i = 0; i < n; i++) {
       const b = base + i * PRESET;
-      const etype = dv.getInt32(b, true);
-      const txtFileNo = dv.getInt32(b + 4, true);
-      const x = dv.getInt32(b + 8, true);
-      const y = dv.getInt32(b + 12, true);
+      tuples.push([dv.getInt32(b, true), dv.getInt32(b + 4, true), dv.getInt32(b + 8, true), dv.getInt32(b + 12, true)]);
+    }
+    const STRCAP = 128;
+    const out: D2Preset[] = [];
+    for (const [etype, txtFileNo, x, y] of tuples) {
       if (etype === 2) {
         let name = this.#objName.get(txtFileNo);
-        if (name === undefined) { name = this.#readObjStr(ex.d2drlg_object_name, txtFileNo, strBuf, STRCAP); this.#objName.set(txtFileNo, name); }
+        if (name === undefined) { name = this.#readObjStr(ex.d2drlg_object_name, txtFileNo, this.#scratch(STRCAP), STRCAP); this.#objName.set(txtFileNo, name); }
         let description = this.#objDesc.get(txtFileNo);
-        if (description === undefined) { description = this.#readObjStr(ex.d2drlg_object_desc, txtFileNo, strBuf, STRCAP); this.#objDesc.set(txtFileNo, description); }
+        if (description === undefined) { description = this.#readObjStr(ex.d2drlg_object_desc, txtFileNo, this.#scratch(STRCAP), STRCAP); this.#objDesc.set(txtFileNo, description); }
         out.push({ type: 'obj', txtFileNo, x, y, name, description });
       } else {
         out.push({ type: 'npc', txtFileNo, x, y });
@@ -407,16 +468,32 @@ class Drlg {
   adjacents(seed: number, levelId: number, difficulty = 0): D2Adjacent[] {
     const ex = this.#ex;
     let cap = 128;
-    let base = scratch(ex.memory, cap * ADJ);
+    let base = this.#scratch(cap * ADJ);
     let n = ex.d2drlg_level_adjacents(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
     if (n < 0) throw new Error('d2drlg: level_adjacents failed (' + n + ')');
     if (n > cap) { // truncated: regrow to the full count and refetch
       cap = n;
-      base = scratch(ex.memory, cap * ADJ);
+      base = this.#scratch(cap * ADJ);
       n = ex.d2drlg_level_adjacents(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
     }
-    // Read every raw (dest, x, y) triple BEFORE resolving names: #levelName grows wasm
-    // memory, which detaches the backing buffer (invalidating `base`/any DataView).
+    return this.#buildAdjacents(base, n);
+  }
+
+  // A level's adjacents read from an already-generated act handle (no regeneration).
+  #actAdjacents(act: number, i: number): D2Adjacent[] {
+    const ex = this.#ex;
+    let cap = 128;
+    let base = this.#scratch(cap * ADJ);
+    let n = ex.d2drlg_act_level_adjacents(act, i, base, cap);
+    if (n < 0) throw new Error('d2drlg: act_level_adjacents failed (' + n + ')');
+    if (n > cap) { cap = n; base = this.#scratch(cap * ADJ); n = ex.d2drlg_act_level_adjacents(act, i, base, cap); }
+    return this.#buildAdjacents(base, n);
+  }
+
+  // Decode `n` D2DrlgAdjacent records at `base`. Read every raw (dest,x,y) triple BEFORE
+  // resolving names: #levelName reuses the scratch region (and may grow/detach it).
+  #buildAdjacents(base: number, n: number): D2Adjacent[] {
+    const ex = this.#ex;
     const dv = new DataView(ex.memory.buffer);
     const raw: Array<[number, number, number]> = [];
     for (let i = 0; i < n; i++) {
@@ -429,6 +506,24 @@ class Drlg {
       out.push({ levelNo: dest, name: dbmLevelName(dest, displayName), displayName, bridgeX: bx, bridgeY: by });
     }
     return out;
+  }
+
+  // A level's RAW collision grid read from an already-generated act handle (no
+  // regeneration). Probe (cap 0) for dims, then fetch; returns a COPY.
+  #actCollision(act: number, i: number): D2Collision {
+    const ex = this.#ex;
+    const probe = this.#scratch(8);
+    const total = ex.d2drlg_act_level_collision(act, i, probe, 0, probe, probe + 4);
+    if (total < 0) throw new Error('d2drlg: act_level_collision failed (' + total + ')');
+    const dv = new DataView(ex.memory.buffer);
+    const width = dv.getInt32(probe, true);
+    const height = dv.getInt32(probe + 4, true);
+    if (total === 0 || width <= 0 || height <= 0) return { width: 0, height: 0, cells: new Uint16Array(0) };
+    const cells = width * height;
+    const base = this.#scratch(cells * 2 + 8);
+    const outp = base + cells * 2;
+    ex.d2drlg_act_level_collision(act, i, base, cells, outp, outp + 4);
+    return { width, height, cells: new Uint16Array(ex.memory.buffer, base, cells).slice() };
   }
 
   abiVersion(): number { return this.#ex.d2drlg_abi_version(); }
