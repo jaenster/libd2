@@ -1,36 +1,52 @@
 # libd2 from Node (WebAssembly)
 
-The libc-free wasm build is published to npm (freestanding — it imports nothing,
-so it just instantiates). See the
-[API reference](../../README.md#reference-api-the-drlg-map-generator).
+Each package is published to npm as `@jaenster/d2<pkg>` — the libc-free wasm build
+behind a tiny typed shim. Pure Wasm + TypeScript: **no native addon, no build
+step**. Ships ESM and CommonJS with `.d.ts` types; the wasm loads lazily on first
+call, so there's nothing to initialise.
 
 ## drlg — generate a map from a seed
 
 ```sh
 npm install @jaenster/d2drlg
+# or: pnpm add @jaenster/d2drlg
 ```
+
+The top-level functions lazily load the wasm and cache a singleton:
+
+```ts
+import { shrines, generateAct } from '@jaenster/d2drlg';
+
+// Seeded outdoor shrines/wells of a level. Cold Plains = level 3.
+const s = await shrines(1337, 3);
+for (const sh of s)
+  console.log(`${sh.isWell ? 'well ' : 'shrine'} at tile (${sh.tileX}, ${sh.tileY})`);
+
+// Or a whole act's room layout (difficulty 0/1/2, actNo 0..4).
+const act = await generateAct(305419896, 0, 0);
+console.log(`Act I: ${act.levels.length} levels, town has ${act.levels[0].rooms.length} rooms`);
+```
+
+CommonJS is identical via `require`:
 
 ```js
-import { instantiate } from '@jaenster/d2drlg';
-
-const { exports, memory } = await instantiate();
-const ctx = exports.d2drlg_ctx_create();
-const act = exports.d2drlg_gen_act(ctx, 305419896, 0, 0);   // seed, normal, Act I
-console.log('act I:', exports.d2drlg_act_level_count(act), 'levels');
-
-// d2drlg_act_rooms writes D2DrlgRoom[] (6 × int32 = 24 bytes each) at a scratch ptr
-const outPtr = 65536, cap = 128;
-const n = exports.d2drlg_act_rooms(act, 0, outPtr, cap);
-const view = new DataView(memory.buffer);
-for (let i = 0; i < Math.min(n, cap); i++) {
-  const b = outPtr + i * 24;
-  console.log(`room ${i}: (${view.getInt32(b, true)},${view.getInt32(b + 4, true)}) ` +
-              `${view.getInt32(b + 8, true)}x${view.getInt32(b + 12, true)}`);
-}
-exports.d2drlg_act_free(act);
-exports.d2drlg_ctx_destroy(ctx);
+const { shrines } = require('@jaenster/d2drlg');
+shrines(1337, 3).then(list => console.log(list));
 ```
 
-The npm package exposes the raw C-ABI exports plus the wasm `memory`; you pass
-output buffers as byte offsets into that memory, as shown. Every other package
-(e.g. `@jaenster/d2items`) works the same way.
+`x`/`y` on a shrine are world **subtiles**; `tileX`/`tileY` are `Math.floor(x/5)`;
+`isWell` is `classId === 130`. `difficulty` is `0` normal / `1` nightmare / `2`
+hell; `actNo` is 0-based (Act I = 0); levels use their `Levels.txt` id.
+
+For lifecycle control, `open()` returns a reusable instance exposing the same
+methods plus `close()`:
+
+```ts
+import { open } from '@jaenster/d2drlg';
+const drlg = await open();
+try { console.log(drlg.shrines(1337, 3)); }
+finally { drlg.close(); }
+```
+
+Every other package (e.g. `@jaenster/d2items`) ships the same shape: lazy
+top-level functions over its own typed shim.
