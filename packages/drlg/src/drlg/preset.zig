@@ -20,7 +20,7 @@ const DrlgRoom = @import("DrlgRoom.zig");
 const Transform = @import("Transform.zig");
 const ds1mod = @import("d2-formats").ds1;
 const presettables = @import("presettables.zig");
-const ds1blob = @import("../ds1_blob.zig");
+const ds1blob = @import("d2-formats").ds1_blob;
 const build_options = @import("build_options");
 
 const sEEDNEXT = rng.sEEDNEXT;

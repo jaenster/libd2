@@ -7,7 +7,7 @@ test {
     _ = @import("tables.zig");
     _ = @import("d2-formats").ds1;
     _ = @import("d2-formats").dt1;
-    _ = @import("dt1pix.zig");
+    _ = @import("d2-formats").dt1pix;
     _ = @import("d2-fog").memory;
     _ = @import("collision.zig");
     _ = @import("render.zig");
@@ -17,7 +17,7 @@ test {
     _ = @import("path.zig");
     _ = @import("serial.zig");
     _ = @import("act.zig");
-    _ = @import("dc6.zig");
+    _ = @import("d2-formats").dc6;
     _ = @import("automap.zig");
     _ = @import("objects.zig");
 

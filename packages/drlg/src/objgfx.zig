@@ -14,9 +14,9 @@
 //! transparent; the act palette (768-byte B,G,R) maps indices to RGBA.
 
 const std = @import("std");
-const dcc = @import("dcc.zig");
-const cof = @import("cof.zig");
-const dc6 = @import("dc6.zig");
+const dcc = @import("d2-formats").dcc;
+const cof = @import("d2-formats").cof;
+const dc6 = @import("d2-formats").dc6;
 
 /// Object animation modes, indexed 0..7 to match Objects.txt FrameCnt0..7.
 pub const MODES = [8][]const u8{ "NU", "OP", "ON", "S1", "S2", "S3", "S4", "S5" };

@@ -37,11 +37,11 @@ const fog = @import("d2-fog").memory;
 const act_mod = @import("act.zig");
 const collision = @import("collision.zig");
 const dt1 = @import("d2-formats").dt1;
-const dt1blob = @import("dt1_blob.zig");
-const dt1_data = @import("dt1_data.zig");
-const dt1pix = @import("dt1pix.zig");
+const dt1blob = @import("d2-formats").dt1_blob;
+const dt1_data = @import("d2-formats").dt1_data;
+const dt1pix = @import("d2-formats").dt1pix;
 const ds1 = @import("d2-formats").ds1;
-const dt1pix_data = @import("dt1pix_data.zig");
+const dt1pix_data = @import("d2-formats").dt1pix_data;
 const preset = @import("drlg/preset.zig");
 const materialize = @import("drlg/materialize.zig");
 
