@@ -10,7 +10,6 @@
         "build.zig",
         "build.zig.zon",
         "packages",
-        "tools",
         "README.md",
     },
 }

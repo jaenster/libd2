@@ -15,8 +15,8 @@
 //! tiles in DT1 files not part of the base set).
 
 const std = @import("std");
-const ds1 = @import("ds1.zig");
-const dt1 = @import("dt1.zig");
+const ds1 = @import("d2-formats").ds1;
+const dt1 = @import("d2-formats").dt1;
 
 /// Each DS1 tile is a 5x5 block of subtiles.
 pub const SUBTILES_PER_TILE = 5;

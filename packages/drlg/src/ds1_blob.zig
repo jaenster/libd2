@@ -18,7 +18,7 @@
 const std = @import("std");
 /// Re-exported so the generator (a separate build module) shares this exact ds1
 /// module instance — keeping ds1.Ds1 one type across pack and unpack.
-pub const ds1 = @import("ds1.zig");
+pub const ds1 = @import("d2-formats").ds1;
 
 const flate = std.compress.flate;
 

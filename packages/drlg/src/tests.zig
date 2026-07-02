@@ -5,10 +5,10 @@ test {
     _ = @import("rng.zig");
     _ = @import("txt.zig");
     _ = @import("tables.zig");
-    _ = @import("ds1.zig");
-    _ = @import("dt1.zig");
+    _ = @import("d2-formats").ds1;
+    _ = @import("d2-formats").dt1;
     _ = @import("dt1pix.zig");
-    _ = @import("fog/memory.zig");
+    _ = @import("d2-fog").memory;
     _ = @import("collision.zig");
     _ = @import("render.zig");
     _ = @import("oracle.zig");

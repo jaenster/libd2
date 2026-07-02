@@ -1,13 +1,13 @@
 const std = @import("std");
 const rng = @import("rng.zig");
-const ds1 = @import("ds1.zig");
+const ds1 = @import("d2-formats").ds1;
 const render = @import("render.zig");
 const tables = @import("tables.zig");
 const oracle = @import("oracle.zig");
 const verify = @import("verify.zig");
 const dtables = @import("drlg/tables.zig");
 const dpool = @import("drlg/pool.zig");
-const fogmem = @import("fog/memory.zig");
+const fogmem = @import("d2-fog").memory;
 const presettables = @import("drlg/presettables.zig");
 const drlglib = @import("lib.zig");
 
@@ -432,7 +432,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     if (std.mem.eql(u8, cmd, "tilemiss")) {
-        const dt1 = @import("dt1.zig");
+        const dt1 = @import("d2-formats").dt1;
         const dt1blob = @import("dt1_blob.zig");
         const dt1_data = @import("dt1_data.zig");
         const preset = @import("drlg/preset.zig");

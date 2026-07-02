@@ -33,14 +33,14 @@ const dtables = @import("drlg/tables.zig");
 const dpool = @import("drlg/pool.zig");
 const tables = @import("tables.zig");
 const presettables = @import("drlg/presettables.zig");
-const fog = @import("fog/memory.zig");
+const fog = @import("d2-fog").memory;
 const act_mod = @import("act.zig");
 const collision = @import("collision.zig");
-const dt1 = @import("dt1.zig");
+const dt1 = @import("d2-formats").dt1;
 const dt1blob = @import("dt1_blob.zig");
 const dt1_data = @import("dt1_data.zig");
 const dt1pix = @import("dt1pix.zig");
-const ds1 = @import("ds1.zig");
+const ds1 = @import("d2-formats").ds1;
 const dt1pix_data = @import("dt1pix_data.zig");
 const preset = @import("drlg/preset.zig");
 const materialize = @import("drlg/materialize.zig");
@@ -2572,7 +2572,7 @@ pub fn renderDs1Tiles(out_alloc: std.mem.Allocator, ds1_bytes: []const u8, palet
 
 // One placement in the combined act-tiles view: like TilePlacement but tagged
 // with its owning level (so the web can dim non-selected levels).
-pub const ActTilePlacement = struct { tile_id: u32, sx: i32, sy: i32, level_id: i32, wall: bool, roof: bool, depth: i32 };
+pub const ActTilePlacement = struct { tile_id: u32, sx: i32, sy: i32, level_id: i32, wall: bool, roof: bool, depth: i32, sub_x: i32, sub_y: i32 };
 
 /// Every level of an act rendered with real DT1 art into ONE shared world-pixel
 /// space (same iso projection as the single-level path), so adjacent levels sit
@@ -2860,7 +2860,8 @@ pub fn generateActTilesAll(
         // Only roof-pass tiles (orient 15) get the roofY vertical lift; walls/floors never do.
         const roof_lift: i32 = if (pl.roof) tile_roofy.items[pl.tile_id] else 0;
         const sy = (pl.tx + pl.ty) * 40 + TILE_ANCHOR_Y + off[1] - roof_lift;
-        placements[i] = .{ .tile_id = pl.tile_id, .sx = sx, .sy = sy, .level_id = pl.level_id, .wall = pl.pass == PASS_WALL, .roof = pl.roof, .depth = pl.depth };
+        // World SUBTILE center of the tile cell (tile*5 + half), for light sampling.
+        placements[i] = .{ .tile_id = pl.tile_id, .sx = sx, .sy = sy, .level_id = pl.level_id, .wall = pl.pass == PASS_WALL, .roof = pl.roof, .depth = pl.depth, .sub_x = pl.tx * SUB + 2, .sub_y = pl.ty * SUB + 2 };
         min_x = @min(min_x, sx);
         min_y = @min(min_y, sy);
         max_x = @max(max_x, sx + @as(i32, @intCast(t.w)));

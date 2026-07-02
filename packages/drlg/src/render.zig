@@ -4,7 +4,7 @@
 //! diff structurally. Tile-accurate (per-dt1 graphics) rendering comes later.
 
 const std = @import("std");
-const ds1 = @import("ds1.zig");
+const ds1 = @import("d2-formats").ds1;
 
 fn present(c: ds1.Cell) bool {
     return (c.raw & 0x00ff_ffff) != 0;

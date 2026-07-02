@@ -31,7 +31,7 @@ const std = @import("std");
 const s = @import("structs.zig");
 const rng = @import("rng.zig");
 const Transform = @import("Transform.zig");
-const dt1 = @import("../dt1.zig");
+const dt1 = @import("d2-formats").dt1;
 
 /// Diagnostic counters (single-threaded, test/tooling only): how often
 /// getTileLibraryEntry falls back to a type-10 tile or fails to resolve at all.
@@ -328,7 +328,7 @@ pub fn createShadowTileData(pRoomEx: [*c]s.D2RoomExStrc, ppTileHead: ?*?*s.D2Drl
 // ---------------------------------------------------------------------------
 
 const testing = std.testing;
-const ds1 = @import("../ds1.zig");
+const ds1 = @import("d2-formats").ds1;
 const collision = @import("../collision.zig");
 
 const SUBTILES = collision.SUBTILES_PER_TILE;
