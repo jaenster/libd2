@@ -1719,7 +1719,10 @@ pub fn generateLevelPresets(
                 while (pu) |u| : (pu = u.pPresetUnitNext) {
                     const et: i32 = u.eType;
                     if (et != 1 and et != 2) continue;
-                    try Emit.add(out_alloc, &out, &seen, et, u.nClassId, u.nPosX - ox, u.nPosY - oy, bw, bh);
+                    // Monsters report the DBM/oracle preset code (unambiguous SU/MonPlace
+                    // numbering carried on the unit); objects keep the Objects.txt row.
+                    const code: i32 = if (et == 1 and u.nDbmCode >= 0) u.nDbmCode else u.nClassId;
+                    try Emit.add(out_alloc, &out, &seen, et, code, u.nPosX - ox, u.nPosY - oy, bw, bh);
                 }
             } else {
                 // Gated wilderness map: replay the DS1 objects through the engine's
@@ -1735,7 +1738,8 @@ pub fn generateLevelPresets(
                     switch (o.kind) {
                         1 => {
                             et = 1;
-                            classId = presettables.monsterClassId(d.act_id, o.id);
+                            // DBM/oracle preset code (not the folded classId) for monsters.
+                            classId = presettables.dbmMonsterCode(d.act_id, o.id);
                         },
                         2 => {
                             et = 2;

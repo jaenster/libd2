@@ -162,6 +162,11 @@ pub const D2PresetUnitStrc = extern struct {
     nPosY: i32,
     /// Flags bitmask (bit 0 = auto-generated object)
     nFlags: i32,
+    /// Non-engine side channel: the DBM/oracle "unresolved preset code" for monster units
+    /// (presettables.dbmMonsterCode), carried so emission can report the oracle numbering
+    /// without re-deriving it from the ambiguous folded classId. -1 = unset. Purely
+    /// informational; never read by generation.
+    nDbmCode: i32 = -1,
 };
 
 // Drlg/D2DrlgGridStrc.h
