@@ -33,8 +33,11 @@ pub fn build(b: *std.Build) void {
     mod.addImport("d2-fog", fog.module("d2-fog"));
 
     // The CLI/tests use std.process.Args + file loaders (native only); guard them
-    // out for wasm, where only the C-ABI reactor module is built.
+    // out for wasm, where only the C-ABI reactor module is built. The CLI exe also
+    // can't cross-compile to windows-gnu (std.process.Args needs initAllocator on
+    // Windows), so -Dcli=false lets the C-ABI libs cross-compile to every target.
     const is_wasm = target.result.cpu.arch == .wasm32;
+    const cli = b.option(bool, "cli", "Build the dev CLI exe") orelse true;
 
     const exe = b.addExecutable(.{
         .name = "d2-drlg",
@@ -47,7 +50,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addOptions("build_options", opts);
     exe.root_module.addImport("d2-formats", formats.module("d2-formats"));
     exe.root_module.addImport("d2-fog", fog.module("d2-fog"));
-    if (!is_wasm) b.installArtifact(exe);
+    if (cli and !is_wasm) b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -70,9 +73,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_tests.step);
 
     // C-ABI shim: consumable from C/C++/C#/Node as native shared+static libs, or as
-    // a wasm reactor module. Generation routes its live-alloc registry through libc
-    // (drlg/pool.zig c_allocator), so every artifact links libc; the wasm target is
-    // therefore wasm32-wasi (NOT freestanding).
+    // a wasm reactor module. The generator is libc-free (smp_allocator + page_allocator),
+    // so nothing links libc and the wasm target is wasm32-freestanding-capable.
     const capi = b.option(bool, "capi", "Build the C-ABI shim (libs / wasm)") orelse true;
     if (capi) {
         const capi_optimize: std.builtin.OptimizeMode =
@@ -83,7 +85,6 @@ pub fn build(b: *std.Build) void {
                     .root_source_file = bb.path("src/capi.zig"),
                     .target = tgt,
                     .optimize = opt,
-                    .link_libc = true,
                 });
                 m.addOptions("build_options", o);
                 m.addImport("d2-formats", fm);

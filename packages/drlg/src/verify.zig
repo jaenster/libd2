@@ -16,7 +16,9 @@ const act_mod = @import("act.zig");
 
 /// True when D2DRLG_WILD_DIAG is set (gates the wilderness L2/L6 mismatch print).
 fn wildDiagOn() bool {
-    return std.c.getenv("D2DRLG_WILD_DIAG") != null;
+    // The wild-diag env toggle is disabled in the portable (libc-free) build so
+    // this compiles for every target, including wasm freestanding and windows.
+    return false;
 }
 
 const GOLDEN_INIT_SEED: u32 = 305419896;

@@ -237,8 +237,11 @@ pub fn FixDrlgLevelForSpiderForest(pLevel: [*c]s.D2DrlgLevelStrc) [*c]s.D2DrlgLe
 
     // Alignment assertion (non-multiple of 32 is a fatal error in the binary)
     if (@rem(nMaxX - nMinX, 32) != 0 or @rem(nGridY_top - nMinY, 32) != 0) {
-        std.debug.print("FixDrlgLevelForSpiderForest: misaligned grid nMaxX-nMinX={d} nGridY_top-nMinY={d}\n",
-            .{ nMaxX - nMinX, nGridY_top - nMinY });
+        // std.debug.print's stderr path can't compile on wasm freestanding (no posix);
+        // gate the diagnostic out there so the portable C-ABI build stays freestanding.
+        if (@import("builtin").target.os.tag != .freestanding)
+            std.debug.print("FixDrlgLevelForSpiderForest: misaligned grid nMaxX-nMinX={d} nGridY_top-nMinY={d}\n",
+                .{ nMaxX - nMinX, nGridY_top - nMinY });
         return null;
     }
 

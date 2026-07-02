@@ -2,9 +2,9 @@
 //!
 //! The reconstructed 1.14d closure ALREADY bypasses the real pool allocator
 //! (VirtualAlloc + CRITICAL_SECTION-guarded free lists) and routes every
-//! allocation through libc calloc/free, because the pool internals differ under
-//! Wine and — crucially — the pool does NOT consume the DRLG seed, so it has no
-//! effect on generated geometry. See Memory.cpp:
+//! allocation through a plain calloc/free-style allocator, because the pool
+//! internals differ under Wine and — crucially — the pool does NOT consume the
+//! DRLG seed, so it has no effect on generated geometry. See Memory.cpp:
 //!   AllocClientMemory  (1.14d 0040b3a0, Memory.cpp:1094) -> calloc(1, n)
 //!   FreeClientMemory   (1.14d 0040b3c0, Memory.cpp:1101) -> free
 //!   ReAllocClientMemory(1.14d 0040b3f0, Memory.cpp:1107) -> realloc
@@ -19,17 +19,27 @@
 //! void* signatures). `calloc` semantics (zeroed memory) are preserved.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const structs = @import("structs.zig");
+
+/// Default backing allocator for all DRLG allocations: libc-free and works on every
+/// target, including wasm freestanding. smp_allocator is thread-safe (needed by the
+/// cross-seed verifier fanning out one arena per thread) but asserts multi-threaded,
+/// so single-threaded targets (wasm freestanding/wasi) fall back to page_allocator —
+/// which is also thread-safe and libc-free. Allocator choice does not affect the
+/// seeded generation values.
+pub const default_allocator: std.mem.Allocator =
+    if (builtin.single_threaded) std.heap.page_allocator else std.heap.smp_allocator;
 
 /// Opaque pool-manager handle the server-side signatures take. The recon ignores
 /// it (the bypass calls plain calloc/free), so it is unused here too.
 pub const D2PoolManagerStrc = structs.D2PoolManagerStrc;
 
-/// Backing allocator for all DRLG allocations. Defaults to the C allocator so the
-/// module works without setup; the harness may swap in an arena before generating.
-/// Thread-local so the cross-seed verifier can fan out one arena per worker thread
-/// without races (generation is per-seed independent).
-pub threadlocal var allocator: std.mem.Allocator = std.heap.c_allocator;
+/// Backing allocator for all DRLG allocations. Defaults to `default_allocator` (see
+/// above) so the module works without setup and stays libc-free; the harness may
+/// swap in an arena before generating. Thread-local so the cross-seed verifier can
+/// fan out one arena per worker thread without races (generation is per-seed indep).
+pub threadlocal var allocator: std.mem.Allocator = default_allocator;
 
 // Length-prefix header so a bare `void*`/`?*anyopaque` can be freed/realloced
 // without the size. Payload is kept 16-byte aligned (>= max engine alignment).
@@ -44,7 +54,7 @@ const header_size = payload_align; // one aligned slot holds the usize length
 // Thread-local: paired with the thread-local `allocator` above. Each verifier
 // worker owns its own arena + registry; within a thread alloc/free are serial.
 threadlocal var live: std.AutoHashMapUnmanaged(usize, void) = .empty;
-const reg_allocator = std.heap.c_allocator; // thread-safe; independent of the swappable payload allocator
+const reg_allocator = default_allocator; // thread-safe, libc-free; independent of the swappable payload allocator
 
 /// Drop the live-allocation registry. Call between independent generations that
 /// reuse the process (e.g. the wasm reactor or a multi-seed loop): a wholesale
