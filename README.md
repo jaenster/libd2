@@ -39,7 +39,8 @@ Language guides:
 Where to get the artifacts:
 - **Native libs + headers** — attached to each package's GitHub Release
   (`<pkg>-vX.Y.Z`), one archive per target: linux / macos / windows × x64 / arm64.
-- **WebAssembly** — published to npm as `@jaenster/d2<pkg>` (e.g. `@jaenster/d2items`).
+- **WebAssembly** — published to npm as `@jaenster/d2<pkg>` (e.g. `@jaenster/d2drlg`),
+  a tiny typed TypeScript shim over the wasm (ESM + CommonJS).
 
 ### Reference API (the `drlg` map generator)
 

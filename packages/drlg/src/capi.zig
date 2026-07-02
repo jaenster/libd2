@@ -4,11 +4,10 @@
 //! primitives, fixed ints, pointers and `extern struct`s. Every export catches all
 //! Zig errors and returns a negative status / null; nothing escapes.
 //!
-//! Allocator note: page_allocator for the caller-facing handles (libc-free, works
-//! native AND wasm). HOWEVER the generation core routes its live-allocation
-//! registry through libc's c_allocator (drlg/pool.zig reg_allocator), so the
-//! linked artifact MUST link libc — native links it directly; the wasm build uses
-//! wasm32-wasi (NOT freestanding) for that reason.
+//! Allocator note: page_allocator for the caller-facing handles and smp_allocator
+//! for the generation core's live-allocation registry (drlg/pool.zig reg_allocator).
+//! Both are libc-free, so no artifact links libc and the wasm build targets
+//! wasm32-freestanding (no WASI).
 
 const std = @import("std");
 const lib = @import("lib.zig");

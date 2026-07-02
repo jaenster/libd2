@@ -498,7 +498,7 @@ pub fn findSpawnLocationInLevel(pDrlg: [*c]s.D2DrlgStrc, eLevel: eD2LevelId, nSp
 pub var trace_alloc_seeds: ?*std.ArrayListUnmanaged(u32) = null;
 
 pub fn allocRoomEx(pLevel: [*c]s.D2DrlgLevelStrc, nPresetType: i32) [*c]s.D2RoomExStrc {
-    if (trace_alloc_seeds) |list| list.append(std.heap.c_allocator, @bitCast(pLevel.*.sSeed.nSeedLow)) catch {};
+    if (trace_alloc_seeds) |list| list.append(pool.default_allocator, @bitCast(pLevel.*.sSeed.nSeedLow)) catch {};
     const pRoomEx: [*c]s.D2RoomExStrc = @ptrCast(@alignCast(pool.AllocServerMemory(pLevel.*.pDrlg.?.pMemoryPool, @sizeOf(s.D2RoomExStrc), ".\\DRLG\\DrlgRoom.cpp", 0x20)));
     @memset(@as([*]u8, @ptrCast(pRoomEx))[0..@sizeOf(s.D2RoomExStrc)], 0);
     pRoomEx.*.nPresetType = nPresetType;

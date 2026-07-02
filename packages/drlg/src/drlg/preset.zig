@@ -328,9 +328,9 @@ pub fn unpackDs1(a: std.mem.Allocator, rel: []const u8) ?ds1mod.Ds1 {
 fn ds1BlobIndex() *const ds1blob.Index {
     if (g_blobState.load(.acquire) != 2) {
         if (g_blobState.cmpxchgStrong(0, 1, .acquire, .monotonic) == null) {
-            g_blobRaw = ds1blob.decompress(std.heap.c_allocator, @import("../ds1_data.zig").bytes) catch
+            g_blobRaw = ds1blob.decompress(pool.default_allocator, @import("../ds1_data.zig").bytes) catch
                 @panic("d2-drlg: embedded DS1 blob failed to decompress");
-            g_blobIndex = ds1blob.buildIndex(std.heap.c_allocator, g_blobRaw.?) catch
+            g_blobIndex = ds1blob.buildIndex(pool.default_allocator, g_blobRaw.?) catch
                 @panic("d2-drlg: embedded DS1 blob is corrupt");
             g_blobState.store(2, .release);
         } else {

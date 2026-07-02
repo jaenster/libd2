@@ -513,7 +513,7 @@ test "buildPathGrid composites a preset level into a walkable view" {
     // per-Level fog pool and tears it down on deinit; restore the default so a
     // later consumer of the global (e.g. the pool.zig test) never dereferences the
     // freed pool.
-    defer dpool.allocator = std.heap.c_allocator;
+    defer dpool.allocator = dpool.default_allocator;
     var ctx = try Ctx.init(gpa);
     defer ctx.deinit();
     // Den of Evil (id 8): preset catacomb — has collision grids.
