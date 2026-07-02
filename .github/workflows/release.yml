@@ -1,0 +1,113 @@
+name: release
+
+# On every push to main: figure out which packages changed since their last
+# release tag, cross-compile each to all native targets + wasm, cut a per-package
+# GitHub Release (tag <pkg>-vX.Y.Z), and publish the wasm build to npm.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create tags + releases
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.d.outputs.packages }}
+      any: ${{ steps.d.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # need all tags for change detection
+      - id: d
+        run: |
+          pkgs="$(scripts/detect-changes.sh)"
+          echo "packages=$pkgs" >> "$GITHUB_OUTPUT"
+          if [ "$pkgs" = "[]" ]; then echo "any=false" >> "$GITHUB_OUTPUT";
+          else echo "any=true" >> "$GITHUB_OUTPUT"; fi
+          echo "changed: $pkgs"
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-gnu
+          - aarch64-linux-gnu
+          - x86_64-macos
+          - aarch64-macos
+          - x86_64-windows-gnu
+          - aarch64-windows-gnu
+          - wasm32-freestanding
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - name: Build changed packages for ${{ matrix.target }}
+        run: |
+          echo '${{ needs.detect.outputs.packages }}' > /tmp/pkgs.json
+          opt=ReleaseFast
+          [ "${{ matrix.target }}" = "wasm32-freestanding" ] && opt=ReleaseSmall
+          for row in $(jq -r '.[] | @base64' /tmp/pkgs.json); do
+            _j() { echo "$row" | base64 -d | jq -r "$1"; }
+            name="$(_j .name)"; dir="$(_j .dir)"
+            echo "== $name -> ${{ matrix.target }}"
+            ( cd "$dir" && zig build -Dtarget=${{ matrix.target }} -Doptimize=$opt \
+                --prefix "$GITHUB_WORKSPACE/dist/$name/${{ matrix.target }}" )
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: ignore
+
+  release:
+    needs: [detect, build]
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, pattern: dist-*, merge-multiple: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, registry-url: 'https://registry.npmjs.org' }
+      - name: Package, tag, release, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo '${{ needs.detect.outputs.packages }}' > /tmp/pkgs.json
+          for row in $(jq -r '.[] | @base64' /tmp/pkgs.json); do
+            _j() { echo "$row" | base64 -d | jq -r "$1"; }
+            name="$(_j .name)"; version="$(_j .version)"; tag="$(_j .tag)"
+            echo "::group::release $tag"
+
+            # one archive per target, from the downloaded per-target prefixes
+            mkdir -p out
+            for tdir in artifacts/*/"$name"/*/; do
+              [ -d "$tdir" ] || continue
+              target="$(basename "$tdir")"
+              ( cd "$tdir" && tar czf "$GITHUB_WORKSPACE/out/d2${name}-${version}-${target}.tar.gz" . )
+            done
+
+            git tag "$tag" && git push origin "$tag"
+            gh release create "$tag" out/d2${name}-${version}-*.tar.gz \
+              --title "$name v$version" \
+              --notes "Automated release of the \`$name\` package (v$version). Native libs + headers per target, plus wasm."
+
+            # npm: publish the wasm build behind a thin loader, if a token is set.
+            wasm="$(find artifacts -path "*/$name/wasm32-freestanding/*" -name '*.wasm' | head -1 || true)"
+            if [ -n "${NODE_AUTH_TOKEN:-}" ] && [ -n "$wasm" ]; then
+              scripts/npm-pack.sh "$name" "$version" "$wasm"
+            else
+              echo "skip npm ($name): no NPM_TOKEN or no wasm artifact"
+            fi
+            rm -rf out
+            echo "::endgroup::"
+          done
