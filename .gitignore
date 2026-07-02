@@ -2,3 +2,5 @@
 zig-out/
 .idea/
 .env
+**/zig-cache
+**/zig-out

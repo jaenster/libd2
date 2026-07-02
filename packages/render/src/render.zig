@@ -63,7 +63,7 @@ pub fn asciiMap(d: *const ds1.Ds1, allocator: std.mem.Allocator) ![]u8 {
 const testing = std.testing;
 
 test "asciiMap renders a town DS1 without overrun" {
-    const bytes = @embedFile("maps/Act1_Town_TownN1.ds1");
+    const bytes = @import("d2-drlg").gen.town_ds1;
     var d = try ds1.parse(testing.allocator, bytes);
     defer d.deinit();
 
