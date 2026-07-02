@@ -241,6 +241,73 @@ export fn d2drlg_level_shrines(
     return @intCast(shrines.len);
 }
 
+/// One preset unit for the DBM-shaped shim. Field order/types MUST match
+/// `D2DrlgPreset` in d2drlg.h. Mirrors `lib.PresetUnit`. etype: 1 npc, 2 obj, 5 exit.
+/// x/y are level-LOCAL subtile coords (DBM frame). txt_file_no: MonStats id (npc),
+/// Objects.txt row (obj), or warp id (exit).
+pub const D2DrlgPreset = extern struct {
+    etype: i32,
+    txt_file_no: i32,
+    x: i32,
+    y: i32,
+};
+
+/// Generate an act and write up to `cap` of a level's PRESET UNITS (npc/obj/exit,
+/// deduped, level-local subtile coords) into `out`. Returns the FULL count (>=0, may
+/// exceed `cap` => truncated), or a negative error code. `difficulty` 0/1/2.
+/// NOTE: regenerates the level's whole act internally, so it is not cheap.
+export fn d2drlg_level_presets(
+    ctx: ?*Ctx,
+    seed: u32,
+    difficulty: i32,
+    level_id: i32,
+    out: [*]D2DrlgPreset,
+    cap: i32,
+) i32 {
+    const c = ctx orelse return -1;
+    const diff = diffFromInt(difficulty) orelse return -2;
+    if (cap < 0) return -3;
+
+    const tlv = c.inner.act.level(level_id) orelse return -4;
+    const act_no: i32 = @intCast(tlv.act);
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const presets = lib.generateLevelPresets(&c.inner, a, act_no, seed, diff, level_id) catch return -5;
+    const cap_us: usize = @intCast(cap);
+    const n = @min(presets.len, cap_us);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        out[i] = .{ .etype = presets[i].etype, .txt_file_no = presets[i].txt_file_no, .x = presets[i].x, .y = presets[i].y };
+    }
+    return @intCast(presets.len);
+}
+
+/// Write an object row's Objects.txt "Name" into `buf` (NUL-terminated if it fits) and
+/// return its byte length (>=0), or a negative error. `txt_file_no` is a preset obj's
+/// txtFileNo (0-based Objects.txt row). Empty (length 0) if the row is out of range.
+export fn d2drlg_object_name(txt_file_no: i32, buf: [*]u8, cap: i32) i32 {
+    if (cap < 0) return -1;
+    return writeCStr(lib.objectName(txt_file_no), buf, cap);
+}
+
+/// Write an object row's Objects.txt description (col "description - not loaded") into
+/// `buf`. Same contract as d2drlg_object_name.
+export fn d2drlg_object_desc(txt_file_no: i32, buf: [*]u8, cap: i32) i32 {
+    if (cap < 0) return -1;
+    return writeCStr(lib.objectDescription(txt_file_no), buf, cap);
+}
+
+fn writeCStr(s: []const u8, buf: [*]u8, cap: i32) i32 {
+    const cap_us: usize = @intCast(cap);
+    const n = @min(s.len, cap_us);
+    @memcpy(buf[0..n], s[0..n]);
+    if (n < cap_us) buf[n] = 0;
+    return @intCast(s.len);
+}
+
 export fn d2drlg_abi_version() u32 {
     return 1;
 }
