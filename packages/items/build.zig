@@ -25,7 +25,9 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    b.installArtifact(exe);
+    // The CLIs use std.process.Args (native only); don't install them for wasm.
+    const is_wasm = target.result.cpu.arch == .wasm32;
+    if (!is_wasm) b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -42,7 +44,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    b.installArtifact(render_exe);
+    if (!is_wasm) b.installArtifact(render_exe);
 
     const render_cmd = b.addRunArtifact(render_exe);
     render_cmd.step.dependOn(b.getInstallStep());
@@ -60,6 +62,48 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+
+    // C-ABI shim: consumable from C/C++/C#/Node as native shared+static libs, or
+    // as a freestanding wasm reactor module. This is the reference convention.
+    const capi = b.option(bool, "capi", "Build the C-ABI shim (libs / wasm)") orelse true;
+    if (capi) {
+        if (is_wasm) {
+            const wasm = b.addExecutable(.{
+                .name = "d2items",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/capi.zig"),
+                    .target = target,
+                    .optimize = if (b.args == null) .ReleaseSmall else optimize,
+                }),
+            });
+            wasm.entry = .disabled;
+            wasm.rdynamic = true;
+            b.installArtifact(wasm);
+        } else {
+            const capi_optimize = if (optimize == .Debug) .ReleaseFast else optimize;
+            const static_lib = b.addLibrary(.{
+                .name = "d2items",
+                .linkage = .static,
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/capi.zig"),
+                    .target = target,
+                    .optimize = capi_optimize,
+                }),
+            });
+            const shared_lib = b.addLibrary(.{
+                .name = "d2items",
+                .linkage = .dynamic,
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/capi.zig"),
+                    .target = target,
+                    .optimize = capi_optimize,
+                }),
+            });
+            b.installArtifact(static_lib);
+            b.installArtifact(shared_lib);
+            b.getInstallStep().dependOn(&b.addInstallHeaderFile(b.path("include/d2items.h"), "d2items.h").step);
+        }
+    }
 
     _ = lib_mod;
 }

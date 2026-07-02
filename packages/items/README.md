@@ -4,7 +4,7 @@ A clean-room Zig reimplementation of Diablo II 1.14d **item generation** — the
 deterministic, seed-driven drop pipeline: treasure-class resolution, item-class
 roll by level, quality determination, and magic/rare affix selection.
 
-Sibling to [`d2-drlg`](../d2-drlg) (the map-generation clean-room port); same
+Sibling to [`drlg`](../drlg) (the map-generation clean-room port); same
 philosophy: **faithful-to-Ghidra, all-Zig, no C deps, seeded + verifiable,
 roll-exact**. Ported from the reconstructed 1.14d `Game.exe` sources
 (Ghidra session `62fbfe69`); every ported function cites its 1.14d address.
