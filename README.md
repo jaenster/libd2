@@ -1,15 +1,10 @@
 # libd2
 
-A clean-room [Zig](https://ziglang.org) reimplementation of the deterministic
-**Diablo II 1.14d** engine core — the seed-driven subsystems that turn a game
-seed into a world. Reverse-engineered from the retail binary for byte-exact
-fidelity, with no Blizzard code.
+A reimplementation of the deterministic **Diablo II 1.14d** engine core in [Zig](https://ziglang.org) —
+the seed-driven subsystems that turn a game seed into a world. 
+Reverse-engineered from the retail binary, with no Blizzard code.
 
-libd2 is a monorepo of small, independently-consumable packages. Each has its own
-`build.zig` + `build.zig.zon`, exposes a Zig module, and can be built and tested
-on its own.
-
-## Packages
+## Packages in this repo
 
 | package | module | depends on | what it is |
 |-|-|-|-|
@@ -35,45 +30,44 @@ language with a C FFI.
 
 Language guides:
 
-- [Zig](docs/usage/zig.md)
 - [C](docs/usage/c.md)
 - [C++](docs/usage/cpp.md)
 - [C#](docs/usage/csharp.md)
 - [Node (WebAssembly)](docs/usage/node.md)
+- [Zig](docs/usage/zig.md)
 
 Where to get the artifacts:
 - **Native libs + headers** — attached to each package's GitHub Release
   (`<pkg>-vX.Y.Z`), one archive per target: linux / macos / windows × x64 / arm64.
 - **WebAssembly** — published to npm as `@jaenster/d2<pkg>` (e.g. `@jaenster/d2items`).
 
-### Reference API (the `items` package)
+### Reference API (the `drlg` map generator)
 
-All the language guides use `items` (`d2items`) as the example. Its C API:
+The language guides use `drlg` (`d2drlg`) as the running example — given a seed it
+generates an entire act's room layout — and `items` (`d2items`) as a second one.
+The `drlg` C API:
 
 ```c
-typedef struct D2ItemsCtx D2ItemsCtx;
-typedef struct {
-    uint8_t  kind;               // 0 none, 1 gold, 2 item, 3 quiver, 4 bodypart
-    uint8_t  item_code[4];       // e.g. "amu\0"
-    uint8_t  quality;            // D2 quality enum
-    uint16_t prefix_id, suffix_id;
-    uint16_t rare_prefix_ids[3], rare_suffix_ids[3];
-    uint8_t  sockets;
-    int32_t  quantity;           // gold amount / quiver count
-    int32_t  item_level;
-} D2ItemsDrop;
+typedef struct D2DrlgCtx D2DrlgCtx;   // loaded game tables
+typedef struct D2DrlgAct D2DrlgAct;   // a generated act
+typedef struct D2DrlgRoom { int32_t x, y, w, h, n_type, n_preset_type; } D2DrlgRoom;
 
-D2ItemsCtx *d2items_create(void);
-void        d2items_destroy(D2ItemsCtx *ctx);
-// rolls a drop for (seed, treasure-class, monster-level, magic-find); writes up
-// to `cap` drops into `out`; returns the count (may exceed cap → truncated) or <0 on error.
-int32_t     d2items_roll(D2ItemsCtx *ctx, uint32_t seed, const char *tc_name,
-                         int32_t mlvl, int32_t mf, D2ItemsDrop *out, int32_t cap);
-uint32_t    d2items_abi_version(void);
+D2DrlgCtx *d2drlg_ctx_create(void);
+void       d2drlg_ctx_destroy(D2DrlgCtx *ctx);
+// generate a whole act. difficulty 0/1/2; act_no 0..4. NULL on error.
+D2DrlgAct *d2drlg_gen_act(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty, int32_t act_no);
+void       d2drlg_act_free(D2DrlgAct *act);
+int32_t    d2drlg_act_level_count(D2DrlgAct *act);
+int32_t    d2drlg_act_level_id(D2DrlgAct *act, int32_t level_index);
+int32_t    d2drlg_act_level_room_count(D2DrlgAct *act, int32_t level_index);
+// writes up to `cap` rooms of a level into `out`; returns full count (may exceed cap) or <0.
+int32_t    d2drlg_act_rooms(D2DrlgAct *act, int32_t level_index, D2DrlgRoom *out, int32_t cap);
+uint32_t   d2drlg_abi_version(void);
 ```
 
-Every other package follows the same shape: `d2<pkg>_create` / `_destroy`, typed
-`extern struct` records, and a caller-provided output buffer.
+Every package follows the same shape: `d2<pkg>_create`/`_destroy` (or `_ctx_create`),
+typed `extern struct` records, and caller-provided output buffers. The full headers
+ship in each release (and live at `packages/<pkg>/include/`).
 
 ## About the baked assets
 

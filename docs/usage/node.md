@@ -1,35 +1,36 @@
 # libd2 from Node (WebAssembly)
 
-The wasm build is published to npm. See the
-[API reference](../../README.md#reference-api-the-items-package).
+The libc-free wasm build is published to npm (freestanding — it imports nothing,
+so it just instantiates). See the
+[API reference](../../README.md#reference-api-the-drlg-map-generator).
+
+## drlg — generate a map from a seed
 
 ```sh
-npm install @jaenster/d2items
+npm install @jaenster/d2drlg
 ```
 
 ```js
-import { instantiate } from '@jaenster/d2items';
+import { instantiate } from '@jaenster/d2drlg';
 
 const { exports, memory } = await instantiate();
-const ctx = exports.d2items_create();
+const ctx = exports.d2drlg_ctx_create();
+const act = exports.d2drlg_gen_act(ctx, 305419896, 0, 0);   // seed, normal, Act I
+console.log('act I:', exports.d2drlg_act_level_count(act), 'levels');
 
-// write the treasure-class string into wasm memory
-const enc = new TextEncoder().encode("Act 1 Equip A\0");
-const strPtr = 1024;                       // scratch offset
-new Uint8Array(memory.buffer).set(enc, strPtr);
-
-const outPtr = 4096, cap = 16;
-const n = exports.d2items_roll(ctx, 12345, strPtr, 5, 0, outPtr, cap);
-
-// D2ItemsDrop is 28 bytes; item_code is at offset 1, item_level at 24
-const mem = new DataView(memory.buffer);
+// d2drlg_act_rooms writes D2DrlgRoom[] (6 × int32 = 24 bytes each) at a scratch ptr
+const outPtr = 65536, cap = 128;
+const n = exports.d2drlg_act_rooms(act, 0, outPtr, cap);
+const view = new DataView(memory.buffer);
 for (let i = 0; i < Math.min(n, cap); i++) {
-  const base = outPtr + i * 28;
-  const code = String.fromCharCode(...new Uint8Array(memory.buffer, base + 1, 4)).replace(/\0/g, '');
-  console.log(`drop ${i}: ${code} ilvl=${mem.getInt32(base + 24, true)}`);
+  const b = outPtr + i * 24;
+  console.log(`room ${i}: (${view.getInt32(b, true)},${view.getInt32(b + 4, true)}) ` +
+              `${view.getInt32(b + 8, true)}x${view.getInt32(b + 12, true)}`);
 }
-exports.d2items_destroy(ctx);
+exports.d2drlg_act_free(act);
+exports.d2drlg_ctx_destroy(ctx);
 ```
 
 The npm package exposes the raw C-ABI exports plus the wasm `memory`; you pass
-strings/structs as byte offsets into that memory, as shown above.
+output buffers as byte offsets into that memory, as shown. Every other package
+(e.g. `@jaenster/d2items`) works the same way.
