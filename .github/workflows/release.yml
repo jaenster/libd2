@@ -1,12 +1,23 @@
 name: release
 
-# On every push to main: figure out which packages changed since their last
-# release tag, cross-compile each to all native targets + wasm, cut a per-package
-# GitHub Release (tag <pkg>-vX.Y.Z), and publish the wasm build to npm.
+# MANUAL trigger only. Figures out which packages to release, cross-compiles each
+# to all native targets + wasm, cuts a per-package GitHub Release (tag
+# <pkg>-vX.Y.Z), and publishes the wasm build to npm.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Which packages: "changed" (since last tag) or a space-separated list (e.g. "drlg items")'
+        default: 'changed'
+        type: string
+      force_all:
+        description: 'Release every C-ABI package regardless of changes'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Build + package only — no tags, no GitHub Release, no npm publish'
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # create tags + releases
@@ -21,12 +32,20 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }   # need all tags for change detection
       - id: d
+        env:
+          FORCE_ALL: ${{ inputs.force_all }}
         run: |
-          pkgs="$(scripts/detect-changes.sh)"
+          if [ "${{ inputs.force_all }}" = "true" ]; then
+            pkgs="$(FORCE_ALL=1 scripts/detect-changes.sh)"
+          elif [ -n "${{ inputs.packages }}" ] && [ "${{ inputs.packages }}" != "changed" ]; then
+            pkgs="$(scripts/detect-changes.sh ${{ inputs.packages }})"
+          else
+            pkgs="$(scripts/detect-changes.sh)"
+          fi
           echo "packages=$pkgs" >> "$GITHUB_OUTPUT"
           if [ "$pkgs" = "[]" ]; then echo "any=false" >> "$GITHUB_OUTPUT";
           else echo "any=true" >> "$GITHUB_OUTPUT"; fi
-          echo "changed: $pkgs"
+          echo "selected: $pkgs"
 
   build:
     needs: detect
@@ -80,6 +99,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           echo '${{ needs.detect.outputs.packages }}' > /tmp/pkgs.json
@@ -96,12 +116,17 @@ jobs:
               ( cd "$tdir" && tar czf "$GITHUB_WORKSPACE/out/d2${name}-${version}-${target}.tar.gz" . )
             done
 
+            if [ "$DRY_RUN_INPUT" = "true" ]; then
+              echo "dry run: would release $tag with:"; ls -1 out/
+              rm -rf out; echo "::endgroup::"; continue
+            fi
+
             git tag "$tag" && git push origin "$tag"
             gh release create "$tag" out/d2${name}-${version}-*.tar.gz \
               --title "$name v$version" \
-              --notes "Automated release of the \`$name\` package (v$version). Native libs + headers per target, plus wasm."
+              --notes "Release of the \`$name\` package (v$version). Native libs + headers per target, plus wasm."
 
-            # npm: publish the wasm build behind a thin loader, if a token is set.
+            # npm: publish the wasm build behind the typed shim, if a token is set.
             wasm="$(find artifacts -path "*/$name/wasm32-freestanding/*" -name '*.wasm' | head -1 || true)"
             if [ -n "${NODE_AUTH_TOKEN:-}" ] && [ -n "$wasm" ]; then
               scripts/npm-pack.sh "$name" "$version" "$wasm"
