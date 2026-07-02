@@ -1435,6 +1435,220 @@ pub fn generateLevelShrines(
     return shrines.toOwnedSlice(out_alloc);
 }
 
+/// One preset unit exposed to the DBM-shaped shim: eType (1 monster/npc, 2 object),
+/// the resolved DRLG class id (MonStats/object-as-monster id for npc, Objects.txt row
+/// for obj), and level-LOCAL SUBTILE position. DBM reports preset x/y relative to the
+/// level origin in subtiles; our preset positions are WORLD subtiles, so we subtract the
+/// level's WorldPosition (tiles) * SUB. eTypes other than 1/2 are dropped.
+pub const PresetUnit = struct { etype: i32, txt_file_no: i32, x: i32, y: i32 };
+
+/// Generate an entire act and return the PRESET UNITS of one level (`level_id`) in the
+/// DBM shape: level-local subtile coords (clipped to the level rect), deduped by
+/// (etype,txt,x,y). Same whole-act setup as generateLevelShrines.
+///
+/// UNIT SOURCES, per generated preset DrlgMap of the target level (deduped by pointer):
+///   1. pMap.pPresetUnit — the engine-populated chain (already world-coord, with the
+///      seed-dependent AddPresetUnitToDrlgMap copy-filter applied). Used for preset
+///      areas (town/cathedral/…) where BuildPresetArea's Scan/Pops gate loaded the DS1.
+///   2. DS1-object replay — for wilderness border/camp maps the Scan==0 && Pops==0 gate
+///      (Preset.cpp:1778) returns before AllocDrlgFile, so pMap.pPresetUnit stays empty
+///      even though the DS1 carries objects (Bishibosh camp Fallen, scattered torches).
+///      We recover them by re-parsing the map's DS1 and replaying the same world
+///      transform the engine's CopyPresetUnit would apply (pos + nRealOffset*SUB), with
+///      the same monster/object classId resolution (presettables). This replay does NOT
+///      re-run the seed-dependent copy-filter (bCopy) — for Cold Plains none of the
+///      units are in the filtered classId set, so the set is identical; other levels may
+///      over-include the (rare) filtered place-group/object classes.
+///   3. Seeded outdoor shrines/wells (SpawnAct12Shrines) — folded in as eType 2 objects,
+///      since DBM lists them in the same `presets` array.
+/// Caller owns the slice.
+pub fn generateLevelPresets(
+    ctx: *Ctx,
+    out_alloc: std.mem.Allocator,
+    act_no: i32,
+    seed: u32,
+    diff: Difficulty,
+    level_id: i32,
+) ![]PresetUnit {
+    var pool = fog.PoolManager.init(ctx.gpa);
+    defer pool.deinit();
+    const saved_alloc = dpool.allocator;
+    const saved_tables = dtables.g_lvl_tables;
+    defer {
+        dpool.allocator = saved_alloc;
+        dtables.g_lvl_tables = saved_tables;
+    }
+    dtables.g_lvl_tables = &ctx.lvl;
+    dpool.allocator = pool.allocator();
+    dpool.resetRegistry();
+    ctx.lvl.resetGenCache();
+
+    var act = try act_mod.build(ctx.gpa, &ctx.act, act_no, seed);
+    defer act.deinit(ctx.gpa);
+
+    var pDrlg: abi.D2DrlgStrc = undefined;
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+
+    var ids: std.ArrayListUnmanaged(i32) = .empty;
+    defer ids.deinit(out_alloc);
+    var row: usize = 0;
+    while (row < ctx.act.levelCount()) : (row += 1) {
+        if (ctx.act.levelAtRow(row)) |lv| {
+            if (lv.act == act_no) try ids.append(out_alloc, @intCast(lv.id));
+        }
+    }
+
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const c = act.coords(&ctx.act, lid);
+        pLevel.sCoordinatesAndSize = .{
+            .WorldPosition = .{ .x = c.x, .y = c.y },
+            .WorldSize = .{ .x = c.w, .y = c.h },
+        };
+    }
+    if (act_no == 0) drlg.applyAct1PresetPicks(&pDrlg, &ctx.act, seed);
+    if (act_no == 1) drlg.applyAct2PresetPicks(&pDrlg, &ctx.act, seed);
+    drlg.buildInterLevelOrths(&pDrlg);
+
+    var out: std.ArrayListUnmanaged(PresetUnit) = .empty;
+    errdefer out.deinit(out_alloc);
+    var seen: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    defer seen.deinit(out_alloc);
+    var seen_map: std.AutoHashMapUnmanaged(usize, void) = .empty;
+    defer seen_map.deinit(out_alloc);
+
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        drlg.InitLevel(pLevel);
+        if (lid != level_id) continue;
+
+        const lvlPos = pLevel.sCoordinatesAndSize.WorldPosition;
+        const ox = lvlPos.x * SUB;
+        const oy = lvlPos.y * SUB;
+        // Level rect in subtiles: units outside it are on the outer border ring (the
+        // engine copies them but they sit past the playable rect); DBM clips them.
+        const bw = pLevel.sCoordinatesAndSize.WorldSize.x * SUB;
+        const bh = pLevel.sCoordinatesAndSize.WorldSize.y * SUB;
+
+        const Emit = struct {
+            fn add(o_alloc: std.mem.Allocator, list: *std.ArrayListUnmanaged(PresetUnit), sset: *std.AutoHashMapUnmanaged(u64, void), et: i32, cls: i32, lx: i32, ly: i32, w: i32, h: i32) !void {
+                if (lx < 0 or ly < 0 or lx >= w or ly >= h) return; // outside the level rect
+                const k = (@as(u64, @bitCast(@as(i64, et))) << 56) ^
+                    (@as(u64, @bitCast(@as(i64, cls))) << 40) ^
+                    (@as(u64, @intCast(lx & 0xfffff)) << 20) ^ @as(u64, @intCast(ly & 0xfffff));
+                if ((try sset.getOrPut(o_alloc, k)).found_existing) return;
+                try list.append(o_alloc, .{ .etype = et, .txt_file_no = cls, .x = lx, .y = ly });
+            }
+        };
+
+        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+        while (pr) |p| : (pr = p.pRoomExNext) {
+            const pmap = roomPMap(p) orelse continue;
+            const mapkey = @intFromPtr(pmap);
+            if ((try seen_map.getOrPut(out_alloc, mapkey)).found_existing) continue;
+
+            if (pmap.pPresetUnit != null) {
+                // Engine-populated chain (world coords, copy-filter already applied).
+                var pu: ?*abi.D2PresetUnitStrc = pmap.pPresetUnit;
+                while (pu) |u| : (pu = u.pPresetUnitNext) {
+                    const et: i32 = u.eType;
+                    if (et != 1 and et != 2) continue;
+                    try Emit.add(out_alloc, &out, &seen, et, u.nClassId, u.nPosX - ox, u.nPosY - oy, bw, bh);
+                }
+            } else {
+                // Gated wilderness map: replay the DS1 objects through the engine's
+                // world transform (CopyPresetUnit: pos + nRealOffset*SUB).
+                const rel = preset.presetDs1Path(pmap) orelse continue;
+                var d = preset.unpackDs1(out_alloc, rel) orelse continue;
+                defer d.deinit();
+                const wox = pmap.nRealOffsetX * SUB;
+                const woy = pmap.nRealOffsetY * SUB;
+                for (d.objects) |o| {
+                    var et: i32 = undefined;
+                    var classId: i32 = undefined;
+                    switch (o.kind) {
+                        1 => {
+                            et = 1;
+                            classId = presettables.monsterClassId(d.act_id, o.id);
+                        },
+                        2 => {
+                            et = 2;
+                            classId = presettables.objectClassId(d.act_id, o.id);
+                        },
+                        else => continue,
+                    }
+                    if (classId < 0) continue; // recon Preset.cpp:350 — classId < 0 dropped
+                    try Emit.add(out_alloc, &out, &seen, et, classId, o.x + wox - ox, o.y + woy - oy, bw, bh);
+                }
+            }
+        }
+
+        // Seeded outdoor shrines/wells (SpawnAct12Shrines) — DBM lists them as presets.
+        var shrines: std.ArrayListUnmanaged(OutdoorShrine) = .empty;
+        defer shrines.deinit(out_alloc);
+        try appendOutdoorShrines(pLevel, &shrines, out_alloc);
+        for (shrines.items) |sh|
+            try Emit.add(out_alloc, &out, &seen, 2, sh.class_id, sh.x - ox, sh.y - oy, bw, bh);
+    }
+    return out.toOwnedSlice(out_alloc);
+}
+
+// Process-global Objects.txt lookup (name / description columns), decoded once and
+// intentionally never freed — same page-allocator cache pattern as dt1Index, so a
+// leak-checking caller Ctx never false-positives and nothing dangles on Ctx destroy.
+var g_objtxt: ?txt.Table = null;
+fn objTxt() ?*const txt.Table {
+    if (g_objtxt == null) {
+        g_objtxt = txt.Table.parse(std.heap.page_allocator, @embedFile("excel/Objects.txt")) catch return null;
+    }
+    return &g_objtxt.?;
+}
+
+/// Objects.txt "Name" (col 1) for a 0-based object row (== a preset obj's txtFileNo);
+/// empty slice if out of range. Borrowed from the process-global table (do not free).
+pub fn objectName(txt_file_no: i32) []const u8 {
+    const t = objTxt() orelse return "";
+    if (txt_file_no < 0 or txt_file_no >= t.rowCount()) return "";
+    return t.str(@intCast(txt_file_no), "Name");
+}
+
+/// Objects.txt description (col 2, "description - not loaded") for a 0-based object row;
+/// empty slice if out of range. Borrowed from the process-global table (do not free).
+pub fn objectDescription(txt_file_no: i32) []const u8 {
+    const t = objTxt() orelse return "";
+    if (txt_file_no < 0 or txt_file_no >= t.rowCount()) return "";
+    return t.str(@intCast(txt_file_no), "description - not loaded");
+}
+
+const txt = @import("txt.zig");
+
+test "lib: preset units for Cold Plains (seed 0, act 0 level 3) include obj+npc" {
+    const gpa = std.testing.allocator;
+    defer dpool.allocator = dpool.default_allocator;
+    var ctx = try Ctx.init(gpa);
+    defer ctx.deinit();
+    const presets = try generateLevelPresets(&ctx, gpa, 0, 0, .normal, 3);
+    defer gpa.free(presets);
+    try std.testing.expect(presets.len >= 14);
+    var any_obj = false;
+    var any_npc = false;
+    // DBM Cold Plains seed-0 landmarks: a Torch1 Tiki (obj 37) at (131,366) and the
+    // bed (obj 247) at (103,58) — both must be present at those exact local coords.
+    var has_torch = false;
+    var has_bed = false;
+    for (presets) |p| {
+        any_obj = any_obj or p.etype == 2;
+        any_npc = any_npc or p.etype == 1;
+        if (p.etype == 2 and p.txt_file_no == 37 and p.x == 131 and p.y == 366) has_torch = true;
+        if (p.etype == 2 and p.txt_file_no == 247 and p.x == 103 and p.y == 58) has_bed = true;
+    }
+    try std.testing.expect(any_obj and any_npc);
+    try std.testing.expect(has_torch and has_bed);
+    // id 37 = Dummy / Torch1 Tiki (a Cold Plains décor object).
+    try std.testing.expectEqualStrings("Dummy", objectName(37));
+    try std.testing.expectEqualStrings("Torch1 Tiki", objectDescription(37));
+}
+
 test "lib: outdoor shrines for Cold Plains (seed 1337, act 0 level 3) >= 1" {
     const gpa = std.testing.allocator;
     defer dpool.allocator = dpool.default_allocator;

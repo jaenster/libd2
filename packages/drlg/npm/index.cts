@@ -7,6 +7,7 @@ const { join } = require('node:path') as typeof import('node:path');
 const PAGE = 65536;
 const ROOM = 24; // sizeof(D2DrlgRoom): 6 x int32
 const SHRINE = 12; // sizeof(D2DrlgShrine): 3 x int32
+const PRESET = 16; // sizeof(D2DrlgPreset): 4 x int32
 
 export interface D2Room {
   x: number; y: number; w: number; h: number;
@@ -31,6 +32,20 @@ export interface D2Act {
   /** 0-based act number (0 = Act I) */
   act: number;
   levels: D2Level[];
+}
+export interface D2Preset {
+  /** 'obj' = DS1/preset object (etype 2), 'npc' = monster/preset marker (etype 1) */
+  type: 'obj' | 'npc';
+  /** Objects.txt row (obj) or MonStats/preset class id (npc) */
+  txtFileNo: number;
+  /** level-LOCAL subtile X (matches DBM's frame) */
+  x: number;
+  /** level-LOCAL subtile Y (matches DBM's frame) */
+  y: number;
+  /** Objects.txt "Name" — present for obj entries only */
+  name?: string;
+  /** Objects.txt description ("description - not loaded") — obj entries only */
+  description?: string;
 }
 export interface D2Shrine {
   /** objects.txt class id: 130=Well, 84/2/81/83=Shrine variants */
@@ -60,6 +75,9 @@ interface Exports {
   d2drlg_act_level_room_count(act: number, i: number): number;
   d2drlg_act_rooms(act: number, i: number, out: number, cap: number): number;
   d2drlg_level_shrines(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
+  d2drlg_level_presets(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
+  d2drlg_object_name(txtFileNo: number, buf: number, cap: number): number;
+  d2drlg_object_desc(txtFileNo: number, buf: number, cap: number): number;
   d2drlg_abi_version(): number;
 }
 
@@ -140,6 +158,50 @@ class Drlg {
     return out;
   }
 
+  #objName = new Map<number, string>();
+  #objDesc = new Map<number, string>();
+  #readObjStr(fn: (id: number, buf: number, cap: number) => number, id: number, buf: number, cap: number): string {
+    const len = fn(id, buf, cap);
+    if (len <= 0) return '';
+    const n = Math.min(len, cap);
+    const bytes = new Uint8Array(this.#ex.memory.buffer, buf, n);
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  }
+
+  presets(seed: number, levelId: number, difficulty = 0): D2Preset[] {
+    const ex = this.#ex;
+    let cap = 128;
+    let base = scratch(ex.memory, cap * PRESET);
+    let n = ex.d2drlg_level_presets(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
+    if (n < 0) throw new Error('d2drlg: level_presets failed (' + n + ')');
+    if (n > cap) {
+      cap = n;
+      base = scratch(ex.memory, cap * PRESET);
+      n = ex.d2drlg_level_presets(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
+    }
+    const STRCAP = 128;
+    const strBuf = scratch(ex.memory, STRCAP);
+    const dv = new DataView(ex.memory.buffer);
+    const out: D2Preset[] = [];
+    for (let i = 0; i < n; i++) {
+      const b = base + i * PRESET;
+      const etype = dv.getInt32(b, true);
+      const txtFileNo = dv.getInt32(b + 4, true);
+      const x = dv.getInt32(b + 8, true);
+      const y = dv.getInt32(b + 12, true);
+      if (etype === 2) {
+        let name = this.#objName.get(txtFileNo);
+        if (name === undefined) { name = this.#readObjStr(ex.d2drlg_object_name, txtFileNo, strBuf, STRCAP); this.#objName.set(txtFileNo, name); }
+        let description = this.#objDesc.get(txtFileNo);
+        if (description === undefined) { description = this.#readObjStr(ex.d2drlg_object_desc, txtFileNo, strBuf, STRCAP); this.#objDesc.set(txtFileNo, description); }
+        out.push({ type: 'obj', txtFileNo, x, y, name, description });
+      } else {
+        out.push({ type: 'npc', txtFileNo, x, y });
+      }
+    }
+    return out;
+  }
+
   abiVersion(): number { return this.#ex.d2drlg_abi_version(); }
   close(): void { this.#ex.d2drlg_ctx_destroy(this.#ctx); }
 }
@@ -153,9 +215,12 @@ async function generateAct(seed: number, difficulty = 0, actNo = 0): Promise<D2A
 async function shrines(seed: number, levelId: number, difficulty = 0, actNo = 0): Promise<D2Shrine[]> {
   return (await inst()).shrines(seed, levelId, difficulty, actNo);
 }
+async function presets(seed: number, levelId: number, difficulty = 0): Promise<D2Preset[]> {
+  return (await inst()).presets(seed, levelId, difficulty);
+}
 async function abiVersion(): Promise<number> {
   return (await inst()).abiVersion();
 }
 
-module.exports = { generateAct, shrines, abiVersion, open, Drlg };
+module.exports = { generateAct, shrines, presets, abiVersion, open, Drlg };
 module.exports.default = generateAct;

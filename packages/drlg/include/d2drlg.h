@@ -97,6 +97,37 @@ typedef struct D2DrlgShrine {
 int32_t d2drlg_level_shrines(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
                              int32_t level_id, D2DrlgShrine *out, int32_t cap);
 
+/*
+ * One preset unit (DBM shape). etype: 1 npc (MonStats id), 2 obj (Objects.txt row),
+ * 5 exit (warp id). x/y are level-LOCAL subtile coords (subtract nothing — already the
+ * DBM frame). Mirrors the Zig lib.PresetUnit.
+ */
+typedef struct D2DrlgPreset {
+    int32_t etype;        /* 1 npc, 2 obj, 5 exit */
+    int32_t txt_file_no;  /* MonStats id / Objects.txt row / warp id */
+    int32_t x;            /* level-local subtile X */
+    int32_t y;            /* level-local subtile Y */
+} D2DrlgPreset;
+
+/*
+ * Generate an act and write up to `cap` of a level's PRESET UNITS (npc/obj/exit,
+ * deduped, level-local subtile coords) into `out`. Returns the FULL count (>=0, may
+ * exceed `cap` => truncated), or a negative error code. NOTE: regenerates the whole
+ * act internally, so it is not cheap.
+ */
+int32_t d2drlg_level_presets(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
+                             int32_t level_id, D2DrlgPreset *out, int32_t cap);
+
+/*
+ * Write an object row's Objects.txt "Name" (d2drlg_object_name) or description
+ * (d2drlg_object_desc, column "description - not loaded") into `buf`, NUL-terminated if
+ * it fits. Returns the string's byte length (>=0; may exceed `cap` => truncated), or a
+ * negative error. `txt_file_no` is a preset obj's txtFileNo (0-based Objects.txt row);
+ * length 0 if out of range.
+ */
+int32_t d2drlg_object_name(int32_t txt_file_no, char *buf, int32_t cap);
+int32_t d2drlg_object_desc(int32_t txt_file_no, char *buf, int32_t cap);
+
 /* Returns the ABI version (currently 1). */
 uint32_t d2drlg_abi_version(void);
 
