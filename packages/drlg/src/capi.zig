@@ -21,6 +21,7 @@ pub const D2DrlgRoom = extern struct {
     h: i32,
     n_type: i32,
     n_preset_type: i32,
+    picked_file: i32,
 };
 
 /// Opaque context: the loaded game tables, built once. The C side only ever sees
@@ -144,9 +145,46 @@ export fn d2drlg_act_rooms(act: ?*Act, level_index: i32, out: [*]D2DrlgRoom, cap
             .h = r.h,
             .n_type = r.n_type,
             .n_preset_type = r.n_preset_type,
+            .picked_file = r.picked_file,
         };
     }
     return @intCast(rooms.len);
+}
+
+/// The level's generated world ORIGIN in TILES (WorldPosition). Writes *ox/*oy and
+/// returns 0, or a negative error code (leaving *ox/*oy at 0). Multiply by 5 for the
+/// subtile frame DBM reports.
+export fn d2drlg_act_level_origin(act: ?*Act, level_index: i32, ox: *i32, oy: *i32) i32 {
+    ox.* = 0;
+    oy.* = 0;
+    const a = act orelse return -1;
+    if (level_index < 0 or level_index >= a.result.levels.len) return -2;
+    const lr = a.result.levels[@intCast(level_index)];
+    ox.* = lr.origin_x;
+    oy.* = lr.origin_y;
+    return 0;
+}
+
+/// The level's generated world SIZE in TILES (WorldSize). Writes *w/*h and returns 0,
+/// or a negative error code (leaving *w/*h at 0). Multiply by 5 for subtiles.
+export fn d2drlg_act_level_size(act: ?*Act, level_index: i32, w: *i32, h: *i32) i32 {
+    w.* = 0;
+    h.* = 0;
+    const a = act orelse return -1;
+    if (level_index < 0 or level_index >= a.result.levels.len) return -2;
+    const lr = a.result.levels[@intCast(level_index)];
+    w.* = lr.width;
+    h.* = lr.height;
+    return 0;
+}
+
+/// Write a level's Levels.txt LevelName (in-game display name) into `buf` (NUL-terminated
+/// if it fits) and return its byte length (>=0), or a negative error. Length 0 if the id
+/// is unknown.
+export fn d2drlg_level_name(ctx: ?*Ctx, level_id: i32, buf: [*]u8, cap: i32) i32 {
+    const c = ctx orelse return -1;
+    if (cap < 0) return -2;
+    return writeCStr(lib.levelDisplayName(&c.inner, level_id), buf, cap);
 }
 
 /// Generate a level's composited subtile-collision grid (one byte per subtile,
