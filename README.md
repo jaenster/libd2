@@ -28,7 +28,27 @@ surface compiled to native shared + static libs with a C header, plus a
 **WebAssembly** build). The C boundary means the *same* artifacts work from any
 language with a C FFI.
 
-Language guides:
+### Quick start — TypeScript / Node
+
+```sh
+npm install @jaenster/d2drlg
+```
+
+```ts
+import { generateAct } from '@jaenster/d2drlg';
+
+// Generate Act I from a seed. The wasm loads lazily on first call — no setup.
+const act = await generateAct(305419896, 0 /* normal */, 0 /* Act I */);
+console.log(`${act.levels.length} levels; town has ${act.levels[0].rooms.length} rooms`);
+
+for (const room of act.levels[0].rooms)
+  console.log(`room ${room.w}×${room.h} at (${room.x}, ${room.y})`);
+```
+
+Tiny typed shim, ESM + CommonJS, runs natively on modern Node/Bun/Deno. Same
+shape for every package (`@jaenster/d2items`, …).
+
+### Language guides
 
 - [C](docs/usage/c.md)
 - [C++](docs/usage/cpp.md)
