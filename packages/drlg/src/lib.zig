@@ -1463,6 +1463,7 @@ pub fn verifyActCollision(
 
 const objects_mod = @import("objects.zig");
 const objpop_mod = @import("drlg/objpop.zig");
+const DrlgWarp = @import("drlg/DrlgWarp.zig");
 
 const drng = @import("drlg/rng.zig");
 
@@ -1758,6 +1759,99 @@ pub fn generateLevelPresets(
     return out.toOwnedSlice(out_alloc);
 }
 
+/// One adjacency "bridge tile" exposed to the DBM-shaped shim: the destination
+/// Levels.txt id a warp on this level leads to, plus the bridge position in level-LOCAL
+/// SUBTILES (the DBM frame). DBM emits ONE entry per warp SLOT of every warp-flagged
+/// room, positioned at the room CENTRE (WorldPosition + WorldSize/2, in subtiles) — the
+/// exact same coordinate DRLGWARP_InitLevelWarpCoordinates computes, but split out
+/// per-destination. A room with N slots pointing at the same neighbour yields N entries
+/// at the same tile (the staircase counts DBM reports).
+pub const LevelAdjacent = struct { dest_level_id: i32, x: i32, y: i32 };
+
+/// Generate an entire act and return the WARP/ADJACENCY BRIDGE TILES of one level
+/// (`level_id`) in the DBM shape: one entry per (room, set warp slot) whose destination
+/// resolves (getWarpDestinationFromArray != -1), at the room centre in level-local
+/// subtiles. Same whole-act setup as generateLevelPresets. Caller owns the slice.
+pub fn generateLevelAdjacents(
+    ctx: *Ctx,
+    out_alloc: std.mem.Allocator,
+    act_no: i32,
+    seed: u32,
+    diff: Difficulty,
+    level_id: i32,
+) ![]LevelAdjacent {
+    var pool = fog.PoolManager.init(ctx.gpa);
+    defer pool.deinit();
+    const saved_alloc = dpool.allocator;
+    const saved_tables = dtables.g_lvl_tables;
+    defer {
+        dpool.allocator = saved_alloc;
+        dtables.g_lvl_tables = saved_tables;
+    }
+    dtables.g_lvl_tables = &ctx.lvl;
+    dpool.allocator = pool.allocator();
+    dpool.resetRegistry();
+    ctx.lvl.resetGenCache();
+
+    var act = try act_mod.build(ctx.gpa, &ctx.act, act_no, seed);
+    defer act.deinit(ctx.gpa);
+
+    var pDrlg: abi.D2DrlgStrc = undefined;
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+
+    var ids: std.ArrayListUnmanaged(i32) = .empty;
+    defer ids.deinit(out_alloc);
+    var row: usize = 0;
+    while (row < ctx.act.levelCount()) : (row += 1) {
+        if (ctx.act.levelAtRow(row)) |lv| {
+            if (lv.act == act_no) try ids.append(out_alloc, @intCast(lv.id));
+        }
+    }
+
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const c = act.coords(&ctx.act, lid);
+        pLevel.sCoordinatesAndSize = .{
+            .WorldPosition = .{ .x = c.x, .y = c.y },
+            .WorldSize = .{ .x = c.w, .y = c.h },
+        };
+    }
+    if (act_no == 0) drlg.applyAct1PresetPicks(&pDrlg, &ctx.act, seed);
+    if (act_no == 1) drlg.applyAct2PresetPicks(&pDrlg, &ctx.act, seed);
+    drlg.buildInterLevelOrths(&pDrlg);
+
+    var out: std.ArrayListUnmanaged(LevelAdjacent) = .empty;
+    errdefer out.deinit(out_alloc);
+
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        drlg.InitLevel(pLevel);
+        if (lid != level_id) continue;
+
+        const lvlPos = pLevel.sCoordinatesAndSize.WorldPosition;
+        const ox = lvlPos.x * SUB;
+        const oy = lvlPos.y * SUB;
+
+        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+        while (pr) |p| : (pr = p.pRoomExNext) {
+            if (!p.eRoomExFlags.anyWarp()) continue;
+            // Room centre in world subtiles (== DRLGWARP_InitLevelWarpCoordinates), then
+            // rebased to the level-local DBM frame.
+            const cx = (@divTrunc(p.sCoords.WorldSize.x, 2) + p.sCoords.WorldPosition.x) * SUB - ox;
+            const cy = (@divTrunc(p.sCoords.WorldSize.y, 2) + p.sCoords.WorldPosition.y) * SUB - oy;
+            var slot: u3 = 0;
+            while (true) : (slot += 1) {
+                if (p.eRoomExFlags.warpSlot(slot)) {
+                    const dest = DrlgWarp.getWarpDestinationFromArray(pLevel, slot);
+                    if (dest != -1) try out.append(out_alloc, .{ .dest_level_id = dest, .x = cx, .y = cy });
+                }
+                if (slot == 7) break;
+            }
+        }
+    }
+    return out.toOwnedSlice(out_alloc);
+}
+
 // Process-global Objects.txt lookup (name / description columns), decoded once and
 // intentionally never freed — same page-allocator cache pattern as dt1Index, so a
 // leak-checking caller Ctx never false-positives and nothing dangles on Ctx destroy.
@@ -1812,6 +1906,23 @@ test "lib: preset units for Cold Plains (seed 0, act 0 level 3) include obj+npc"
     // id 37 = Dummy / Torch1 Tiki (a Cold Plains décor object).
     try std.testing.expectEqualStrings("Dummy", objectName(37));
     try std.testing.expectEqualStrings("Torch1 Tiki", objectDescription(37));
+}
+
+test "lib: adjacents accessor runs and every entry resolves to a real destination" {
+    const gpa = std.testing.allocator;
+    defer dpool.allocator = dpool.default_allocator;
+    var ctx = try Ctx.init(gpa);
+    defer ctx.deinit();
+    // Invariant test: the accessor must run without crashing for a wilderness level and
+    // every emitted bridge tile must carry a resolved destination level id (!= -1). NOTE:
+    // Act-1 wilderness SEAM adjacency (Cold Plains<->Blood Moor/Stony Field/Burial Grounds)
+    // is not yet populated here: those seams are coordinate-adjacency links that the engine
+    // wires in the (still-stubbed) inter-level outdoor placement pass, so the rooms' warp
+    // slots carry only floor-grid noise (flags&0xff0==0x70, whose slots resolve to -1 and
+    // are dropped). DBM derives those bridges geometrically (see generateLevelAdjacents doc).
+    const adj = try generateLevelAdjacents(&ctx, gpa, 0, 0, .normal, 3);
+    defer gpa.free(adj);
+    for (adj) |a| try std.testing.expect(a.dest_level_id != -1);
 }
 
 test "lib: outdoor shrines for Cold Plains (seed 1337, act 0 level 3) >= 1" {

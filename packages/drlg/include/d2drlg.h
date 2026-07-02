@@ -148,6 +148,27 @@ int32_t d2drlg_level_presets(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
                              int32_t level_id, D2DrlgPreset *out, int32_t cap);
 
 /*
+ * One adjacency bridge tile (DBM shape). `dest_level_id` is the Levels.txt id the warp
+ * leads to; `bridge_x`/`bridge_y` are level-LOCAL subtile coords (the DBM frame — the
+ * room-centre of the warp-flagged room). Mirrors the Zig lib.LevelAdjacent.
+ */
+typedef struct D2DrlgAdjacent {
+    int32_t dest_level_id;
+    int32_t bridge_x;
+    int32_t bridge_y;
+} D2DrlgAdjacent;
+
+/*
+ * Generate an act and write up to `cap` of a level's WARP/ADJACENCY BRIDGE TILES (one
+ * per set warp slot of every warp-flagged room whose destination resolves) into `out`.
+ * Bridge coords are level-LOCAL subtiles (the DBM frame). Returns the FULL count (>=0,
+ * may exceed `cap` => truncated), or a negative error code. NOTE: regenerates the whole
+ * act internally, so it is not cheap.
+ */
+int32_t d2drlg_level_adjacents(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
+                               int32_t level_id, D2DrlgAdjacent *out, int32_t cap);
+
+/*
  * Write an object row's Objects.txt "Name" (d2drlg_object_name) or description
  * (d2drlg_object_desc, column "description - not loaded") into `buf`, NUL-terminated if
  * it fits. Returns the string's byte length (>=0; may exceed `cap` => truncated), or a

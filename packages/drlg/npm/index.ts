@@ -11,6 +11,7 @@ const PAGE = 65536;
 const ROOM = 28; // sizeof(D2DrlgRoom): 7 x int32
 const SHRINE = 12; // sizeof(D2DrlgShrine): 3 x int32
 const PRESET = 16; // sizeof(D2DrlgPreset): 4 x int32
+const ADJ = 12; // sizeof(D2DrlgAdjacent): 3 x int32
 
 /** One room in the low-level `generateAct` view: world TILE rect + engine type fields. */
 export interface D2ActRoom {
@@ -77,8 +78,8 @@ export interface D2Level {
   rooms: D2Room[];
   /** preset units (objects / npc markers), DBM shape */
   presets: D2Preset[];
-  /** adjacent levels (filled by a later phase) */
-  adjacents: number[];
+  /** adjacent-level bridge tiles (DBM shape): one entry per warp bridge tile */
+  adjacents: D2Adjacent[];
   /** navigation tells (filled by a later phase) */
   tells: unknown[];
   /** collision grid width in SUBTILES (== size[0]) */
@@ -124,6 +125,19 @@ export interface D2Preset {
   /** Objects.txt description ("description - not loaded") — obj entries only */
   description?: string;
 }
+/** One adjacent-level bridge tile in the DeadlyBossMods map shape. */
+export interface D2Adjacent {
+  /** Levels.txt id of the destination level this bridge tile leads to */
+  levelNo: number;
+  /** DBM canonical (TitleCase, spaceless) name of the destination level */
+  name: string;
+  /** Levels.txt LevelName (in-game display name) of the destination level */
+  displayName: string;
+  /** level-LOCAL subtile X of the bridge tile (this level's frame) */
+  bridgeX: number;
+  /** level-LOCAL subtile Y of the bridge tile (this level's frame) */
+  bridgeY: number;
+}
 export interface D2Shrine {
   /** objects.txt class id: 130=Well, 84/2/81/83=Shrine variants */
   classId: number;
@@ -156,6 +170,7 @@ interface Exports {
   d2drlg_level_name(ctx: number, levelId: number, buf: number, cap: number): number;
   d2drlg_level_shrines(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_level_presets(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
+  d2drlg_level_adjacents(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_level_collision_raw(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number, outW: number, outH: number): number;
   d2drlg_object_name(txtFileNo: number, buf: number, cap: number): number;
   d2drlg_object_desc(txtFileNo: number, buf: number, cap: number): number;
@@ -329,7 +344,7 @@ export class Drlg {
         size: [lv.size[0] * 5, lv.size[1] * 5],
         rooms,
         presets: this.presets(s, lv.id, difficulty),
-        adjacents: [],
+        adjacents: this.adjacents(s, lv.id, difficulty),
         tells: [],
         collisionWidth: cw,
         collisionHeight: ch,
@@ -424,6 +439,41 @@ export class Drlg {
     return out;
   }
 
+  /**
+   * A level's ADJACENT-LEVEL BRIDGE TILES in the DeadlyBossMods shape: one entry per
+   * warp bridge tile, each `{levelNo, name, displayName, bridgeX, bridgeY}` where the
+   * destination level's name/displayName are resolved the same way `render()` names
+   * levels, and bridgeX/bridgeY are level-LOCAL subtile coords (this level's frame).
+   * `levelId` is a Levels.txt id (Cold Plains = 3); the owning act is derived internally.
+   * Returns [] if the level has no resolvable warp bridges.
+   */
+  adjacents(seed: number, levelId: number, difficulty = 0): D2Adjacent[] {
+    const ex = this.#ex;
+    let cap = 128;
+    let base = scratch(ex.memory, cap * ADJ);
+    let n = ex.d2drlg_level_adjacents(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
+    if (n < 0) throw new Error('d2drlg: level_adjacents failed (' + n + ')');
+    if (n > cap) { // truncated: regrow to the full count and refetch
+      cap = n;
+      base = scratch(ex.memory, cap * ADJ);
+      n = ex.d2drlg_level_adjacents(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
+    }
+    // Read every raw (dest, x, y) triple BEFORE resolving names: #levelName grows wasm
+    // memory, which detaches the backing buffer (invalidating `base`/any DataView).
+    const dv = new DataView(ex.memory.buffer);
+    const raw: Array<[number, number, number]> = [];
+    for (let i = 0; i < n; i++) {
+      const b = base + i * ADJ;
+      raw.push([dv.getInt32(b, true), dv.getInt32(b + 4, true), dv.getInt32(b + 8, true)]);
+    }
+    const out: D2Adjacent[] = [];
+    for (const [dest, bx, by] of raw) {
+      const displayName = dbmDisplayName(dest, this.#levelName(dest));
+      out.push({ levelNo: dest, name: dbmLevelName(dest, displayName), displayName, bridgeX: bx, bridgeY: by });
+    }
+    return out;
+  }
+
   /** ABI version of the loaded module. */
   abiVersion(): number { return this.#ex.d2drlg_abi_version(); }
 
@@ -453,6 +503,11 @@ export async function shrines(seed: number, levelId: number, difficulty = 0, act
 /** A level's preset units (DBM shape). Lazily loads the wasm on first call. */
 export async function presets(seed: number, levelId: number, difficulty = 0): Promise<D2Preset[]> {
   return (await inst()).presets(seed, levelId, difficulty);
+}
+
+/** A level's adjacent-level bridge tiles (DBM shape). Lazily loads the wasm on first call. */
+export async function adjacents(seed: number, levelId: number, difficulty = 0): Promise<D2Adjacent[]> {
+  return (await inst()).adjacents(seed, levelId, difficulty);
 }
 
 /** A level's raw subtile collision grid. Lazily loads the wasm on first call. */
