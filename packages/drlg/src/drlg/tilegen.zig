@@ -345,7 +345,9 @@ fn blitEntry(cells: []u8, w: usize, h: usize, t: *const dt1.Tile, tx: i32, ty: i
         while (sx < SUBTILES) : (sx += 1) {
             const gx = utx * SUBTILES + sx;
             if (gx >= w) continue;
-            cells[gy * w + gx] |= t.subtile(sx, sy);
+            // Engine reads the DT1 subtile block Y-flipped (TileLibrary_AddCollision
+            // 0x64c4c0): grid cell (dx,dy) <- byte[(4-dy)*5+dx]. Match it here.
+            cells[gy * w + gx] |= t.subtile(sx, SUBTILES - 1 - sy);
         }
     }
 }

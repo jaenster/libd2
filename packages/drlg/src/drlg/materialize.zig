@@ -535,6 +535,18 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
             blitTile(&coll, &pWall[wi]);
         }
     }
+    // The engine's AllocRoomCollisionGrid (0x64c900) stamps the FLOOR, WALL AND ROOF
+    // tile layers into the CollMap. The roof array holds the room's shadow/roof tiles
+    // (createShadowTileData); in caves/dungeons the solid-rock ceiling is a roof tile
+    // that carries wall collision, so omitting it leaves the whole dungeon exterior
+    // void instead of blocked.
+    if (pTileGrid.*.pRoofTiles) |rp| {
+        const pRoof: [*]s.D2DrlgTileDataStrc = @ptrCast(@alignCast(rp));
+        var ri: usize = 0;
+        while (ri < @as(usize, @intCast(pTileGrid.*.nShadows))) : (ri += 1) {
+            blitTile(&coll, &pRoof[ri]);
+        }
+    }
 
     // No-floor subtiles are void/unwalkable: a subtile whose tile has no floor tile
     // is a dungeon gap (the runtime CollMap has no walkable void, so "no floor =
@@ -604,6 +616,10 @@ fn blitTile(coll: *collision.CollisionGrid, td: *const s.D2DrlgTileDataStrc) voi
     const tx: usize = @intCast(td.nPosX);
     const ty: usize = @intCast(td.nPosY);
     const extra = drawExtraColl(td.nFlags);
+    // The engine's TileLibrary_AddCollision (0x64c4c0) reads the DT1 25-byte subtile
+    // block with the row (Y) axis FLIPPED: grid cell at tile-relative (dx,dy) takes
+    // byte[(4-dy)*5 + dx]. Mirror that here (the extra draw-flag bits are flat-filled
+    // across the whole footprint, so only the DT1 byte read flips).
     var sy: usize = 0;
     while (sy < SUBTILES) : (sy += 1) {
         const gy = ty * SUBTILES + sy;
@@ -612,7 +628,7 @@ fn blitTile(coll: *collision.CollisionGrid, td: *const s.D2DrlgTileDataStrc) voi
         while (sx < SUBTILES) : (sx += 1) {
             const gx = tx * SUBTILES + sx;
             if (gx >= coll.width) continue;
-            coll.cells[gy * coll.width + gx] |= t.subtile(sx, sy) | extra;
+            coll.cells[gy * coll.width + gx] |= t.subtile(sx, SUBTILES - 1 - sy) | extra;
         }
     }
 }

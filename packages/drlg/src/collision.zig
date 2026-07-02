@@ -139,7 +139,11 @@ fn blit(grid: *CollisionGrid, t: *const dt1.Tile, tx: usize, ty: usize) void {
         while (sx < SUBTILES_PER_TILE) : (sx += 1) {
             const gx = tx * SUBTILES_PER_TILE + sx;
             if (gx >= grid.width) continue;
-            grid.cells[gy * grid.width + gx] |= t.subtile(sx, sy);
+            // The engine's TileLibrary_AddCollision (0x64c4c0) reads the DT1 25-byte
+            // subtile block with the row (Y) axis flipped: grid cell (dx,dy) takes
+            // byte[(4-dy)*5+dx]. Mirror that so this rasterizer matches the runtime
+            // CollMap (and the materialize.zig path).
+            grid.cells[gy * grid.width + gx] |= t.subtile(sx, SUBTILES_PER_TILE - 1 - sy);
         }
     }
 }
