@@ -1368,6 +1368,83 @@ fn appendOutdoorShrines(pLevel: *abi.D2DrlgLevelStrc, out: *std.ArrayListUnmanag
     }
 }
 
+/// Generate an entire act and return the seeded OUTDOOR SHRINES/WELLS of one level
+/// (`level_id`). Mirrors the generateActObjects/collision setup (one fog pool + one
+/// D2DrlgStrc for the whole act, real inter-level coords + preset picks + orths), then
+/// finds the level whose id == `level_id`, runs InitLevel on it, and collects its
+/// outdoor shrines via appendOutdoorShrines. Returns an empty slice if the level has
+/// no outdoor shrines (or isn't in this act). x/y are world SUBTILE coords (÷5 for
+/// tiles). Caller owns the returned slice (free with `out_alloc`). `act_no` is 0-based.
+pub fn generateLevelShrines(
+    ctx: *Ctx,
+    out_alloc: std.mem.Allocator,
+    act_no: i32,
+    seed: u32,
+    diff: Difficulty,
+    level_id: i32,
+) ![]OutdoorShrine {
+    var pool = fog.PoolManager.init(ctx.gpa);
+    defer pool.deinit();
+    const saved_alloc = dpool.allocator;
+    const saved_tables = dtables.g_lvl_tables;
+    defer {
+        dpool.allocator = saved_alloc;
+        dtables.g_lvl_tables = saved_tables;
+    }
+    dtables.g_lvl_tables = &ctx.lvl;
+    dpool.allocator = pool.allocator();
+    dpool.resetRegistry();
+    ctx.lvl.resetGenCache(); // drop LvlSub pDrlgFile pointers into the prior (freed) pool
+
+    var act = try act_mod.build(ctx.gpa, &ctx.act, act_no, seed);
+    defer act.deinit(ctx.gpa);
+
+    var pDrlg: abi.D2DrlgStrc = undefined;
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+
+    var ids: std.ArrayListUnmanaged(i32) = .empty;
+    defer ids.deinit(out_alloc);
+    var row: usize = 0;
+    while (row < ctx.act.levelCount()) : (row += 1) {
+        if (ctx.act.levelAtRow(row)) |lv| {
+            if (lv.act == act_no) try ids.append(out_alloc, @intCast(lv.id));
+        }
+    }
+
+    // Pass 1: real world coords BEFORE orths.
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const c = act.coords(&ctx.act, lid);
+        pLevel.sCoordinatesAndSize = .{
+            .WorldPosition = .{ .x = c.x, .y = c.y },
+            .WorldSize = .{ .x = c.w, .y = c.h },
+        };
+    }
+    if (act_no == 0) drlg.applyAct1PresetPicks(&pDrlg, &ctx.act, seed);
+    if (act_no == 1) drlg.applyAct2PresetPicks(&pDrlg, &ctx.act, seed);
+    drlg.buildInterLevelOrths(&pDrlg);
+
+    // Pass 2: generate each level; collect shrines for the requested one.
+    var shrines: std.ArrayListUnmanaged(OutdoorShrine) = .empty;
+    errdefer shrines.deinit(out_alloc);
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        drlg.InitLevel(pLevel);
+        if (lid == level_id) try appendOutdoorShrines(pLevel, &shrines, out_alloc);
+    }
+    return shrines.toOwnedSlice(out_alloc);
+}
+
+test "lib: outdoor shrines for Cold Plains (seed 1337, act 0 level 3) >= 1" {
+    const gpa = std.testing.allocator;
+    defer dpool.allocator = dpool.default_allocator;
+    var ctx = try Ctx.init(gpa);
+    defer ctx.deinit();
+    const shrines = try generateLevelShrines(&ctx, gpa, 0, 1337, .normal, 3);
+    defer gpa.free(shrines);
+    try std.testing.expect(shrines.len >= 1);
+}
+
 /// Collect the collision footprints of every generated OBJECT in a level, in
 /// level-local subtile coords (origin = level WorldPosition). Objects never enter
 /// the tile-derived collision grid (Colbit.object 0x400 is a runtime unit bit), so

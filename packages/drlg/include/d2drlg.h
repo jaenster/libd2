@@ -77,6 +77,26 @@ int32_t d2drlg_level_collision(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty
                                int32_t level_id, uint8_t *out, int32_t cap,
                                int32_t *out_w, int32_t *out_h);
 
+/*
+ * One outdoor shrine/well: resolved objects.txt class id + world SUBTILE position.
+ * x/y are subtile coords (divide by 5 for tile coords).
+ */
+typedef struct D2DrlgShrine {
+    int32_t class_id;  /* 130=Well, 84/2/81/83=Shrine variants */
+    int32_t x;         /* world subtile X (/5 for tile) */
+    int32_t y;         /* world subtile Y (/5 for tile) */
+} D2DrlgShrine;
+
+/*
+ * Generate an act and write up to `cap` of a level's seeded OUTDOOR SHRINES/WELLS
+ * into `out`. difficulty: 0=normal 1=nightmare 2=hell. Returns the FULL shrine count
+ * (>=0, may exceed `cap` => truncated), 0 if the level has none, or a negative error
+ * code. x/y are world subtile coords (divide by 5 for tiles). NOTE: regenerates the
+ * whole act internally, so it is not cheap.
+ */
+int32_t d2drlg_level_shrines(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
+                             int32_t level_id, D2DrlgShrine *out, int32_t cap);
+
 /* Returns the ABI version (currently 1). */
 uint32_t d2drlg_abi_version(void);
 

@@ -196,6 +196,51 @@ export fn d2drlg_level_collision(
     return 0; // no collision grid for this level
 }
 
+/// One outdoor shrine/well: resolved objects.txt class id + world SUBTILE position.
+/// Field order/types MUST match `D2DrlgShrine` in d2drlg.h. Mirrors `lib.OutdoorShrine`.
+/// x/y are subtile coords (÷5 for tile coords).
+pub const D2DrlgShrine = extern struct {
+    class_id: i32,
+    x: i32,
+    y: i32,
+};
+
+/// Generate an act and write up to `cap` of a level's seeded OUTDOOR SHRINES/WELLS
+/// (SpawnAct12Shrines → LvlSub Type-5) into `out`. `difficulty` is 0=normal
+/// 1=nightmare 2=hell. Returns the FULL shrine count (>=0, may exceed `cap` =>
+/// truncated), 0 if the level has none, or a negative error code. x/y are world
+/// SUBTILE coords (÷5 for tiles); class_id 130=Well, 84/2/81/83=Shrine variants.
+/// NOTE: regenerates the level's whole act internally, so it is not cheap.
+export fn d2drlg_level_shrines(
+    ctx: ?*Ctx,
+    seed: u32,
+    difficulty: i32,
+    level_id: i32,
+    out: [*]D2DrlgShrine,
+    cap: i32,
+) i32 {
+    const c = ctx orelse return -1;
+    const diff = diffFromInt(difficulty) orelse return -2;
+    if (cap < 0) return -3;
+
+    // Which act owns this level (Levels.txt Act column).
+    const tlv = c.inner.act.level(level_id) orelse return -4;
+    const act_no: i32 = @intCast(tlv.act);
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const shrines = lib.generateLevelShrines(&c.inner, a, act_no, seed, diff, level_id) catch return -5;
+    const cap_us: usize = @intCast(cap);
+    const n = @min(shrines.len, cap_us);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        out[i] = .{ .class_id = shrines[i].class_id, .x = shrines[i].x, .y = shrines[i].y };
+    }
+    return @intCast(shrines.len);
+}
+
 export fn d2drlg_abi_version() u32 {
     return 1;
 }

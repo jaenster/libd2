@@ -6,6 +6,7 @@ const { join } = require('node:path') as typeof import('node:path');
 
 const PAGE = 65536;
 const ROOM = 24; // sizeof(D2DrlgRoom): 6 x int32
+const SHRINE = 12; // sizeof(D2DrlgShrine): 3 x int32
 
 export interface D2Room {
   x: number; y: number; w: number; h: number;
@@ -31,6 +32,20 @@ export interface D2Act {
   act: number;
   levels: D2Level[];
 }
+export interface D2Shrine {
+  /** objects.txt class id: 130=Well, 84/2/81/83=Shrine variants */
+  classId: number;
+  /** world SUBTILE X */
+  x: number;
+  /** world SUBTILE Y */
+  y: number;
+  /** tile X = floor(x / 5) */
+  tileX: number;
+  /** tile Y = floor(y / 5) */
+  tileY: number;
+  /** classId === 130 */
+  isWell: boolean;
+}
 
 interface Exports {
   memory: WebAssembly.Memory;
@@ -44,6 +59,7 @@ interface Exports {
   d2drlg_act_level_placed(act: number, i: number): number;
   d2drlg_act_level_room_count(act: number, i: number): number;
   d2drlg_act_rooms(act: number, i: number, out: number, cap: number): number;
+  d2drlg_level_shrines(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_abi_version(): number;
 }
 
@@ -100,6 +116,30 @@ class Drlg {
     }
   }
 
+  shrines(seed: number, levelId: number, difficulty = 0, actNo = 0): D2Shrine[] {
+    void actNo; // the owning act is derived from levelId; actNo accepted for API symmetry
+    const ex = this.#ex;
+    let cap = 64;
+    let base = scratch(ex.memory, cap * SHRINE);
+    let n = ex.d2drlg_level_shrines(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
+    if (n < 0) throw new Error('d2drlg: level_shrines failed (' + n + ')');
+    if (n > cap) {
+      cap = n;
+      base = scratch(ex.memory, cap * SHRINE);
+      n = ex.d2drlg_level_shrines(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
+    }
+    const dv = new DataView(ex.memory.buffer);
+    const out: D2Shrine[] = [];
+    for (let i = 0; i < n; i++) {
+      const b = base + i * SHRINE;
+      const classId = dv.getInt32(b, true);
+      const x = dv.getInt32(b + 4, true);
+      const y = dv.getInt32(b + 8, true);
+      out.push({ classId, x, y, tileX: Math.floor(x / 5), tileY: Math.floor(y / 5), isWell: classId === 130 });
+    }
+    return out;
+  }
+
   abiVersion(): number { return this.#ex.d2drlg_abi_version(); }
   close(): void { this.#ex.d2drlg_ctx_destroy(this.#ctx); }
 }
@@ -110,9 +150,12 @@ const inst = (): Promise<Drlg> => (_p ??= open());
 async function generateAct(seed: number, difficulty = 0, actNo = 0): Promise<D2Act> {
   return (await inst()).generateAct(seed, difficulty, actNo);
 }
+async function shrines(seed: number, levelId: number, difficulty = 0, actNo = 0): Promise<D2Shrine[]> {
+  return (await inst()).shrines(seed, levelId, difficulty, actNo);
+}
 async function abiVersion(): Promise<number> {
   return (await inst()).abiVersion();
 }
 
-module.exports = { generateAct, abiVersion, open, Drlg };
+module.exports = { generateAct, shrines, abiVersion, open, Drlg };
 module.exports.default = generateAct;
