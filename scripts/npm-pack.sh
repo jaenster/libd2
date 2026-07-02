@@ -2,13 +2,31 @@
 #
 # Package a package's wasm build as an npm module and publish it.
 #   npm-pack.sh <name> <version> <path-to-wasm>
-# Publishes @jaenster/d2<name> containing the .wasm + a thin ESM loader that
-# instantiates it and returns its exports + memory. Requires NODE_AUTH_TOKEN.
+# If packages/<name>/npm/ exists, builds a dual ESM+CommonJS package from its
+# index.ts + index.cts + the wasm (as d2<name>.wasm). Packages with no npm/ dir
+# are skipped. Publishing requires NODE_AUTH_TOKEN.
 set -euo pipefail
 
 name="$1"; version="$2"; wasm="$3"
+
+# Resolve package sources relative to the repo root (this script lives in scripts/),
+# so the script works from any CWD. Tarballs still land in the invoking CWD.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+dest="$PWD"
+npmsrc="${repo_root}/packages/${name}/npm"
+if [ ! -d "$npmsrc" ]; then
+  echo "npm-pack: packages/${name}/npm not found — skipping npm for '${name}'"
+  exit 0
+fi
+if [ ! -f "$npmsrc/index.ts" ] || [ ! -f "$npmsrc/index.cts" ]; then
+  echo "npm-pack: ${npmsrc} missing index.ts or index.cts — skipping '${name}'"
+  exit 0
+fi
+
 pkgdir="$(mktemp -d)"
-cp "$wasm" "$pkgdir/d2${name}.wasm"
+cp "$npmsrc/index.ts"  "$pkgdir/index.ts"
+cp "$npmsrc/index.cts" "$pkgdir/index.cts"
+cp "$wasm"             "$pkgdir/d2${name}.wasm"
 
 cat > "$pkgdir/package.json" <<JSON
 {
@@ -16,57 +34,22 @@ cat > "$pkgdir/package.json" <<JSON
   "version": "${version}",
   "description": "WebAssembly build of the libd2 '${name}' package (clean-room Diablo II 1.14d).",
   "type": "module",
-  "main": "index.mjs",
-  "types": "index.d.ts",
-  "files": ["index.mjs", "index.d.ts", "d2${name}.wasm"],
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "import": "./index.ts",
+      "require": "./index.cts"
+    }
+  },
+  "files": ["index.ts", "index.cts", "d2${name}.wasm"],
   "license": "MIT",
   "repository": "github:jaenster/libd2"
 }
 JSON
 
-cat > "$pkgdir/index.d.ts" <<TS
-// TypeScript definitions for @jaenster/d2${name} (libd2 '${name}' wasm build).
-
-/** The module's C-ABI exports: d2${name}_* functions (numbers in, number out —
- *  strings/structs are byte offsets into \`memory\`) plus the wasm memory. */
-export interface D2Exports {
-  memory: WebAssembly.Memory;
-  [fn: string]: WebAssembly.ExportValue;
-}
-
-export interface D2Instance {
-  exports: D2Exports;
-  memory: WebAssembly.Memory;
-}
-
-/** Instantiate the wasm module. \`imports\` is usually unnecessary (the module is
- *  self-contained). Returns the raw C-ABI exports + memory. */
-export function instantiate(imports?: WebAssembly.Imports): Promise<D2Instance>;
-export default instantiate;
-TS
-
-cat > "$pkgdir/index.mjs" <<JS
-// Thin loader: instantiate the wasm module and hand back its exports + memory.
-// The exports are the package's C-ABI functions (d2${name}_*). Strings/structs
-// are passed as pointers into \`memory\` — see the libd2 USAGE docs for helpers.
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-
-const WASM = 'd2${name}.wasm';
-
-export async function instantiate(imports = {}) {
-  const bytes = await readFile(fileURLToPath(new URL('./' + WASM, import.meta.url)));
-  // The modules are libc-free freestanding wasm: they import nothing, so no WASI
-  // or env shim is needed. Any imports you pass are simply forwarded.
-  const { instance } = await WebAssembly.instantiate(bytes, imports);
-  return { exports: instance.exports, memory: instance.exports.memory };
-}
-export default instantiate;
-JS
-
 # DRY_RUN=1 packs a tarball into the CWD instead of publishing (for local checks).
 if [ -n "${DRY_RUN:-}" ]; then
-  ( cd "$pkgdir" && npm pack --pack-destination "$OLDPWD" )
+  ( cd "$pkgdir" && npm pack --pack-destination "$dest" )
   echo "packed @jaenster/d2${name}@${version} (dry run)"
 else
   ( cd "$pkgdir" && npm publish --access public )
