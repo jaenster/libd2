@@ -78,6 +78,7 @@ The `drlg` C API:
 typedef struct D2DrlgCtx D2DrlgCtx;   // loaded game tables
 typedef struct D2DrlgAct D2DrlgAct;   // a generated act
 typedef struct D2DrlgRoom { int32_t x, y, w, h, n_type, n_preset_type; } D2DrlgRoom;
+typedef struct D2DrlgShrine { int32_t class_id, x, y; } D2DrlgShrine;  // x/y are subtiles (÷5 for tiles)
 
 D2DrlgCtx *d2drlg_ctx_create(void);
 void       d2drlg_ctx_destroy(D2DrlgCtx *ctx);
@@ -89,6 +90,9 @@ int32_t    d2drlg_act_level_id(D2DrlgAct *act, int32_t level_index);
 int32_t    d2drlg_act_level_room_count(D2DrlgAct *act, int32_t level_index);
 // writes up to `cap` rooms of a level into `out`; returns full count (may exceed cap) or <0.
 int32_t    d2drlg_act_rooms(D2DrlgAct *act, int32_t level_index, D2DrlgRoom *out, int32_t cap);
+// writes up to `cap` of a level's seeded outdoor shrines/wells; returns full count or <0.
+int32_t    d2drlg_level_shrines(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
+                                int32_t level_id, D2DrlgShrine *out, int32_t cap);
 uint32_t   d2drlg_abi_version(void);
 ```
 

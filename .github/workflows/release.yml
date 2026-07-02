@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write   # create tags + releases
+  id-token: write   # OIDC trusted publishing to npm (provenance, no NPM_TOKEN secret)
 
 jobs:
   detect:
@@ -94,11 +95,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { path: artifacts, pattern: dist-*, merge-multiple: true }
       - uses: actions/setup-node@v4
-        with: { node-version: 20, registry-url: 'https://registry.npmjs.org' }
+        with: { node-version: 22, registry-url: 'https://registry.npmjs.org' }
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest   # trusted publishing needs npm >= 11.5.1
       - name: Package, tag, release, publish
         env:
           GH_TOKEN: ${{ github.token }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DRY_RUN_INPUT: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
@@ -126,12 +128,15 @@ jobs:
               --title "$name v$version" \
               --notes "Release of the \`$name\` package (v$version). Native libs + headers per target, plus wasm."
 
-            # npm: publish the wasm build behind the typed shim, if a token is set.
+            # npm: publish the wasm build behind the typed shim via OIDC trusted
+            # publishing (build provenance, no NPM_TOKEN). Requires the package to be
+            # configured with this repo/workflow as a trusted publisher on npmjs.com,
+            # and a first release published by hand (OIDC can't bootstrap the name).
             wasm="$(find artifacts -path "*/$name/wasm32-freestanding/*" -name '*.wasm' | head -1 || true)"
-            if [ -n "${NODE_AUTH_TOKEN:-}" ] && [ -n "$wasm" ]; then
+            if [ -n "$wasm" ]; then
               scripts/npm-pack.sh "$name" "$version" "$wasm"
             else
-              echo "skip npm ($name): no NPM_TOKEN or no wasm artifact"
+              echo "skip npm ($name): no wasm artifact"
             fi
             rm -rf out
             echo "::endgroup::"
