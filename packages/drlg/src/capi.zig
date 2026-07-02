@@ -374,6 +374,50 @@ export fn d2drlg_level_presets(
     return @intCast(presets.len);
 }
 
+/// One adjacency bridge tile for the DBM-shaped shim. Field order/types MUST match
+/// `D2DrlgAdjacent` in d2drlg.h. Mirrors `lib.LevelAdjacent`. `dest_level_id` is the
+/// Levels.txt id the warp leads to; `bridge_x`/`bridge_y` are level-LOCAL subtile coords
+/// (the DBM frame — the room-centre of the warp-flagged room).
+pub const D2DrlgAdjacent = extern struct {
+    dest_level_id: i32,
+    bridge_x: i32,
+    bridge_y: i32,
+};
+
+/// Generate an act and write up to `cap` of a level's WARP/ADJACENCY BRIDGE TILES (one
+/// per set warp slot of every warp-flagged room whose destination resolves) into `out`.
+/// Bridge coords are level-LOCAL subtiles (the DBM frame). Returns the FULL count (>=0,
+/// may exceed `cap` => truncated), or a negative error code. `difficulty` 0/1/2.
+/// NOTE: regenerates the level's whole act internally, so it is not cheap.
+export fn d2drlg_level_adjacents(
+    ctx: ?*Ctx,
+    seed: u32,
+    difficulty: i32,
+    level_id: i32,
+    out: [*]D2DrlgAdjacent,
+    cap: i32,
+) i32 {
+    const c = ctx orelse return -1;
+    const diff = diffFromInt(difficulty) orelse return -2;
+    if (cap < 0) return -3;
+
+    const tlv = c.inner.act.level(level_id) orelse return -4;
+    const act_no: i32 = @intCast(tlv.act);
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const adj = lib.generateLevelAdjacents(&c.inner, a, act_no, seed, diff, level_id) catch return -5;
+    const cap_us: usize = @intCast(cap);
+    const n = @min(adj.len, cap_us);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        out[i] = .{ .dest_level_id = adj[i].dest_level_id, .bridge_x = adj[i].x, .bridge_y = adj[i].y };
+    }
+    return @intCast(adj.len);
+}
+
 /// Write an object row's Objects.txt "Name" into `buf` (NUL-terminated if it fits) and
 /// return its byte length (>=0), or a negative error. `txt_file_no` is a preset obj's
 /// txtFileNo (0-based Objects.txt row). Empty (length 0) if the row is out of range.
