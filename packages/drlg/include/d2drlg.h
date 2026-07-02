@@ -93,6 +93,20 @@ int32_t d2drlg_level_collision(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty
                                int32_t *out_w, int32_t *out_h);
 
 /*
+ * Generate a level's RAW subtile CollMap grid: one LITTLE-ENDIAN uint16 per subtile,
+ * row-major from the level-local top-left (the DeadlyBossMods frame). Each cell is the
+ * exact engine Colbit flag set (0x01 wall, 0x02 visible, 0x04 missile_barrier, 0x08
+ * noplayer, 0x10 preset, 0x20 no_floor, ...); uncovered/OOB cells are 0xFFFF. Grid dims
+ * equal the level WorldSize*5 (Cold Plains 400x400). Writes up to `cap` uint16 cells into
+ * `out` and always sets *out_w / *out_h to the FULL grid dims. Returns the FULL cell count
+ * (w*h, may exceed `cap` => truncated), 0 if the level has no collision grid, or a negative
+ * error code. NOTE: regenerates the whole act internally, so it is not cheap.
+ */
+int32_t d2drlg_level_collision_raw(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
+                                   int32_t level_id, uint16_t *out, int32_t cap,
+                                   int32_t *out_w, int32_t *out_h);
+
+/*
  * One outdoor shrine/well: resolved objects.txt class id + world SUBTILE position.
  * x/y are subtile coords (divide by 5 for tile coords).
  */

@@ -5,6 +5,7 @@
 // needed — but they are exported for those who want lifecycle control.
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
 
 const PAGE = 65536;
 const ROOM = 28; // sizeof(D2DrlgRoom): 7 x int32
@@ -80,6 +81,29 @@ export interface D2Level {
   adjacents: number[];
   /** navigation tells (filled by a later phase) */
   tells: unknown[];
+  /** collision grid width in SUBTILES (== size[0]) */
+  collisionWidth: number;
+  /** collision grid height in SUBTILES (== size[1]) */
+  collisionHeight: number;
+  /**
+   * base64 of zlib-deflate of the level-local subtile CollMap: one little-endian
+   * uint16 per cell, row-major (collisionWidth*collisionHeight cells). Each cell is
+   * the raw engine Colbit flag set (0x01 wall, 0x02 visible, 0x04 missile_barrier,
+   * 0x08 noplayer, 0x10 preset, 0x20 no_floor, ...); uncovered/OOB cells are 0xFFFF.
+   * Inflate with `zlib.inflateSync` to recover the grid. Byte-for-byte the deflate
+   * output differs from other zlib implementations, but the INFLATED grid matches
+   * DeadlyBossMods cell-for-cell.
+   */
+  collisionDeflateB64: string;
+}
+/** A level's raw collision grid: level-local subtile CollMap flags, row-major. */
+export interface D2Collision {
+  /** width in subtiles */
+  width: number;
+  /** height in subtiles */
+  height: number;
+  /** raw Colbit u16 per cell, row-major (width*height); 0xFFFF = uncovered/OOB */
+  cells: Uint16Array;
 }
 /** A whole act's map in the DeadlyBossMods response shape. */
 export interface D2Map {
@@ -132,6 +156,7 @@ interface Exports {
   d2drlg_level_name(ctx: number, levelId: number, buf: number, cap: number): number;
   d2drlg_level_shrines(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_level_presets(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
+  d2drlg_level_collision_raw(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number, outW: number, outH: number): number;
   d2drlg_object_name(txtFileNo: number, buf: number, cap: number): number;
   d2drlg_object_desc(txtFileNo: number, buf: number, cap: number): number;
   d2drlg_abi_version(): number;
@@ -236,6 +261,37 @@ export class Drlg {
     return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(ex.memory.buffer, buf, n));
   }
 
+  // Read a level's RAW subtile CollMap (level-local, row-major LE u16). Two passes:
+  // probe (cap 0) to learn the grid dims, then fetch the whole grid. Returns a COPY
+  // (wasm memory.grow may detach the backing buffer after this returns).
+  #collisionRaw(seed: number, levelId: number, difficulty: number): D2Collision {
+    const ex = this.#ex;
+    // Probe: cap 0 writes nothing but fills out_w/out_h; the `out` pointer is unused.
+    const probe = scratch(ex.memory, 8);
+    const total = ex.d2drlg_level_collision_raw(this.#ctx, seed >>> 0, difficulty, levelId, probe, 0, probe, probe + 4);
+    if (total < 0) throw new Error('d2drlg: level_collision_raw failed (' + total + ')');
+    let dv = new DataView(ex.memory.buffer);
+    const width = dv.getInt32(probe, true);
+    const height = dv.getInt32(probe + 4, true);
+    if (total === 0 || width <= 0 || height <= 0) return { width: 0, height: 0, cells: new Uint16Array(0) };
+    const cells = width * height; // == total
+    const base = scratch(ex.memory, cells * 2 + 8);
+    const outp = base + cells * 2;
+    ex.d2drlg_level_collision_raw(this.#ctx, seed >>> 0, difficulty, levelId, base, cells, outp, outp + 4);
+    // Copy out of wasm linear memory before any later grow detaches the buffer.
+    const u16 = new Uint16Array(ex.memory.buffer, base, cells).slice();
+    return { width, height, cells: u16 };
+  }
+
+  /**
+   * A level's RAW subtile collision grid (level-local, row-major). Each cell is the
+   * engine Colbit flag set; uncovered/OOB cells are 0xFFFF. `levelId` is a Levels.txt
+   * id (Cold Plains = 3); the owning act is derived internally.
+   */
+  collision(seed: number, levelId: number, difficulty = 0): D2Collision {
+    return this.#collisionRaw(seed, levelId, difficulty);
+  }
+
   /**
    * Assemble a whole act in the DeadlyBossMods map shape: per-level metadata
    * (levelNo/name/displayName/act/origin/size), rooms in level-local SUBTILE coords,
@@ -256,6 +312,14 @@ export class Drlg {
         roomNo: r.pickedFile,
         subNo: r.pickedFile,
       }));
+      const coll = this.#collisionRaw(s, lv.id, difficulty);
+      // Grid dims equal the level's subtile size; if a level yields no grid, emit a
+      // full OOB-fill grid of the expected size so the shape is always consistent.
+      const cw = coll.width || lv.size[0] * 5;
+      const ch = coll.height || lv.size[1] * 5;
+      const cellCount = cw * ch;
+      const u16 = coll.cells.length === cellCount ? coll.cells : new Uint16Array(cellCount).fill(0xffff);
+      const collisionDeflateB64 = deflateSync(Buffer.from(u16.buffer, u16.byteOffset, u16.byteLength)).toString('base64');
       return {
         levelNo: lv.id,
         name: dbmLevelName(lv.id, displayName),
@@ -267,6 +331,9 @@ export class Drlg {
         presets: this.presets(s, lv.id, difficulty),
         adjacents: [],
         tells: [],
+        collisionWidth: cw,
+        collisionHeight: ch,
+        collisionDeflateB64,
       };
     });
     return { seed: s, levels };
@@ -386,6 +453,11 @@ export async function shrines(seed: number, levelId: number, difficulty = 0, act
 /** A level's preset units (DBM shape). Lazily loads the wasm on first call. */
 export async function presets(seed: number, levelId: number, difficulty = 0): Promise<D2Preset[]> {
   return (await inst()).presets(seed, levelId, difficulty);
+}
+
+/** A level's raw subtile collision grid. Lazily loads the wasm on first call. */
+export async function collision(seed: number, levelId: number, difficulty = 0): Promise<D2Collision> {
+  return (await inst()).collision(seed, levelId, difficulty);
 }
 
 /** ABI version of the module. Lazily loads the wasm on first call. */
