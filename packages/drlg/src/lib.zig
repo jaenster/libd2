@@ -993,9 +993,19 @@ fn compositeLevelRaw(alloc: std.mem.Allocator, lc: LevelColl) !?RawLevelComposit
         }
     }
 
-    // Any subtile no room covered is the DBM OOB fill.
+    // Any subtile no room covered is the DBM OOB fill. Un-floored IN-ROOM cells
+    // carry our internal synthetic no_floor marker (0x20 — NOT an engine bit): the
+    // runtime CollMap has no walkable void inside a room, an un-floored cell is
+    // solid rock = block-walk + block-missile (0x05). Emit that engine-faithful
+    // value here so the raw grid matches the runtime CollMap (DBM) exactly; the
+    // CompState composite keeps reading the internal 0x20 for its own void logic.
+    const solid = collision.Colbit.wall | collision.Colbit.missile_barrier;
     for (cells) |*c| {
-        if (c.* == 0xFFFF) c.* = RAW_OOB_FILL;
+        if (c.* == 0xFFFF) {
+            c.* = RAW_OOB_FILL;
+        } else if (c.* & collision.Colbit.no_floor != 0) {
+            c.* = (c.* & ~collision.Colbit.no_floor) | solid;
+        }
     }
 
     return .{ .level_id = lc.level_id, .w = W, .h = H, .unresolved = lc.unresolved, .cells = cells };
