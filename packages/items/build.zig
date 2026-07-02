@@ -25,9 +25,12 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    // The CLIs use std.process.Args (native only); don't install them for wasm.
+    // The CLIs use std.process.Args (native only, and not cross-compilable to
+    // Windows); -Dcli=false skips them so release cross-compiles build only the
+    // shippable C-ABI libs + wasm. Local dev keeps them (default true).
     const is_wasm = target.result.cpu.arch == .wasm32;
-    if (!is_wasm) b.installArtifact(exe);
+    const cli = b.option(bool, "cli", "Build the dev CLI executables") orelse true;
+    if (cli and !is_wasm) b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -44,7 +47,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    if (!is_wasm) b.installArtifact(render_exe);
+    if (cli and !is_wasm) b.installArtifact(render_exe);
 
     const render_cmd = b.addRunArtifact(render_exe);
     render_cmd.step.dependOn(b.getInstallStep());

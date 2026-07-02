@@ -22,12 +22,12 @@ wasm module:
 cd packages/items
 zig build                                   # zig-out/lib/libd2items.* + zig-out/include/d2items.h
 zig build -Dtarget=aarch64-macos            # cross-compile (any target Zig supports)
-zig build -Dtarget=wasm32-wasi -Doptimize=ReleaseSmall   # zig-out/bin/d2items.wasm
+zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall   # zig-out/bin/d2items.wasm
 ```
 
-The wasm target is `wasm32-wasi` (some packages, e.g. `drlg`, route allocation
-through libc). The published npm loader ships a minimal WASI shim so the modules
-instantiate in Node and the browser without extra setup.
+The packages are libc-free, so the wasm build is `wasm32-freestanding` — it
+imports nothing and instantiates in any wasm runtime (Node, browser) with no WASI
+shim.
 
 ## Releases
 
