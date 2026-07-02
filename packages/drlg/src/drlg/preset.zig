@@ -148,6 +148,7 @@ fn CopyPresetUnit(pMemory: ?*s.D2PoolManagerStrc, pPresetUnit: [*c]s.D2PresetUni
     pNewPreset.*.nPosX = pPresetUnit.*.nPosX + nX;
     pNewPreset.*.nPosY = pPresetUnit.*.nPosY + nY;
     pNewPreset.*.nFlags = pPresetUnit.*.nFlags;
+    pNewPreset.*.nDbmCode = pPresetUnit.*.nDbmCode;
     if (pPresetUnit.*.pPath == null) {
         return pNewPreset;
     }
@@ -405,10 +406,12 @@ fn buildPresetUnits(pMemory: ?*s.D2PoolManagerStrc, pDrlgFile: *s.D2DrlgFileStrc
         var eType: s.eD2UnitType = undefined;
         var nClassId: i32 = undefined;
         var nMode: i32 = 0;
+        var nDbmCode: i32 = -1;
         switch (o.kind) {
             1 => {
                 eType = UNIT_MONSTER;
                 nClassId = presettables.monsterClassId(act_id, o.id);
+                nDbmCode = presettables.dbmMonsterCode(act_id, o.id);
                 nMode = 1;
             },
             2 => {
@@ -424,6 +427,7 @@ fn buildPresetUnits(pMemory: ?*s.D2PoolManagerStrc, pDrlgFile: *s.D2DrlgFileStrc
         u.*.nFlags = o.flags;
         u.*.eType = eType;
         u.*.nClassId = nClassId;
+        u.*.nDbmCode = nDbmCode;
         u.*.nMode = nMode;
         u.*.nPosX = o.x;
         u.*.nPosY = o.y;

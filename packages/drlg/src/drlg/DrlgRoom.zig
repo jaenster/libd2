@@ -1128,6 +1128,7 @@ pub fn AllocPresetUnit(pRoomEx: [*c]s.D2RoomExStrc, pMemory: ?*s.D2PoolManagerSt
     pPresetUnit.*.pPresetUnitNext = null;
     pPresetUnit.*.pPath = null;
     pPresetUnit.*.nFlags = 0;
+    pPresetUnit.*.nDbmCode = -1;
     pPresetUnit.*.eType = eUnitType;
     pPresetUnit.*.nClassId = nMonStatsId;
     pPresetUnit.*.nMode = bUseMonStatsMaybe;

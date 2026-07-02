@@ -45,9 +45,36 @@ pub var mon_size: i32 = 0;
 const Tables = struct {
     /// per act_id (0..4): resolved monster classId per DS1 monster id (file order).
     mon: [5][]const i32,
+    /// per act_id (0..4): the DBM/oracle "unresolved preset code" per DS1 monster id
+    /// (file order). Unlike `mon` (which folds SuperUniques and MonPlace into the same
+    /// object-as-monster region base+idx, so they collide), this keeps them in a single
+    /// concatenated ID space that the DBM oracle reports: MonStats[0..N) | SuperUniques |
+    /// MonPlace, where N = MonStats game row count (Expansion divider excluded). See
+    /// `dbmMonsterCode`.
+    dbm: [5][]const i32,
     /// gpsPresetObjectTable: 5 acts * 150 slots of object classIds.
     obj: [750]i32,
 };
+
+/// Sequential game index per name, SKIPPING the "Expansion" divider row (and blanks) so
+/// the returned index matches the engine's own row numbering. Also returns the count of
+/// real (non-divider) rows. First occurrence wins.
+fn gameIndexMap(a: std.mem.Allocator, src: []const u8, col_name: []const u8) struct {
+    m: std.StringHashMapUnmanaged(i32),
+    count: i32,
+} {
+    var t = txt.Table.parse(a, src) catch unreachable;
+    var m: std.StringHashMapUnmanaged(i32) = .{};
+    var i: usize = 0;
+    var idx: i32 = 0;
+    while (i < t.rowCount()) : (i += 1) {
+        const key = t.str(i, col_name);
+        if (key.len == 0 or std.mem.eql(u8, key, "Expansion")) continue; // divider row
+        if (!m.contains(key)) m.put(a, key, idx) catch unreachable;
+        idx += 1;
+    }
+    return .{ .m = m, .count = idx };
+}
 
 var g: ?Tables = null;
 
@@ -77,9 +104,18 @@ pub fn ensureLoaded() *const Tables {
     const su = nameIndexMap(a, superuniques_src, "Superunique");
     const mp = nameIndexMap(a, monplace_src, "code");
 
+    // DBM/oracle ID space: MonStats game rows (Expansion divider excluded), then
+    // SuperUniques game rows, then MonPlace. The two bases below place SuperUniques
+    // right after MonStats and MonPlace right after SuperUniques.
+    const mon_game = gameIndexMap(a, monstats_src, "Id");
+    const su_game = gameIndexMap(a, superuniques_src, "Superunique");
+    const dbm_su_base: i32 = mon_game.count; // 734: first SuperUnique code
+    const dbm_mp_base: i32 = mon_game.count + su_game.count; // 800: first MonPlace code
+
     // MonPreset: resolve each row's "Place" -> classId, grouped per act (Act-1).
     var mpr = txt.Table.parse(a, monpreset_src) catch unreachable;
     var blocks: [5]std.ArrayListUnmanaged(i32) = .{ .empty, .empty, .empty, .empty, .empty };
+    var dbmblk: [5]std.ArrayListUnmanaged(i32) = .{ .empty, .empty, .empty, .empty, .empty };
     var r: usize = 0;
     while (r < mpr.rowCount()) : (r += 1) {
         const act = mpr.int(r, "Act"); // 1..5
@@ -100,10 +136,21 @@ pub fn ensureLoaded() *const Tables {
         }
         const class_id: i32 = if (n_type == 1) w_place else w_place + mon_size;
         blocks[@intCast(act - 1)].append(a, class_id) catch unreachable;
+
+        // DBM code: MonStats passes through (n_type==1 -> its classId). SuperUniques and
+        // MonPlace map into the concatenated space using the same first-match order.
+        const dbm_code: i32 = switch (n_type) {
+            2 => dbm_su_base + (su_game.m.get(place) orelse 0),
+            1 => w_place,
+            else => dbm_mp_base + (mp.m.get(place) orelse 0),
+        };
+        dbmblk[@intCast(act - 1)].append(a, dbm_code) catch unreachable;
     }
 
     var mon: [5][]const i32 = undefined;
     for (0..5) |i| mon[i] = blocks[i].toOwnedSlice(a) catch unreachable;
+    var dbm: [5][]const i32 = undefined;
+    for (0..5) |i| dbm[i] = dbmblk[i].toOwnedSlice(a) catch unreachable;
 
     // gpsPresetObjectTable from the extracted .data blob (little-endian i32).
     var obj: [750]i32 = undefined;
@@ -112,7 +159,7 @@ pub fn ensureLoaded() *const Tables {
         obj[i] = std.mem.readInt(i32, objtable_bin[i * 4 ..][0..4], .little);
     }
 
-    g = .{ .mon = mon, .obj = obj };
+    g = .{ .mon = mon, .dbm = dbm, .obj = obj };
     return &g.?;
 }
 
@@ -122,6 +169,18 @@ pub fn monsterClassId(act_id: i32, id: i32) i32 {
     if (act_id < 0 or act_id > 4) return id;
     const blk = t.mon[@intCast(act_id)];
     if (id < 0 or id >= blk.len) return id; // recon: block-miss keeps the raw id
+    return blk[@intCast(id)];
+}
+
+/// DBM/oracle "unresolved preset code" for a DS1 monster unit (type 1): the same
+/// resolution as `monsterClassId`, but in the concatenated MonStats|SuperUniques|MonPlace
+/// ID space the oracle reports (so a SuperUnique and a MonPlace placeholder that share an
+/// object-as-monster classId get distinct codes). Block-miss keeps the raw id.
+pub fn dbmMonsterCode(act_id: i32, id: i32) i32 {
+    const t = ensureLoaded();
+    if (act_id < 0 or act_id > 4) return id;
+    const blk = t.dbm[@intCast(act_id)];
+    if (id < 0 or id >= blk.len) return id;
     return blk[@intCast(id)];
 }
 
