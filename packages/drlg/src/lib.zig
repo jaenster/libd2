@@ -498,6 +498,29 @@ pub fn generateActFull(
         });
     }
 
+    // Pass 3: cross-level SEAM adjacency. Every level's rooms are now placed, so the
+    // outdoor border-junction bridges (coordinate-adjacent rooms across a level seam) are
+    // pure geometry over out.items — no engine call, no RNG. Union with the per-room warp
+    // slots already gathered in l.adjacents (the far-away dungeon-entrance warp doors).
+    {
+        var boxes = try out_alloc.alloc(SeamLevelBox, out.items.len);
+        defer out_alloc.free(boxes);
+        for (out.items, 0..) |*l, i| boxes[i] = .{
+            .id = l.meta.level_id,
+            .origin_x = l.meta.origin_x,
+            .origin_y = l.meta.origin_y,
+            .rooms = l.meta.rooms,
+        };
+        for (out.items, 0..) |*l, i| {
+            var merged: std.ArrayListUnmanaged(LevelAdjacent) = .empty;
+            errdefer merged.deinit(out_alloc);
+            try merged.appendSlice(out_alloc, l.adjacents);
+            try appendSeamAdjacents(&merged, out_alloc, boxes, i);
+            out_alloc.free(l.adjacents);
+            l.adjacents = try merged.toOwnedSlice(out_alloc);
+        }
+    }
+
     return .{ .levels = try out.toOwnedSlice(out_alloc) };
 }
 
@@ -2017,13 +2040,54 @@ pub fn generateLevelAdjacents(
     if (act_no == 1) drlg.applyAct2PresetPicks(&pDrlg, &ctx.act, seed);
     drlg.buildInterLevelOrths(&pDrlg);
 
-    var result: []LevelAdjacent = &.{};
+    // Generate every level first — rooms persist in the DRLG pool — so the seam pass can
+    // see neighbouring levels' placed rooms regardless of id order.
     for (ids.items) |lid| {
         const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
         drlg.InitLevel(pLevel);
-        if (lid == level_id) result = try collectLevelAdjacents(out_alloc, pLevel);
     }
-    return result;
+
+    // Snapshot every level's placed-room boxes (world tiles) into a scratch arena.
+    var arena = std.heap.ArenaAllocator.init(ctx.gpa);
+    defer arena.deinit();
+    const aa = arena.allocator();
+    var boxes: std.ArrayListUnmanaged(SeamLevelBox) = .empty;
+    var target_idx: ?usize = null;
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        var rooms: std.ArrayListUnmanaged(RoomRect) = .empty;
+        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+        while (pr) |p| : (pr = p.pRoomExNext) {
+            try rooms.append(aa, .{
+                .x = p.sCoords.WorldPosition.x,
+                .y = p.sCoords.WorldPosition.y,
+                .w = p.sCoords.WorldSize.x,
+                .h = p.sCoords.WorldSize.y,
+                .n_type = 0,
+                .n_preset_type = 0,
+                .picked_file = -1,
+            });
+        }
+        if (lid == level_id) target_idx = boxes.items.len;
+        try boxes.append(aa, .{
+            .id = lid,
+            .origin_x = pLevel.sCoordinatesAndSize.WorldPosition.x,
+            .origin_y = pLevel.sCoordinatesAndSize.WorldPosition.y,
+            .rooms = try rooms.toOwnedSlice(aa),
+        });
+    }
+
+    // Union the per-room warp doors (getWarpDestinationFromArray) with the seam bridges.
+    var merged: std.ArrayListUnmanaged(LevelAdjacent) = .empty;
+    errdefer merged.deinit(out_alloc);
+    if (target_idx) |ti| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(level_id));
+        const ws = try collectLevelAdjacents(out_alloc, pLevel);
+        defer out_alloc.free(ws);
+        try merged.appendSlice(out_alloc, ws);
+        try appendSeamAdjacents(&merged, out_alloc, boxes.items, ti);
+    }
+    return merged.toOwnedSlice(out_alloc);
 }
 
 /// Collect one already-generated LIVE level's WARP/ADJACENCY BRIDGE TILES in the DBM
@@ -2055,6 +2119,43 @@ fn collectLevelAdjacents(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelS
         }
     }
     return out.toOwnedSlice(out_alloc);
+}
+
+/// One level's placed rooms (world TILE bounding boxes) + its origin, for the seam pass.
+pub const SeamLevelBox = struct { id: i32, origin_x: i32, origin_y: i32, rooms: []const RoomRect };
+
+/// Append the cross-level SEAM bridge tiles for `boxes[target_idx]` to `out`. A bridge is
+/// emitted for every pair (room R of the target level, room S of a DIFFERENT level) whose
+/// world-tile bounding boxes TOUCH (share an edge or corner), positioned at R's centre in
+/// the target's level-local subtile frame. This is the outdoor border-junction adjacency
+/// the engine builds as warp tiles between coordinate-adjacent rooms across a level seam
+/// (DRLGROOMTILE warp matching): two rooms in vertically/horizontally neighbouring level
+/// slabs whose edge projections overlap-or-touch get a warp. Reproducing it as geometry
+/// over the already-placed rooms is faithful to that output and consumes NO RNG, so it
+/// cannot perturb room generation. Validated multiset-exact against the DeadlyBossMods
+/// map API across seeds (the ONLY residual per level is the single far-away dungeon-
+/// entrance warp door, which is a preset warp unit, not a seam).
+fn appendSeamAdjacents(
+    out: *std.ArrayListUnmanaged(LevelAdjacent),
+    alloc: std.mem.Allocator,
+    boxes: []const SeamLevelBox,
+    target_idx: usize,
+) !void {
+    const t = boxes[target_idx];
+    for (t.rooms) |r| {
+        const cx = (r.x - t.origin_x) * SUB + @divTrunc(r.w * SUB, 2);
+        const cy = (r.y - t.origin_y) * SUB + @divTrunc(r.h * SUB, 2);
+        for (boxes, 0..) |b, bi| {
+            if (bi == target_idx) continue;
+            for (b.rooms) |sroom| {
+                if (r.x + r.w >= sroom.x and sroom.x + sroom.w >= r.x and
+                    r.y + r.h >= sroom.y and sroom.y + sroom.h >= r.y)
+                {
+                    try out.append(alloc, .{ .dest_level_id = b.id, .x = cx, .y = cy });
+                }
+            }
+        }
+    }
 }
 
 // Process-global Objects.txt lookup (name / description columns), decoded once and
@@ -2113,21 +2214,46 @@ test "lib: preset units for Cold Plains (seed 0, act 0 level 3) include obj+npc"
     try std.testing.expectEqualStrings("Torch1 Tiki", objectDescription(37));
 }
 
-test "lib: adjacents accessor runs and every entry resolves to a real destination" {
+test "lib: Cold Plains adjacents reproduce the DBM cross-seam bridge staircase" {
     const gpa = std.testing.allocator;
     defer dpool.allocator = dpool.default_allocator;
     var ctx = try Ctx.init(gpa);
     defer ctx.deinit();
-    // Invariant test: the accessor must run without crashing for a wilderness level and
-    // every emitted bridge tile must carry a resolved destination level id (!= -1). NOTE:
-    // Act-1 wilderness SEAM adjacency (Cold Plains<->Blood Moor/Stony Field/Burial Grounds)
-    // is not yet populated here: those seams are coordinate-adjacency links that the engine
-    // wires in the (still-stubbed) inter-level outdoor placement pass, so the rooms' warp
-    // slots carry only floor-grid noise (flags&0xff0==0x70, whose slots resolve to -1 and
-    // are dropped). DBM derives those bridges geometrically (see generateLevelAdjacents doc).
+    // Every emitted bridge tile carries a resolved destination (!= -1), and the outdoor
+    // border-junction SEAM pass (appendSeamAdjacents) reproduces DeadlyBossMods' per-tile
+    // links for Cold Plains (id 3, seed 0): coordinate-adjacent edge rooms across each
+    // level seam, at the source-room centre, one entry per touching neighbour room. DBM
+    // seed-0 counts: Blood Moor (id 2) x15, Stony Field (id 4) x15, Burial Grounds (id
+    // 17) x12. (The lone Cave Level 1 warp door is a preset warp, not a seam.)
     const adj = try generateLevelAdjacents(&ctx, gpa, 0, 0, .normal, 3);
     defer gpa.free(adj);
-    for (adj) |a| try std.testing.expect(a.dest_level_id != -1);
+    var n_moor: usize = 0;
+    var n_stony: usize = 0;
+    var n_burial: usize = 0;
+    for (adj) |a| {
+        try std.testing.expect(a.dest_level_id != -1);
+        switch (a.dest_level_id) {
+            2 => n_moor += 1,
+            4 => n_stony += 1,
+            17 => n_burial += 1,
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 15), n_moor);
+    try std.testing.expectEqual(@as(usize, 15), n_stony);
+    try std.testing.expectEqual(@as(usize, 12), n_burial);
+    // The specific corner-tapered Stony Field column (bridgeX 260 once .. 60 thrice) must
+    // land at the seam row (level-local subtile y == 380).
+    var stony_at_260: usize = 0;
+    var stony_at_60: usize = 0;
+    for (adj) |a| {
+        if (a.dest_level_id != 4) continue;
+        try std.testing.expectEqual(@as(i32, 380), a.y);
+        if (a.x == 260) stony_at_260 += 1;
+        if (a.x == 60) stony_at_60 += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), stony_at_260);
+    try std.testing.expectEqual(@as(usize, 3), stony_at_60);
 }
 
 test "lib: outdoor shrines for Cold Plains (seed 1337, act 0 level 3) >= 1" {
