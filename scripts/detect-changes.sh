@@ -11,9 +11,21 @@
 #   [{"name":"items","version":"0.1.1","tag":"items-v0.1.1","dir":"packages/items"}]
 # Empty array [] when nothing changed. Meant for `$GITHUB_OUTPUT` matrices but
 # runs fine locally too.
+#
+# Selection:
+#   (no args)            release only packages changed since their last tag
+#   <name> [<name>...]   force-release exactly those packages (changed or not)
+#   FORCE_ALL=1          force-release every C-ABI package
 set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+force_all="${FORCE_ALL:-}"
+declare -a want=("$@")   # explicit package names to force-release
+
+wanted() { # is $1 in the explicit list?
+  local n; for n in "${want[@]:-}"; do [ "$n" = "$1" ] && return 0; done; return 1
+}
 
 bump_patch() { # X.Y.Z -> X.Y.(Z+1)
   local IFS=.; read -r ma mi pa <<<"$1"; echo "${ma}.${mi}.$((pa + 1))"
@@ -32,13 +44,20 @@ for dir in packages/*/; do
   # moment it gains src/capi.zig.
   [ -f "$dir/src/capi.zig" ] || continue
 
+  # If an explicit list was given, only those packages are candidates.
+  if [ "${#want[@]}" -gt 0 ] && ! wanted "$name"; then continue; fi
+
+  # forced = FORCE_ALL, or this package named explicitly.
+  forced=""
+  { [ -n "$force_all" ] || { [ "${#want[@]}" -gt 0 ] && wanted "$name"; }; } && forced=1
+
   last="$(git tag --list "${name}-v*" --sort=-v:refname | head -1 || true)"
   if [ -z "$last" ]; then
     version="$(zon_version "$dir/build.zig.zon")"      # first ever release
     [ -n "$version" ] || version="0.1.0"
   else
-    # released before — only include if the tree changed since that tag
-    if git diff --quiet "$last" HEAD -- "$dir"; then
+    # released before — skip if unchanged, UNLESS forced.
+    if [ -z "$forced" ] && git diff --quiet "$last" HEAD -- "$dir"; then
       continue
     fi
     version="$(bump_patch "${last#"${name}"-v}")"
