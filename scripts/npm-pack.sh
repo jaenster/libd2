@@ -54,17 +54,11 @@ import { fileURLToPath } from 'node:url';
 
 const WASM = 'd2${name}.wasm';
 
-// Some packages link wasi-libc (their generator uses libc); the module then
-// imports wasi_snapshot_preview1. These are deterministic, seed-driven compute
-// modules, so a minimal no-op WASI shim is enough to instantiate them. Pass your
-// own \`imports.wasi_snapshot_preview1\` (e.g. from node:wasi) to override.
-const wasiShim = new Proxy({}, { get: () => (() => 0) });
-
 export async function instantiate(imports = {}) {
   const bytes = await readFile(fileURLToPath(new URL('./' + WASM, import.meta.url)));
-  const merged = { wasi_snapshot_preview1: wasiShim, env: {}, ...imports };
-  const { instance } = await WebAssembly.instantiate(bytes, merged);
-  if (typeof instance.exports._initialize === 'function') instance.exports._initialize();
+  // The modules are libc-free freestanding wasm: they import nothing, so no WASI
+  // or env shim is needed. Any imports you pass are simply forwarded.
+  const { instance } = await WebAssembly.instantiate(bytes, imports);
   return { exports: instance.exports, memory: instance.exports.memory };
 }
 export default instantiate;
