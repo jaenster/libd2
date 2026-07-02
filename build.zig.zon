@@ -1,0 +1,16 @@
+.{
+    .name = .libd2,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x5edb35b5ed14bac1,
+
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "packages",
+        "tools",
+        "README.md",
+    },
+}

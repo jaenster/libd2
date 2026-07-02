@@ -1,0 +1,6 @@
+.zig-cache/
+zig-out/
+.idea/
+
+# Local source-repo paths for tools/sync.sh (see .env.example).
+.env

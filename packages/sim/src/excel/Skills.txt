@@ -1,0 +1,6 @@
+skill	Id	srvdofunc	srvmissile	range	mana	manashift
+Attack	0	1			both	0	8
+Throw	3	1			rng	0	8
+Magic Arrow	6		magicarrow	rng	12	5
+Fire Bolt	36		firebolt	none	5	7
+Ice Bolt	39		icebolt	none	3	8

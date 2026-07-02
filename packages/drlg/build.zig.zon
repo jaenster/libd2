@@ -1,0 +1,10 @@
+.{
+    .name = .d2_drlg,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xe8cb450ec651b73e,
+
+    .dependencies = .{},
+
+    .paths = .{"."},
+}

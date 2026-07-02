@@ -1,0 +1,43 @@
+.zig-cache/
+zig-out/
+
+# Extracted Blizzard tile assets (DS1 maps + dt1 libraries) live in assets/.
+# Copyrighted — committed only to this PRIVATE repo. Regenerate from your own
+# install with tools/extract_tiles.zig. Do NOT make this repo public.
+
+# Local machine paths for the asset extractor (see .env.example).
+.env
+
+# built extractor binaries
+tools/extract_tiles
+tools/extract_objects
+
+# Extracted Blizzard object graphics (COF + layer DCC/DC6). Copyrighted — never
+# committed. Regenerate from your own install with tools/extract_objects.zig.
+assets/objects/
+
+# objgfx_verify PNG output (game-derived, regenerable)
+out/
+
+# IDE
+.idea/
+
+# Uncommitted WASM demo website + built wasm artifacts
+/web/dist
+/web/public
+/web/node_modules
+*.wasm
+
+# reconstructed-recon C work area (copyrighted; cpp->c pipeline scratch)
+recon/
+
+# Large cross-seed golden corpora (game-derived, regenerable; too big for git)
+src/golden/cross*_roads.jsonl
+src/golden/cross*_roads.jsonl.gz
+src/golden/deep_seed_*_roads.jsonl
+
+# Difficulty-capture scratch (game-derived, regenerable)
+/hell_*.jsonl
+/normal_*.jsonl
+
+./docs/*

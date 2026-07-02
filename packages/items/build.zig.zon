@@ -1,0 +1,10 @@
+.{
+    .name = .d2_items,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xd49b61219a959b96,
+
+    .dependencies = .{},
+
+    .paths = .{"."},
+}
