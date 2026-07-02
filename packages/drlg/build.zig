@@ -32,6 +32,10 @@ pub fn build(b: *std.Build) void {
     mod.addImport("d2-formats", formats.module("d2-formats"));
     mod.addImport("d2-fog", fog.module("d2-fog"));
 
+    // The CLI/tests use std.process.Args + file loaders (native only); guard them
+    // out for wasm, where only the C-ABI reactor module is built.
+    const is_wasm = target.result.cpu.arch == .wasm32;
+
     const exe = b.addExecutable(.{
         .name = "d2-drlg",
         .root_module = b.createModule(.{
@@ -43,7 +47,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addOptions("build_options", opts);
     exe.root_module.addImport("d2-formats", formats.module("d2-formats"));
     exe.root_module.addImport("d2-fog", fog.module("d2-fog"));
-    b.installArtifact(exe);
+    if (!is_wasm) b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -64,4 +68,43 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+
+    // C-ABI shim: consumable from C/C++/C#/Node as native shared+static libs, or as
+    // a wasm reactor module. Generation routes its live-alloc registry through libc
+    // (drlg/pool.zig c_allocator), so every artifact links libc; the wasm target is
+    // therefore wasm32-wasi (NOT freestanding).
+    const capi = b.option(bool, "capi", "Build the C-ABI shim (libs / wasm)") orelse true;
+    if (capi) {
+        const capi_optimize: std.builtin.OptimizeMode =
+            if (is_wasm and b.args == null) .ReleaseSmall else (if (optimize == .Debug) .ReleaseFast else optimize);
+        const CapiMod = struct {
+            fn make(bb: *std.Build, tgt: std.Build.ResolvedTarget, opt: std.builtin.OptimizeMode, o: *std.Build.Step.Options, fm: *std.Build.Module, fg: *std.Build.Module) *std.Build.Module {
+                const m = bb.createModule(.{
+                    .root_source_file = bb.path("src/capi.zig"),
+                    .target = tgt,
+                    .optimize = opt,
+                    .link_libc = true,
+                });
+                m.addOptions("build_options", o);
+                m.addImport("d2-formats", fm);
+                m.addImport("d2-fog", fg);
+                return m;
+            }
+        };
+        const fmod = formats.module("d2-formats");
+        const gmod = fog.module("d2-fog");
+
+        if (is_wasm) {
+            const wasm = b.addExecutable(.{ .name = "d2drlg", .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, gmod) });
+            wasm.entry = .disabled;
+            wasm.rdynamic = true;
+            b.installArtifact(wasm);
+        } else {
+            const static_lib = b.addLibrary(.{ .name = "d2drlg", .linkage = .static, .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, gmod) });
+            const shared_lib = b.addLibrary(.{ .name = "d2drlg", .linkage = .dynamic, .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, gmod) });
+            b.installArtifact(static_lib);
+            b.installArtifact(shared_lib);
+            b.getInstallStep().dependOn(&b.addInstallHeaderFile(b.path("include/d2drlg.h"), "d2drlg.h").step);
+        }
+    }
 }
