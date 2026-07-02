@@ -110,13 +110,19 @@ jobs:
             name="$(_j .name)"; version="$(_j .version)"; tag="$(_j .tag)"
             echo "::group::release $tag"
 
-            # one archive per target, from the downloaded per-target prefixes
+            # one archive per target. The download merges every dist-<target>
+            # artifact into artifacts/, so the package tree lands at some depth as
+            # .../<name>/<target>/… — find the <name> dir(s) and archive each
+            # immediate <target> subdir. Robust to the merge layout.
             mkdir -p out
-            for tdir in artifacts/*/"$name"/*/; do
-              [ -d "$tdir" ] || continue
-              target="$(basename "$tdir")"
-              ( cd "$tdir" && tar czf "$GITHUB_WORKSPACE/out/d2${name}-${version}-${target}.tar.gz" . )
-            done
+            while IFS= read -r ndir; do
+              for tdir in "$ndir"/*/; do
+                [ -d "$tdir" ] || continue
+                target="$(basename "$tdir")"
+                ( cd "$tdir" && tar czf "$GITHUB_WORKSPACE/out/d2${name}-${version}-${target}.tar.gz" . )
+              done
+            done < <(find artifacts -type d -name "$name")
+            echo "archived:"; ls -1 out/ || true
 
             if [ "$DRY_RUN_INPUT" = "true" ]; then
               echo "dry run: would release $tag with:"; ls -1 out/
