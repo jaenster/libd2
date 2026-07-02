@@ -22,47 +22,24 @@ on its own.
 
 Each subsystem is validated against ground truth captured from the real engine.
 
-## Build & test
+Building the packages, tests, native libs and wasm from source: see
+[docs/BUILDING.md](docs/BUILDING.md).
 
-Requires Zig `0.16.0`.
+## Using it
 
-```sh
-zig build test            # every package's suite
-zig build test-formats    # just one package
-```
+Consume `libd2` from your language of choice — Zig uses the packages as source
+modules; everyone else uses the **C ABI** every package ships (a `export fn`
+surface compiled to native shared + static libs with a C header, plus a
+**WebAssembly** build). The C boundary means the *same* artifacts work from any
+language with a C FFI.
 
-Or a single package on its own:
+Language guides:
 
-```sh
-cd packages/formats && zig build test
-```
-
-## Using a package
-
-Depend on the one you need by path, and import its module:
-
-```zig
-// build.zig.zon
-.dependencies = .{
-    .d2_drlg = .{ .path = "path/to/libd2/packages/drlg" },
-},
-```
-
-```zig
-// build.zig
-const drlg = b.dependency("d2_drlg", .{ .target = target, .optimize = optimize });
-exe.root_module.addImport("d2-drlg", drlg.module("d2-drlg"));
-```
-
-## Using from other languages
-
-Every package also ships a **C ABI**: a `export fn` surface compiled to native
-shared + static libraries (`.so` / `.dll` / `.dylib` + `.a`) with a C header, and
-a **WebAssembly** build. Because the boundary is plain C, any language with a C
-FFI can call it from the *same* artifacts.
-
-Language guides: **[C](docs/usage/c.md)** · **[C++](docs/usage/cpp.md)** ·
-**[C#](docs/usage/csharp.md)** · **[Node (WebAssembly)](docs/usage/node.md)**
+- [Zig](docs/usage/zig.md)
+- [C](docs/usage/c.md)
+- [C++](docs/usage/cpp.md)
+- [C#](docs/usage/csharp.md)
+- [Node (WebAssembly)](docs/usage/node.md)
 
 Where to get the artifacts:
 - **Native libs + headers** — attached to each package's GitHub Release
