@@ -1,0 +1,26 @@
+.{
+    .name = .d2_sim,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xbba303ff364e0fd6,
+
+    // INTENDED ARCHITECTURE (follow-up): depend on the content libs by path.
+    //   .dependencies = .{
+    //       .d2drlg = .{ .path = "../d2-drlg" },
+    //       .d2items = .{ .path = "../d2-items" },
+    //   },
+    // Blocked right now: neither sibling ships a build.zig.zon, and d2-drlg is
+    // exe-only (no `b.addModule`), so `b.dependency` cannot resolve them without
+    // modifying those repos. Following the d2-items precedent, the shared seed-RNG
+    // foundation is vendored (src/rng.zig, copied verbatim from d2-items) so this
+    // repo stays self-contained and green. Wire the real path-deps once the
+    // siblings expose consumable modules.
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+}

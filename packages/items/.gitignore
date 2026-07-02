@@ -1,0 +1,19 @@
+.zig-cache/
+zig-out/
+
+# IDE
+.idea/
+
+# Local machine paths / secrets
+.env
+
+# Scratch decompilation captures (Ghidra RE work area — not source)
+/scratch/
+
+# Extracted Blizzard art (item DC6s + palette) — copyrighted, never committed.
+# Regenerate from your own 1.14d install: tools/extract_assets (D2_MPQ_DIR=...).
+/assets/
+
+# Built asset extractor binary (source tools/extract_assets.zig stays tracked).
+/tools/extract_assets
+/tools/extract_assets.o

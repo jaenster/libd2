@@ -1,0 +1,11 @@
+.zig-cache/
+zig-out/
+
+# IDE
+.idea/
+
+# Local machine paths / secrets
+.env
+
+# Scratch decompilation captures (Ghidra RE work area — not source)
+/scratch/

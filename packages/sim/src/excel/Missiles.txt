@@ -1,0 +1,4 @@
+Missile	Id	pSrvDoFunc	Vel	MaxVel	Range	CollideType	CollideKill	MinDamage	MaxDamage
+magicarrow	27	1	24	24	40	3	1
+firebolt	58	1	20	20	50	3	1
+icebolt	59	1	12	12	50	3	1

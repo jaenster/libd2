@@ -1,0 +1,3 @@
+src/excel/*.txt -text
+*.ds1 binary
+*.dt1 binary
