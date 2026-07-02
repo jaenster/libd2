@@ -17,11 +17,33 @@ cat > "$pkgdir/package.json" <<JSON
   "description": "WebAssembly build of the libd2 '${name}' package (clean-room Diablo II 1.14d).",
   "type": "module",
   "main": "index.mjs",
-  "files": ["index.mjs", "d2${name}.wasm"],
+  "types": "index.d.ts",
+  "files": ["index.mjs", "index.d.ts", "d2${name}.wasm"],
   "license": "MIT",
   "repository": "github:jaenster/libd2"
 }
 JSON
+
+cat > "$pkgdir/index.d.ts" <<TS
+// TypeScript definitions for @jaenster/d2${name} (libd2 '${name}' wasm build).
+
+/** The module's C-ABI exports: d2${name}_* functions (numbers in, number out —
+ *  strings/structs are byte offsets into \`memory\`) plus the wasm memory. */
+export interface D2Exports {
+  memory: WebAssembly.Memory;
+  [fn: string]: WebAssembly.ExportValue;
+}
+
+export interface D2Instance {
+  exports: D2Exports;
+  memory: WebAssembly.Memory;
+}
+
+/** Instantiate the wasm module. \`imports\` is usually unnecessary (the module is
+ *  self-contained). Returns the raw C-ABI exports + memory. */
+export function instantiate(imports?: WebAssembly.Imports): Promise<D2Instance>;
+export default instantiate;
+TS
 
 cat > "$pkgdir/index.mjs" <<JS
 // Thin loader: instantiate the wasm module and hand back its exports + memory.
@@ -40,6 +62,12 @@ export async function instantiate(imports = {}) {
 export default instantiate;
 JS
 
-( cd "$pkgdir" && npm publish --access public )
-echo "published @jaenster/d2${name}@${version}"
+# DRY_RUN=1 packs a tarball into the CWD instead of publishing (for local checks).
+if [ -n "${DRY_RUN:-}" ]; then
+  ( cd "$pkgdir" && npm pack --pack-destination "$OLDPWD" )
+  echo "packed @jaenster/d2${name}@${version} (dry run)"
+else
+  ( cd "$pkgdir" && npm publish --access public )
+  echo "published @jaenster/d2${name}@${version}"
+fi
 rm -rf "$pkgdir"
