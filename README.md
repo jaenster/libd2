@@ -40,14 +40,15 @@ import { shrines } from '@jaenster/d2drlg';
 // Cold Plains (level 3) for seed 1337. The wasm loads lazily on first call — no setup.
 const s = await shrines(1337, 3);
 console.log(`${s.length} shrines/wells:`);
-for (const sh of s) console.log(`  ${sh.isWell ? 'well ' : 'shrine'} at tile (${sh.tileX}, ${sh.tileY})`);
+for (const sh of s)
+  console.log(`  ${sh.isWell ? 'well ' : 'shrine'} class ${sh.classId} at tile (${sh.tileX}, ${sh.tileY})`);
 
 // 5 shrines/wells:
-//   shrine at tile (995, 1124)
-//   shrine at tile (994, 1114)
-//   shrine at tile (1050, 1098)
-//   well   at tile (1010, 1091)
-//   shrine at tile (1002, 1090)
+//   shrine class 2 at tile (995, 1124)
+//   shrine class 84 at tile (994, 1114)
+//   shrine class 81 at tile (1050, 1098)
+//   well  class 130 at tile (1010, 1091)
+//   shrine class 83 at tile (1002, 1090)
 ```
 
 Tiny typed shim, ESM + CommonJS, runs natively on modern Node/Bun/Deno. Same
