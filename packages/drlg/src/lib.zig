@@ -600,6 +600,10 @@ pub const LevelColl = struct {
     /// frontend lay every level of an act in one shared world-coord space.
     origin_x: i32 = 0,
     origin_y: i32 = 0,
+    /// Level generated WorldSize in TILES (multiply by SUBTILES_PER_TILE for the
+    /// full level-local subtile grid dims DBM reports). 0 if unknown.
+    width: i32 = 0,
+    height: i32 = 0,
 };
 
 /// Every level of an act with its per-room materialized collision grids.
@@ -734,6 +738,120 @@ pub fn generateActComposite(
     return .{ .levels = try out.toOwnedSlice(out_alloc) };
 }
 
+// ---- raw u16 CollMap composite (DeadlyBossMods-shaped) ---------------------
+
+/// A level composited into ONE level-local subtile grid of RAW u16 CollMap flags —
+/// the exact per-subtile bits the engine's Room1.pColl carries at room init
+/// (collision.Colbit: 0x01 wall, 0x02 visible, 0x04 missile_barrier, 0x08 noplayer,
+/// 0x10 preset, 0x20 no_floor, …). Dims equal the level's WorldSize×SUBTILES_PER_TILE
+/// (what DBM reports as collisionWidth/Height); origin is level-local (0,0) at the
+/// level WorldPosition. Uncovered cells (the level rect exceeds room coverage) are
+/// the OOB fill 0x00FF, matching DBM.
+pub const RawLevelComposite = struct {
+    level_id: i32,
+    w: usize,
+    h: usize,
+    unresolved: usize,
+    cells: []u16, // raw Colbit per subtile, row-major (w*h); 0x00FF = uncovered/OOB
+};
+
+pub const ActRawCompositeResult = struct {
+    levels: []RawLevelComposite,
+
+    pub fn deinit(self: *ActRawCompositeResult, alloc: std.mem.Allocator) void {
+        for (self.levels) |l| alloc.free(l.cells);
+        alloc.free(self.levels);
+    }
+};
+
+/// DBM out-of-bounds / uncovered fill value (one u16 cell). Verified against the
+/// DeadlyBossMods collision oracle: cells the level rect covers but no room fills
+/// come back as 0xFFFF (all bits set), NOT 0x00FF.
+pub const RAW_OOB_FILL: u16 = 0xFFFF;
+
+/// Union a level's per-room raw collision grids into ONE level-local u16 grid sized
+/// to the level's WorldSize (in subtiles). Uncovered subtiles keep RAW_OOB_FILL;
+/// covered subtiles carry the OR of every contributing tile's raw Colbit byte.
+/// Returns null only if the level has no size and no grids. Caller owns `cells`.
+fn compositeLevelRaw(alloc: std.mem.Allocator, lc: LevelColl) !?RawLevelComposite {
+    // Grid dims: the level's WorldSize in subtiles (what DBM reports). Fall back to
+    // the room bounding box only if the level size is unknown.
+    var W: usize = 0;
+    var H: usize = 0;
+    if (lc.width > 0 and lc.height > 0) {
+        W = @intCast(lc.width * SUB);
+        H = @intCast(lc.height * SUB);
+    } else {
+        if (lc.grids.len == 0) return null;
+        var maxX: i32 = 0;
+        var maxY: i32 = 0;
+        for (lc.grids) |g| {
+            maxX = @max(maxX, g.x + @as(i32, @intCast(g.w)));
+            maxY = @max(maxY, g.y + @as(i32, @intCast(g.h)));
+        }
+        if (maxX <= 0 or maxY <= 0) return null;
+        W = @intCast(maxX);
+        H = @intCast(maxY);
+    }
+
+    const cells = try alloc.alloc(u16, W * H);
+    // Internal sentinel 0xFFFF marks "uncovered"; every covered write clears it
+    // (first writer sets, later writers OR). Real Colbit bytes never reach 0xFFFF.
+    @memset(cells, 0xFFFF);
+
+    for (lc.grids) |g| {
+        const gw: usize = @intCast(g.w);
+        const gh: usize = @intCast(g.h);
+        if (g.x < 0 or g.y < 0) {} // grids are level-local (>=0); tolerate anyway below
+        var y: usize = 0;
+        while (y < gh) : (y += 1) {
+            const dy = g.y + @as(i32, @intCast(y));
+            if (dy < 0 or dy >= @as(i32, @intCast(H))) continue;
+            const src_row = y * gw;
+            var x: usize = 0;
+            while (x < gw) : (x += 1) {
+                const dx = g.x + @as(i32, @intCast(x));
+                if (dx < 0 or dx >= @as(i32, @intCast(W))) continue;
+                const v: u16 = g.cells[src_row + x];
+                const di: usize = @as(usize, @intCast(dy)) * W + @as(usize, @intCast(dx));
+                if (cells[di] == 0xFFFF) cells[di] = v else cells[di] |= v;
+            }
+        }
+    }
+
+    // Any subtile no room covered is the DBM OOB fill.
+    for (cells) |*c| {
+        if (c.* == 0xFFFF) c.* = RAW_OOB_FILL;
+    }
+
+    return .{ .level_id = lc.level_id, .w = W, .h = H, .unresolved = lc.unresolved, .cells = cells };
+}
+
+/// Generate an entire act and composite EVERY level into ONE raw u16 CollMap grid.
+/// The DeadlyBossMods-shaped counterpart to `generateActComposite` (which
+/// down-samples to CompState); here every cell is the exact raw Colbit u16. `act_no`
+/// is 0-based. GATE-SAFE: pure post-generation consumer.
+pub fn generateActCompositeRaw(
+    ctx: *Ctx,
+    out_alloc: std.mem.Allocator,
+    act_no: i32,
+    seed: u32,
+    diff: Difficulty,
+) !ActRawCompositeResult {
+    var coll = try generateActCollisionAll(ctx, out_alloc, act_no, seed, diff);
+    defer coll.deinit(out_alloc);
+
+    var out: std.ArrayListUnmanaged(RawLevelComposite) = .empty;
+    errdefer {
+        for (out.items) |l| out_alloc.free(l.cells);
+        out.deinit(out_alloc);
+    }
+    for (coll.levels) |lc| {
+        if (try compositeLevelRaw(out_alloc, lc)) |lco| try out.append(out_alloc, lco);
+    }
+    return .{ .levels = try out.toOwnedSlice(out_alloc) };
+}
+
 /// The room's WINDOW into its pMap DS1: tile offset = room.WorldPosition − DS1
 /// origin (pMap.nRealOffset), size = room.WorldSize, seed = the room's own sSeed.
 /// This is the engine's per-room CollMap (a window of the shared level DS1), not
@@ -844,6 +962,8 @@ fn materializeLevelColl(
         .grids = try grids.toOwnedSlice(out_alloc),
         .origin_x = lvlPos.x,
         .origin_y = lvlPos.y,
+        .width = pLevel.sCoordinatesAndSize.WorldSize.x,
+        .height = pLevel.sCoordinatesAndSize.WorldSize.y,
     };
 }
 

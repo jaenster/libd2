@@ -234,6 +234,57 @@ export fn d2drlg_level_collision(
     return 0; // no collision grid for this level
 }
 
+/// Generate a level's RAW subtile CollMap grid: one LITTLE-ENDIAN u16 per subtile,
+/// row-major from the level-local top-left (the DeadlyBossMods frame). Each cell is
+/// the exact engine Colbit flag set (0x01 wall, 0x02 visible, 0x04 missile_barrier,
+/// 0x08 noplayer, 0x10 preset, 0x20 no_floor, …); uncovered/OOB cells are 0x00FF.
+/// Grid dims equal the level WorldSize×5 (Cold Plains 400×400). Writes up to `cap`
+/// u16 cells into `out` and always sets *out_w / *out_h to the full grid dims (so
+/// truncation is detectable). Returns the FULL cell count (w*h, >=0, may exceed
+/// `cap`), 0 if the level has no collision grid, or a negative error code.
+/// NOTE: regenerates the level's whole act internally, so it is not cheap — prefer
+/// caching if you need many levels.
+export fn d2drlg_level_collision_raw(
+    ctx: ?*Ctx,
+    seed: u32,
+    difficulty: i32,
+    level_id: i32,
+    out: [*]u16,
+    cap: i32,
+    out_w: *i32,
+    out_h: *i32,
+) i32 {
+    out_w.* = 0;
+    out_h.* = 0;
+    const c = ctx orelse return -1;
+    const diff = diffFromInt(difficulty) orelse return -2;
+    if (cap < 0) return -3;
+
+    const tlv = c.inner.act.level(level_id) orelse return -4;
+    const act_no: i32 = @intCast(tlv.act);
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var comp = lib.generateActCompositeRaw(&c.inner, a, act_no, seed, diff) catch return -5;
+    defer comp.deinit(a);
+
+    for (comp.levels) |lc| {
+        if (lc.level_id != level_id) continue;
+        out_w.* = @intCast(lc.w);
+        out_h.* = @intCast(lc.h);
+        const total = lc.w * lc.h;
+        const cap_us: usize = @intCast(cap);
+        const n = @min(total, cap_us);
+        // Write LE u16 per cell (wasm/x86 are LE already; be explicit for portability).
+        var i: usize = 0;
+        while (i < n) : (i += 1) out[i] = std.mem.nativeToLittle(u16, lc.cells[i]);
+        return @intCast(total);
+    }
+    return 0; // no collision grid for this level
+}
+
 /// One outdoor shrine/well: resolved objects.txt class id + world SUBTILE position.
 /// Field order/types MUST match `D2DrlgShrine` in d2drlg.h. Mirrors `lib.OutdoorShrine`.
 /// x/y are subtile coords (÷5 for tile coords).
