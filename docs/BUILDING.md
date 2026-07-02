@@ -16,14 +16,18 @@ cd packages/formats && zig build test
 ## C-ABI libraries + wasm
 
 Packages with a C-ABI shim (`src/capi.zig`) build native shared/static libs and a
-freestanding wasm module:
+wasm module:
 
 ```sh
 cd packages/items
 zig build                                   # zig-out/lib/libd2items.* + zig-out/include/d2items.h
 zig build -Dtarget=aarch64-macos            # cross-compile (any target Zig supports)
-zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall   # zig-out/bin/d2items.wasm
+zig build -Dtarget=wasm32-wasi -Doptimize=ReleaseSmall   # zig-out/bin/d2items.wasm
 ```
+
+The wasm target is `wasm32-wasi` (some packages, e.g. `drlg`, route allocation
+through libc). The published npm loader ships a minimal WASI shim so the modules
+instantiate in Node and the browser without extra setup.
 
 ## Releases
 
