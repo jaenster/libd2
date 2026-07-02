@@ -433,8 +433,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     if (std.mem.eql(u8, cmd, "tilemiss")) {
         const dt1 = @import("d2-formats").dt1;
-        const dt1blob = @import("dt1_blob.zig");
-        const dt1_data = @import("dt1_data.zig");
+        const dt1blob = @import("d2-formats").dt1_blob;
+        const dt1_data = @import("d2-formats").dt1_data;
         const preset = @import("drlg/preset.zig");
         const s = @import("drlg/structs.zig");
         const level_id = std.fmt.parseInt(i32, args.next() orelse "10", 10) catch 10;
