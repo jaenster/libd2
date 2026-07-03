@@ -110,9 +110,18 @@ fn envInt(comptime T: type, env: *std.process.Environ.Map, key: []const u8) ?T {
     return std.fmt.parseInt(T, v, 10) catch null;
 }
 
+// Default worker count when neither --threads nor THREADS is set. Each worker owns a full
+// Ctx (the game tables, ~3-4 MB) AND, while serving, one per-request arena that for a whole-act
+// render holds the generation scratch + the 0.7-1 MB JSON body. Peak RSS therefore scales with
+// the worker count: N workers => up to N concurrent whole-act arenas + N Ctx copies. On a big
+// host `getCpuCount()` reports every node core (16+), so the old `min(cpu, 16)` spun up 16
+// table-loading workers and let 16 large arenas coexist, blowing past a small pod memory cap
+// (OOM-kill under concurrent whole-act traffic — even a 256Mi cap still OOMs at 16). This service
+// is I/O-light (a whole act is ~0.2s of CPU), so cap the auto default low to bound memory; a
+// deployment that wants more can still raise it explicitly via THREADS / --threads.
 fn fallbackThreads() usize {
     const n = std.Thread.getCpuCount() catch return 4;
-    return @min(@max(n, 1), 16);
+    return @min(@max(n, 1), 4);
 }
 
 /// One worker: owns a Ctx (tables loaded once here) and services connections off the
