@@ -554,7 +554,7 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
 
     // No-floor subtiles are void/unwalkable: a subtile whose tile has no floor tile
     // is a dungeon gap (the runtime CollMap has no walkable void, so "no floor =
-    // unwalkable" is faithful). Mark the truly-empty ones with Colbit.no_floor
+    // unwalkable" is faithful). Mark the truly-empty ones with Colbit.blank
     // (0x20, a synthetic render marker — never an engine collision bit) so the
     // collision composite renders them as void rather than walkable. Only walls/
     // real collision keep their own bits; only cells still at 0 get marked. Windowed

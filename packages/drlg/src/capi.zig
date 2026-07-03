@@ -299,6 +299,41 @@ export fn d2drlg_act_level_collision_zlib(
     return @intCast(lf.coll_deflated.len);
 }
 
+/// Writes up to `cap` bytes of the level-at-`level_index` WALK grid into `out`: one byte per
+/// subtile (0 = blocked, 1 = walkable), row-major from the level-local top-left (the same
+/// dims/origin as the RAW CollMap). Read straight from the already-generated act handle (the
+/// walk grid is derived from the raw CollMap during generation and kept deflated); this
+/// inflates it on demand. Always sets *w / *h to the full grid dims (so truncation is
+/// detectable). Returns the FULL cell count (w*h, >=0, may exceed `cap`), 0 if the level has
+/// no collision grid, or a negative error code. Walkable = the d2bs LevelMap mask applied to
+/// the raw CollMap: not BlockWalk(0x01)|BlockPlayer(0x08)|Object(0x400) and not OOB 0xFFFF.
+export fn d2drlg_act_level_walk(
+    act: ?*Act,
+    level_index: i32,
+    out: [*]u8,
+    cap: i32,
+    w: *i32,
+    h: *i32,
+) i32 {
+    w.* = 0;
+    h.* = 0;
+    const a = act orelse return -1;
+    if (cap < 0) return -2;
+    if (level_index < 0 or level_index >= a.result.levels.len) return -3;
+    const lf = a.result.levels[@intCast(level_index)];
+    if (lf.walk_deflated.len == 0) return 0; // no collision grid for this level
+    w.* = lf.coll_w;
+    h.* = lf.coll_h;
+    const total: usize = @intCast(@as(i64, lf.coll_w) * @as(i64, lf.coll_h));
+    const pa = std.heap.page_allocator;
+    const walk = lib.inflateZlib(pa, lf.walk_deflated, total) catch return -4;
+    defer pa.free(walk);
+    const cap_us: usize = @intCast(cap);
+    const n = @min(walk.len, cap_us);
+    @memcpy(out[0..n], walk[0..n]);
+    return @intCast(total);
+}
+
 /// zlib-DEFLATE (rfc1950) an arbitrary caller byte buffer. Reads `in_len` bytes from `in`,
 /// writes up to `cap` compressed bytes to `out`, and returns the FULL deflated byte length
 /// (>=0, may exceed `cap` => grow+retry) or a negative error code. Fastest flate level. Lets
@@ -372,8 +407,8 @@ export fn d2drlg_level_collision(
 
 /// Generate a level's RAW subtile CollMap grid: one LITTLE-ENDIAN u16 per subtile,
 /// row-major from the level-local top-left (the DeadlyBossMods frame). Each cell is
-/// the exact engine Colbit flag set (0x01 wall, 0x02 visible, 0x04 missile_barrier,
-/// 0x08 noplayer, 0x10 preset, 0x20 no_floor, …); uncovered/OOB cells are 0x00FF.
+/// the exact engine Colbit flag set (0x01 block_walk, 0x02 block_los, 0x04 wall,
+/// 0x08 block_player, 0x10 alternate_tile, 0x20 blank, …); uncovered/OOB cells are 0x00FF.
 /// Grid dims equal the level WorldSize×5 (Cold Plains 400×400). Writes up to `cap`
 /// u16 cells into `out` and always sets *out_w / *out_h to the full grid dims (so
 /// truncation is detectable). Returns the FULL cell count (w*h, >=0, may exceed
