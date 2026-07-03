@@ -1,7 +1,7 @@
 #pragma once
 /*
  * d2drlg — C ABI for the faithful D2 1.14d map-generation (DRLG) engine.
- * ABI version 2. See d2drlg_abi_version().
+ * ABI version 3. See d2drlg_abi_version().
  *
  * Generates an entire act's room layout (byte-exact seeds/placement where ported)
  * and, optionally, a composited subtile-collision grid per level.
@@ -182,6 +182,25 @@ int32_t d2drlg_act_level_collision(D2DrlgAct *act, int32_t level_index, uint16_t
                                    int32_t *out_w, int32_t *out_h);
 
 /*
+ * Like d2drlg_act_level_collision, but ZLIB-DEFLATES (rfc1950) the little-endian u16 RAW
+ * CollMap and writes the compressed bytes to `out`. Always sets *out_w/*out_h to the full
+ * grid dims. Returns the FULL deflated byte length (>=0, may exceed `cap` => grow+retry),
+ * 0 if the level has no collision grid, or a negative error code. The INFLATED grid is
+ * byte-for-byte identical to d2drlg_act_level_collision, letting hosts deflate map collision
+ * entirely in-wasm (no host zlib) and inflate with any standard zlib.
+ */
+int32_t d2drlg_act_level_collision_zlib(D2DrlgAct *act, int32_t level_index, uint8_t *out, int32_t cap,
+                                        int32_t *out_w, int32_t *out_h);
+
+/*
+ * zlib-DEFLATE (rfc1950) an arbitrary caller byte buffer. Reads `in_len` bytes from `in`,
+ * writes up to `cap` compressed bytes to `out`, returns the FULL deflated byte length
+ * (>=0, may exceed `cap` => grow+retry) or a negative error code. Lets a host deflate any
+ * buffer entirely in-wasm (no host zlib).
+ */
+int32_t d2drlg_deflate_zlib(const uint8_t *in, int32_t in_len, uint8_t *out, int32_t cap);
+
+/*
  * Write an object row's Objects.txt "Name" (d2drlg_object_name) or description
  * (d2drlg_object_desc, column "description - not loaded") into `buf`, NUL-terminated if
  * it fits. Returns the string's byte length (>=0; may exceed `cap` => truncated), or a
@@ -191,7 +210,7 @@ int32_t d2drlg_act_level_collision(D2DrlgAct *act, int32_t level_index, uint16_t
 int32_t d2drlg_object_name(int32_t txt_file_no, char *buf, int32_t cap);
 int32_t d2drlg_object_desc(int32_t txt_file_no, char *buf, int32_t cap);
 
-/* Returns the ABI version (currently 2). */
+/* Returns the ABI version (currently 3). */
 uint32_t d2drlg_abi_version(void);
 
 #ifdef __cplusplus

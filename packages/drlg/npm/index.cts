@@ -3,7 +3,20 @@
 // module.exports + __dirname. Same lazy API as index.ts.
 const { readFile } = require('node:fs/promises') as typeof import('node:fs/promises');
 const { join } = require('node:path') as typeof import('node:path');
-const { deflateSync } = require('node:zlib') as typeof import('node:zlib');
+
+// Base64-encode raw bytes with ZERO host dependency. The collision grid is now deflated
+// INSIDE the wasm (std.compress.flate, zlib container), so the shim only base64s the
+// compressed bytes — no node:zlib, works in Node/browser/Bun/Deno. Buffer when present.
+function bytesToBase64(bytes: Uint8Array): string {
+  const B = (globalThis as { Buffer?: { from(b: Uint8Array): { toString(enc: string): string } } }).Buffer;
+  if (B) return B.from(bytes).toString('base64');
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as number[]);
+  }
+  return btoa(bin);
+}
 
 const PAGE = 65536;
 const ROOM = 28; // sizeof(D2DrlgRoom): 7 x int32
@@ -169,6 +182,8 @@ interface Exports {
   d2drlg_act_level_presets(act: number, i: number, out: number, cap: number): number;
   d2drlg_act_level_adjacents(act: number, i: number, out: number, cap: number): number;
   d2drlg_act_level_collision(act: number, i: number, out: number, cap: number, outW: number, outH: number): number;
+  d2drlg_act_level_collision_zlib(act: number, i: number, out: number, cap: number, outW: number, outH: number): number;
+  d2drlg_deflate_zlib(inPtr: number, inLen: number, out: number, cap: number): number;
   d2drlg_level_name(ctx: number, levelId: number, buf: number, cap: number): number;
   d2drlg_level_shrines(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_level_presets(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
@@ -342,12 +357,13 @@ class Drlg {
           rooms.push({ x: (rx - ox) * 5, y: (ry - oy) * 5, sizeX: rw * 5, sizeY: rh * 5, roomNo: pickedFile, subNo: pickedFile });
         }
         const displayName = dbmDisplayName(levelNo, this.#levelName(levelNo));
-        const coll = this.#actCollision(act, i);
-        const cw = coll.width || sw * 5;
-        const ch = coll.height || sh * 5;
-        const cellCount = cw * ch;
-        const u16 = coll.cells.length === cellCount ? coll.cells : new Uint16Array(cellCount).fill(0xffff);
-        const collisionDeflateB64 = deflateSync(Buffer.from(u16.buffer, u16.byteOffset, u16.byteLength)).toString('base64');
+        // Collision is deflated INSIDE the wasm (zlib container) and only base64'd here —
+        // no host zlib. One call yields both dims and the deflated bytes; a level with no
+        // grid falls back to an in-wasm-deflated OOB-fill grid.
+        const czl = this.#actCollisionZlib(act, i, sw * 5, sh * 5);
+        const cw = czl.width;
+        const ch = czl.height;
+        const collisionDeflateB64 = czl.b64;
         levels.push({
           levelNo,
           name: dbmLevelName(levelNo, displayName),
@@ -508,22 +524,54 @@ class Drlg {
     return out;
   }
 
-  // A level's RAW collision grid read from an already-generated act handle (no
-  // regeneration). Probe (cap 0) for dims, then fetch; returns a COPY.
-  #actCollision(act: number, i: number): D2Collision {
+  // A level's collision grid, DEFLATED (zlib) inside the wasm and base64'd here — no host
+  // zlib. Probe (cap 0) returns the deflated length + fills out_w/out_h; then fetch the
+  // compressed bytes and base64 them. No grid => deflate a full OOB-fill grid in-wasm.
+  #actCollisionZlib(act: number, i: number, fw: number, fh: number): { width: number; height: number; b64: string } {
     const ex = this.#ex;
     const probe = this.#scratch(8);
-    const total = ex.d2drlg_act_level_collision(act, i, probe, 0, probe, probe + 4);
-    if (total < 0) throw new Error('d2drlg: act_level_collision failed (' + total + ')');
+    const len = ex.d2drlg_act_level_collision_zlib(act, i, probe, 0, probe, probe + 4);
+    if (len < 0) throw new Error('d2drlg: act_level_collision_zlib failed (' + len + ')');
     const dv = new DataView(ex.memory.buffer);
-    const width = dv.getInt32(probe, true);
-    const height = dv.getInt32(probe + 4, true);
-    if (total === 0 || width <= 0 || height <= 0) return { width: 0, height: 0, cells: new Uint16Array(0) };
-    const cells = width * height;
-    const base = this.#scratch(cells * 2 + 8);
-    const outp = base + cells * 2;
-    ex.d2drlg_act_level_collision(act, i, base, cells, outp, outp + 4);
-    return { width, height, cells: new Uint16Array(ex.memory.buffer, base, cells).slice() };
+    const w = dv.getInt32(probe, true);
+    const h = dv.getInt32(probe + 4, true);
+    if (len > 0 && w > 0 && h > 0) {
+      const base = this.#scratch(len + 8);
+      const outp = base + len;
+      ex.d2drlg_act_level_collision_zlib(act, i, base, len, outp, outp + 4);
+      const b64 = bytesToBase64(new Uint8Array(ex.memory.buffer, base, len));
+      return { width: w, height: h, b64 };
+    }
+    const oob = new Uint8Array(fw * fh * 2).fill(0xff); // 0xFFFF LE per cell
+    return { width: fw, height: fh, b64: this.#deflateBytes(oob) };
+  }
+
+  // Deflate arbitrary JS bytes (zlib container) via the wasm; return base64 of the
+  // compressed bytes — no host zlib. Copies input into scratch, probes deflated length
+  // (cap 0), then compresses into a disjoint output region.
+  #deflateBytes(src: Uint8Array): string {
+    const ex = this.#ex;
+    const inLen = src.byteLength;
+    let base = this.#scratch(inLen + 8);
+    new Uint8Array(ex.memory.buffer, base, inLen).set(src);
+    const dlen = ex.d2drlg_deflate_zlib(base, inLen, base, 0);
+    if (dlen < 0) throw new Error('d2drlg: deflate_zlib failed (' + dlen + ')');
+    base = this.#scratch(inLen + dlen + 8);
+    new Uint8Array(ex.memory.buffer, base, inLen).set(src); // grow may have detached; re-copy
+    const outBase = base + inLen;
+    ex.d2drlg_deflate_zlib(base, inLen, outBase, dlen);
+    return bytesToBase64(new Uint8Array(ex.memory.buffer, outBase, dlen));
+  }
+
+  /**
+   * A level's RAW collision grid, zlib-DEFLATED inside the wasm and base64-encoded — the
+   * same `collisionDeflateB64` payload `render()` emits, but for a single level. Inflate
+   * the decoded bytes with any standard zlib to recover the row-major LE u16 grid.
+   */
+  collisionZlib(seed: number, levelId: number, difficulty = 0): { width: number; height: number; deflateB64: string } {
+    const { width, height, cells } = this.#collisionRaw(seed, levelId, difficulty);
+    const src = new Uint8Array(cells.buffer, cells.byteOffset, cells.byteLength);
+    return { width, height, deflateB64: this.#deflateBytes(src) };
   }
 
   abiVersion(): number { return this.#ex.d2drlg_abi_version(); }
@@ -551,9 +599,12 @@ async function adjacents(seed: number, levelId: number, difficulty = 0): Promise
 async function collision(seed: number, levelId: number, difficulty = 0): Promise<D2Collision> {
   return (await inst()).collision(seed, levelId, difficulty);
 }
+async function collisionZlib(seed: number, levelId: number, difficulty = 0): Promise<{ width: number; height: number; deflateB64: string }> {
+  return (await inst()).collisionZlib(seed, levelId, difficulty);
+}
 async function abiVersion(): Promise<number> {
   return (await inst()).abiVersion();
 }
 
-module.exports = { generateAct, render, shrines, presets, adjacents, collision, abiVersion, open, Drlg };
+module.exports = { generateAct, render, shrines, presets, adjacents, collision, collisionZlib, abiVersion, open, Drlg };
 module.exports.default = generateAct;
