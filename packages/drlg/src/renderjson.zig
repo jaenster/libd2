@@ -143,13 +143,14 @@ fn writeCollisionB64(
     deflated: []const u8,
     fw: i32,
     fh: i32,
+    deflate_fn: ?lib.DeflateFn,
 ) !void {
     var bytes: []const u8 = deflated;
     if (bytes.len == 0) {
         const n: usize = @intCast(@max(fw, 0) * @max(fh, 0));
         const src = try scratch.alloc(u8, n * 2);
         @memset(src, 0xff); // 0xFFFF LE per cell — the shim's OOB-fill fallback
-        bytes = try lib.deflateZlib(scratch, src);
+        bytes = if (deflate_fn) |df| try df(scratch, src) else try lib.deflateZlib(scratch, src);
     }
     const enc = std.base64.standard.Encoder;
     const b64 = try scratch.alloc(u8, enc.calcSize(bytes.len));
@@ -161,13 +162,13 @@ fn writeCollisionB64(
 /// and emits every level's metadata / rooms / presets / adjacents / collision from that one
 /// handle — the native equal of the shim's `render()`. `act_no` is 0-based (Act I = 0);
 /// `diff` is normal/nightmare/hell. Returns the JSON bytes (owned by `alloc`).
-pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i32, diff: lib.Difficulty) ![]u8 {
+pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i32, diff: lib.Difficulty, deflate_fn: ?lib.DeflateFn) ![]u8 {
     // Per-render arena: the whole-act result + all transient serialize scratch. Freed here.
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
     const a = arena.allocator();
 
-    const result = try lib.generateActFull(ctx, a, act_no, seed, diff);
+    const result = try lib.generateActFull(ctx, a, act_no, seed, diff, deflate_fn);
 
     var out = try std.Io.Writer.Allocating.initCapacity(alloc, 1 << 16);
     errdefer out.deinit();
@@ -176,7 +177,7 @@ pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i3
     try w.print("{{\"seed\":{d},\"levels\":[", .{seed});
     for (result.levels, 0..) |lf, li| {
         if (li != 0) try w.writeByte(',');
-        try writeLevel(w, a, ctx, act_no, lf);
+        try writeLevel(w, a, ctx, act_no, lf, deflate_fn);
     }
     try w.writeAll("]}");
 
@@ -188,19 +189,19 @@ pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i3
 /// (`generateLevelFull`), so its `adjacents` are WARP DOORS ONLY: the cross-level seam bridges
 /// are a whole-act Pass-3 product and are absent here. `act_no` is 0-based; `level_id` is a
 /// Levels.txt id. Returns the JSON bytes (owned by `alloc`).
-pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i32, level_id: i32, diff: lib.Difficulty) ![]u8 {
+pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i32, level_id: i32, diff: lib.Difficulty, deflate_fn: ?lib.DeflateFn) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
     const a = arena.allocator();
 
-    const lf = try lib.generateLevelFull(ctx, a, act_no, seed, level_id, diff);
+    const lf = try lib.generateLevelFull(ctx, a, act_no, seed, level_id, diff, deflate_fn);
 
     var out = try std.Io.Writer.Allocating.initCapacity(alloc, 1 << 14);
     errdefer out.deinit();
     const w = &out.writer;
 
     try w.print("{{\"seed\":{d},\"levels\":[", .{seed});
-    try writeLevel(w, a, ctx, act_no, lf);
+    try writeLevel(w, a, ctx, act_no, lf, deflate_fn);
     try w.writeAll("]}");
 
     return out.toOwnedSlice();
@@ -209,7 +210,7 @@ pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_n
 /// Emit one level's DBM object (metadata / rooms / presets / adjacents / tells / collision).
 /// Shared by `renderJson` (every level) and `renderLevelJson` (one), so a level serializes
 /// identically either way — modulo the seam adjacents only a whole-act render can supply.
-fn writeLevel(w: *std.Io.Writer, a: std.mem.Allocator, ctx: *lib.Ctx, act_no: i32, lf: lib.LevelFull) !void {
+fn writeLevel(w: *std.Io.Writer, a: std.mem.Allocator, ctx: *lib.Ctx, act_no: i32, lf: lib.LevelFull, deflate_fn: ?lib.DeflateFn) !void {
     const m = lf.meta;
     const level_no = m.level_id;
     const display_name = dbmDisplayName(ctx, level_no);
@@ -269,7 +270,7 @@ fn writeLevel(w: *std.Io.Writer, a: std.mem.Allocator, ctx: *lib.Ctx, act_no: i3
     const cw = if (lf.coll_deflated.len != 0) lf.coll_w else m.width * 5;
     const ch = if (lf.coll_deflated.len != 0) lf.coll_h else m.height * 5;
     try w.print(",\"collisionWidth\":{d},\"collisionHeight\":{d},\"collisionDeflateB64\":", .{ cw, ch });
-    try writeCollisionB64(w, a, lf.coll_deflated, m.width * 5, m.height * 5);
+    try writeCollisionB64(w, a, lf.coll_deflated, m.width * 5, m.height * 5, deflate_fn);
 
     try w.writeByte('}');
 }

@@ -17,6 +17,26 @@ const net = std.Io.net;
 
 const default_port: u16 = 8080;
 
+// Native libz (system zlib) collision-deflate. The server links libz (+libc), so it can
+// swap the pure-Zig `std.compress.flate` compressor the library uses by default for the
+// far faster C zlib — roughly halving whole-act request latency. The library + wasm build
+// never see this: it is injected as `drlg.DeflateFn` only from this native binary.
+const Z_BEST_SPEED: c_int = 1;
+const Z_OK: c_int = 0;
+extern "c" fn compressBound(sourceLen: c_ulong) c_ulong;
+extern "c" fn compress2(dest: [*]u8, destLen: *c_ulong, source: [*]const u8, sourceLen: c_ulong, level: c_int) c_int;
+
+/// zlib-deflate `raw` (LE-u16 CollMap) into a fresh `alloc` slice, level 1 (Z_BEST_SPEED),
+/// producing an rfc1950 zlib-container stream that inflates back to `raw` byte-for-byte —
+/// the drop-in native `drlg.DeflateFn` for `renderJson`/`renderLevelJson`.
+fn zlibDeflate(alloc: std.mem.Allocator, raw: []const u8) anyerror![]u8 {
+    var bound: c_ulong = compressBound(@intCast(raw.len));
+    const dest = try alloc.alloc(u8, @intCast(bound));
+    errdefer alloc.free(dest);
+    if (compress2(dest.ptr, &bound, raw.ptr, @intCast(raw.len), Z_BEST_SPEED) != Z_OK) return error.ZlibCompress;
+    return dest[0..@intCast(bound)];
+}
+
 pub fn main(init: std.process.Init) !void {
     // `io` (a shared, thread-safe std.Io.Threaded) and `gpa` come from the runtime. gpa is
     // shared across workers for their long-lived Ctx tables + per-request arenas; generation
@@ -80,7 +100,7 @@ fn prewarm(gpa: std.mem.Allocator) !void {
     while (act < 5) : (act += 1) {
         // renderJson's output is owned by the passed allocator (the arena here);
         // arena.reset reclaims it — do NOT free it with gpa (invalid free).
-        _ = try drlg.renderJson(&ctx, arena.allocator(), 0, act, .normal);
+        _ = try drlg.renderJson(&ctx, arena.allocator(), 0, act, .normal, zlibDeflate);
         _ = arena.reset(.retain_capacity);
     }
 }
@@ -154,11 +174,11 @@ fn handleRequest(gpa: std.mem.Allocator, ctx: *drlg.Ctx, request: *std.http.Serv
     // skips generating the act's other 38 levels); without it the whole act is rendered.
     const body = blk: {
         if (params.level) |lid| {
-            break :blk drlg.renderLevelJson(ctx, arena.allocator(), params.seed, params.act_no, lid, params.diff) catch {
+            break :blk drlg.renderLevelJson(ctx, arena.allocator(), params.seed, params.act_no, lid, params.diff, zlibDeflate) catch {
                 return request.respond("render failed\n", .{ .status = .internal_server_error });
             };
         }
-        break :blk drlg.renderJson(ctx, arena.allocator(), params.seed, params.act_no, params.diff) catch {
+        break :blk drlg.renderJson(ctx, arena.allocator(), params.seed, params.act_no, params.diff, zlibDeflate) catch {
             return request.respond("render failed\n", .{ .status = .internal_server_error });
         };
     };
