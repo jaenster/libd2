@@ -114,12 +114,32 @@ const weight_table = [8][8]i32{
     .{ 8, 8, 8, 8, 9, 9, 10, 11 },
 };
 
-/// gaPathDirectionStepDeltas (0x6eb490): 41-int step table for
-/// PATH_GetTargetCoordinates (0x648020) and PATH_ExtendPathEndpoint (0x648050).
-const step_deltas = [41]i32{
-    0, 1, 1, 1, 1, -1, -1, -1, -1, 0, 1, 1, 1, 1, -1, -1, -1, 0, 0, 0, 1,
-    1, 1, -1, -1, 0, 0, 0, 0, 0, 1, 1, -1, 0, 0, 0, 0, 0, 0, 0, 1,
+/// gaPathDirectionStepDeltas (0x6eb490): the CENTER (index 0) of an 81-int signed
+/// step table (int32 elements — disasm: `MOV EDX, dword ptr [EDX*0x4 + 0x6eb490]`).
+/// The binary's symbol points at the middle of the table: PATH_GetTargetCoordinates
+/// (0x648020) only ever reads the non-negative half (step+dir*9, both in [0,4]), but
+/// PATH_ExtendPathEndpoint (0x648050) indexes by the signed delta ddx+ddy*9 in
+/// [-40,+40], so the negative-index prefix (0x6eb3f0..0x6eb490) is required too.
+/// Stored here 0-based as nine 9-wide rows for offsets -40..+40; `stepDelta`
+/// re-centers a signed offset by +40. The +0..+40 half is byte-identical to the old
+/// 41-int slice, so getTargetCoordinates is unchanged.
+const step_deltas = [81]i32{
+    -1, 0,  0,  0,  0, 0, 0, 0, 1, // offset -40..-32
+    -1, -1, 0,  0,  0, 0, 0, 1, 1, // offset -31..-23
+    -1, -1, -1, 0,  0, 0, 1, 1, 1, // offset -22..-14
+    -1, -1, -1, -1, 0, 1, 1, 1, 1, // offset -13..-5
+    -1, -1, -1, -1, 0, 1, 1, 1, 1, // offset  -4..+4  (offset 0 = center)
+    -1, -1, -1, -1, 0, 1, 1, 1, 1, // offset  +5..+13
+    -1, -1, -1, 0,  0, 0, 1, 1, 1, // offset +14..+22
+    -1, -1, 0,  0,  0, 0, 0, 1, 1, // offset +23..+31
+    -1, 0,  0,  0,  0, 0, 0, 0, 1, // offset +32..+40
 };
+
+/// Read gaPathDirectionStepDeltas at a signed offset in [-40,+40]. The engine's
+/// symbol is the table center; the port stores it 0-based, so re-center by +40.
+inline fn stepDelta(offset: i32) i32 {
+    return step_deltas[@intCast(offset + 40)];
+}
 
 /// gnDrlgLevelSeed-as-table (0x6f17d8): the A* direction-rotation table, 8
 /// "turn-class" rows × 8 columns. Read by DRLGPATH_AStarExpandNode /
@@ -266,8 +286,8 @@ fn weightedDistance(sx: i32, sy: i32, dx: i32, dy: i32) i32 {
 /// gaPathDirectionStepDeltas grid.
 pub fn getTargetCoordinates(dir_index: i32, step_index: i32) [2]i32 {
     return .{
-        step_deltas[@intCast(step_index + dir_index * 9)], // X
-        step_deltas[@intCast(dir_index + step_index * 9)], // Y
+        stepDelta(step_index + dir_index * 9), // X
+        stepDelta(dir_index + step_index * 9), // Y
     };
 }
 
@@ -683,8 +703,8 @@ pub fn extendPathEndpoint(view: CollisionView, coords: *PathCoords, shape: Colli
     const ady = @abs(ddy);
     if (adx >= 5 or ady >= 5) return;
     if (adx == 0 and ady == 0) return;
-    const step_x = step_deltas[@intCast(ddx + ddy * 9)];
-    const step_y = step_deltas[@intCast(ddy + ddx * 9)];
+    const step_x = stepDelta(ddx + ddy * 9);
+    const step_y = stepDelta(ddy + ddx * 9);
     var x = coords.dst_x;
     var y = coords.dst_y;
     var n = @max(adx, ady);
@@ -954,6 +974,28 @@ test "obstacle detour: moves a blocked destination to a walkable neighbor" {
     const found = findAlternateAroundObstacle(tg.view, &coords, true, .none);
     try testing.expect(found);
     // The relocated destination must be walkable.
+    try testing.expect(tg.view.walkable(coords.dst_x, coords.dst_y));
+}
+
+test "extendPathEndpoint handles negative deltas (centered step table regression)" {
+    // A westward endpoint (dst left of src) makes the step-table index ddx+ddy*9
+    // negative. gaPathDirectionStepDeltas is centered at index 0, so the lookup must
+    // reach the negative-offset half. Before the 81-int centered table the port only
+    // stored the >=0 slice and this panicked ("integer does not fit in destination
+    // type") the moment a player (is_player) detour extended westward.
+    const a = testing.allocator;
+    var tg = try parseAscii(a,
+        \\............
+        \\............
+        \\............
+    );
+    defer tg.deinit(a);
+    var coords = PathCoords{ .src_x = 8, .src_y = 1, .dst_x = 6, .dst_y = 1 };
+    extendPathEndpoint(tg.view, &coords, .none);
+    // Extends due-west along the dominant axis (step_x=-1, step_y=0), staying
+    // walkable, up to the 5-subtile span: dst_x 6 -> 3.
+    try testing.expectEqual(@as(i32, 3), coords.dst_x);
+    try testing.expectEqual(@as(i32, 1), coords.dst_y);
     try testing.expect(tg.view.walkable(coords.dst_x, coords.dst_y));
 }
 
