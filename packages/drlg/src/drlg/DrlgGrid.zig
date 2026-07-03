@@ -441,12 +441,17 @@ pub fn FillGrid(pDrlgGrid: [*c]D2DrlgGridStrc, nWidth: i32, nHeight: i32, pCellP
         pDrlgGrid.*.bIsSubGrid = 0;
         return;
     }
+    // Recon DrlgGrid.cpp:582 shows `int nRowOffset = 0;` re-scoped inside the loop with a
+    // dead `nRowOffset += nWidth;` — a decompiler artifact that lost the loop-carried row
+    // stride, leaving every rowOffset 0 (all rows alias row 0). The real engine lays the
+    // grid out row-major: rowOffsets[i] = i*nWidth. Latent until cross-row GetGridFlags
+    // reads (warp-tile flags) needed the correct stride; room-gen never reads flags cross-
+    // row, so the fix keeps the byte-exact gate.
+    var nRowOffset: i32 = 0;
     while (true) {
-        var nRowOffset: i32 = 0;
         pDrlgGrid.*.pCellsRowOffsets[@intCast(nRowIdx)] = nRowOffset;
         nRowIdx += 1;
         nRowOffset += nWidth;
-        _ = &nRowOffset;
         if (!(nRowIdx < nHeight)) break;
     }
     pDrlgGrid.*.bIsSubGrid = 0;

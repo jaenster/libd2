@@ -1671,6 +1671,7 @@ pub fn verifyActCollision(
 const objects_mod = @import("objects.zig");
 const objpop_mod = @import("drlg/objpop.zig");
 const DrlgWarp = @import("drlg/DrlgWarp.zig");
+const DrlgRoom = @import("drlg/DrlgRoom.zig");
 
 const drng = @import("drlg/rng.zig");
 
@@ -2102,6 +2103,10 @@ fn collectLevelAdjacents(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelS
     const ox = lvlPos.x * SUB;
     const oy = lvlPos.y * SUB;
 
+    // Vis array: slot -> destination LEVEL id. getWarpDestinationFromArray returns the
+    // LvlWarp id (non-negative only when a real warp exists for the slot), NOT a level;
+    // the reported destination level is vis[slot].
+    const vis = DrlgRoom.getVisArrayFromLevelId(pLevel.pDrlg, pLevel.eD2LevelId);
     var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
     while (pr) |p| : (pr = p.pRoomExNext) {
         if (!p.eRoomExFlags.anyWarp()) continue;
@@ -2112,8 +2117,12 @@ fn collectLevelAdjacents(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelS
         var slot: u3 = 0;
         while (true) : (slot += 1) {
             if (p.eRoomExFlags.warpSlot(slot)) {
-                const dest = DrlgWarp.getWarpDestinationFromArray(pLevel, slot);
-                if (dest != -1) try out.append(out_alloc, .{ .dest_level_id = dest, .x = cx, .y = cy });
+                // A set slot is a real warp door only when it resolves to a LvlWarp id
+                // (!= -1); the destination level reported is the vis-array entry.
+                if (DrlgWarp.getWarpDestinationFromArray(pLevel, slot) != -1) {
+                    const dest = @intFromEnum(vis[slot]);
+                    if (dest != 0) try out.append(out_alloc, .{ .dest_level_id = dest, .x = cx, .y = cy });
+                }
             }
             if (slot == 7) break;
         }
