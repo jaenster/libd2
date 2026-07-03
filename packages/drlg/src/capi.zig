@@ -246,6 +246,77 @@ export fn d2drlg_act_level_collision(
     return @intCast(total);
 }
 
+/// zlib-deflate a byte slice (rfc1950 container) into a freshly page-allocated buffer.
+/// Uses the fastest flate level (level_1) — these CollMap grids are ultra-repetitive so a
+/// heavier level barely changes the ratio. Caller owns the returned slice (page_allocator).
+fn deflateZlib(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    const flate = std.compress.flate;
+    // History window for the compressor (must be >= max_window_len).
+    const window = try allocator.alloc(u8, flate.max_window_len);
+    defer allocator.free(window);
+    // Growable output sink; capacity must exceed 8 for Compress.init's assert.
+    var sink = try std.Io.Writer.Allocating.initCapacity(allocator, @max(input.len / 2, 64));
+    errdefer sink.deinit();
+    var comp = try flate.Compress.init(&sink.writer, window, .zlib, .level_1);
+    try comp.writer.writeAll(input);
+    try comp.finish();
+    return sink.toOwnedSlice();
+}
+
+/// Like `d2drlg_act_level_collision`, but ZLIB-DEFLATES the little-endian u16 RAW CollMap
+/// (rfc1950 container) and writes the compressed bytes to `out`. Always sets *out_w/*out_h to
+/// the full grid dims. Returns the FULL deflated byte length (>=0, may exceed `cap` => the
+/// caller grows and retries), 0 if the level has no collision grid, or a negative error code.
+/// The INFLATED grid is byte-for-byte identical to `d2drlg_act_level_collision`'s output, so
+/// hosts can deflate map collision entirely in-wasm (no host zlib) and inflate with any zlib.
+export fn d2drlg_act_level_collision_zlib(
+    act: ?*Act,
+    level_index: i32,
+    out: [*]u8,
+    cap: i32,
+    out_w: *i32,
+    out_h: *i32,
+) i32 {
+    out_w.* = 0;
+    out_h.* = 0;
+    const a = act orelse return -1;
+    if (cap < 0) return -2;
+    if (level_index < 0 or level_index >= a.result.levels.len) return -3;
+    const lf = a.result.levels[@intCast(level_index)];
+    if (lf.coll_cells.len == 0) return 0; // no collision grid for this level
+    out_w.* = lf.coll_w;
+    out_h.* = lf.coll_h;
+
+    const pa = std.heap.page_allocator;
+    // Source = row-major little-endian u16 per cell (same bytes as the raw accessor).
+    const src = pa.alloc(u8, lf.coll_cells.len * 2) catch return -4;
+    defer pa.free(src);
+    for (lf.coll_cells, 0..) |cell, idx| std.mem.writeInt(u16, src[idx * 2 ..][0..2], cell, .little);
+
+    const deflated = deflateZlib(pa, src) catch return -5;
+    defer pa.free(deflated);
+
+    const cap_us: usize = @intCast(cap);
+    const n = @min(deflated.len, cap_us);
+    @memcpy(out[0..n], deflated[0..n]);
+    return @intCast(deflated.len);
+}
+
+/// zlib-DEFLATE (rfc1950) an arbitrary caller byte buffer. Reads `in_len` bytes from `in`,
+/// writes up to `cap` compressed bytes to `out`, and returns the FULL deflated byte length
+/// (>=0, may exceed `cap` => grow+retry) or a negative error code. Fastest flate level. Lets
+/// a host deflate any buffer (e.g. an OOB-fill fallback grid) entirely in-wasm, no host zlib.
+export fn d2drlg_deflate_zlib(in: [*]const u8, in_len: i32, out: [*]u8, cap: i32) i32 {
+    if (in_len < 0 or cap < 0) return -1;
+    const pa = std.heap.page_allocator;
+    const deflated = deflateZlib(pa, in[0..@intCast(in_len)]) catch return -2;
+    defer pa.free(deflated);
+    const cap_us: usize = @intCast(cap);
+    const n = @min(deflated.len, cap_us);
+    @memcpy(out[0..n], deflated[0..n]);
+    return @intCast(deflated.len);
+}
+
 /// Write a level's Levels.txt LevelName (in-game display name) into `buf` (NUL-terminated
 /// if it fits) and return its byte length (>=0), or a negative error. Length 0 if the id
 /// is unknown.
@@ -510,5 +581,5 @@ fn writeCStr(s: []const u8, buf: [*]u8, cap: i32) i32 {
 }
 
 export fn d2drlg_abi_version() u32 {
-    return 2;
+    return 3;
 }
