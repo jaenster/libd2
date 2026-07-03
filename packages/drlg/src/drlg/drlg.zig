@@ -142,6 +142,7 @@ pub fn initLevelWarpCoordinates(pLevel: [*c]s.D2DrlgLevelStrc) void {
         if (doEmit) {
             const wc: *s.D2DrlgLevelWarpCoordinatesStrc = @ptrCast(&pLevel.*.sWarpCoordinates);
             const idx: usize = @intCast(wc.nEntriesCount);
+            if (idx >= wc.anX.len) return; // engine's fixed warp-coord cache cap
             var x: i32 = @divTrunc(pRoomEx.?.sCoords.WorldSize.x, 2) + pRoomEx.?.sCoords.WorldPosition.x;
             var y: i32 = @divTrunc(pRoomEx.?.sCoords.WorldSize.y, 2) + pRoomEx.?.sCoords.WorldPosition.y;
             Transform.CoordsRoomToWorld(&x, &y);

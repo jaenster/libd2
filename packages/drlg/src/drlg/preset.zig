@@ -466,10 +466,48 @@ pub fn buildPresetArea(pDrlgMap: [*c]s.D2DrlgMapStrc, pLevel: [*c]s.D2DrlgLevelS
     // loads the DS1 and builds pDrlgFile->pPresetUnit with engine-resolved classIds
     // (recon Preset.cpp:86). AddPresetUnit then consumes the level seed once per
     // qualifying preset UNIT. The DS1 wall-layer grid scan (recon 1828-1945)
-    // consumes NO seed — it only places pops/spawns from real grid data we do not
-    // act on here — so the seed-affecting work is just the unit list.
+    // consumes NO seed; the warp-tile portion is ported below, the pops/spawns
+    // portion stays dormant — so the seed-affecting work is just the unit list.
     AllocDrlgFile(&pDrlgMap.*.pDrlgFile, pDrlg.?.pDS1MemPool, presetDs1Path(pDrlgMap) orelse "");
     addPresetUnitToDrlgMap(pMemory, pDrlgMap, &pLevel.*.sSeed);
+
+    // DS1 wall-layer WARP-TILE scan (recon Preset.cpp:1826-1856). For every wall-layer
+    // cell whose orientation block == 0xa/0xb (a warp/exit tile), the wall block's main
+    // index (nTileType = wallCell>>0x14 & 0x3f) is the vis/warp slot: OR bit 1<<(slot+4)
+    // into the room's grid cell. BuildArea then reads GetGridFlags per allocated RoomEx,
+    // so exactly the RoomEx covering the staircase gets the warp-slot flag — which
+    // collectLevelAdjacents resolves to a warp-door bridge. Consumes NO seed (pure DS1
+    // grid read + flag OR), so it cannot perturb the room-generation RNG stream. The
+    // pops/spawn-point population that shares this recon loop (1858-1945) stays dormant.
+    scanWarpTiles: {
+        if (nScanMode == 0) break :scanWarpTiles;
+        const pf = pDrlgMap.*.pDrlgFile orelse break :scanWarpTiles;
+        if (pf.nWidth != pDrlgMap.*.nSizeX or pf.nHeight != pDrlgMap.*.nSizeY) break :scanWarpTiles;
+        const W: usize = @intCast(pf.nWidth + 1);
+        const H: usize = @intCast(pf.nHeight + 1);
+        const nwl: usize = @intCast(pf.nWallLayers);
+        var li: usize = 0;
+        while (li < nwl and li < 4) : (li += 1) {
+            const orient: [*]const i32 = @ptrCast(@alignCast(pf.pTileTypeLayer[li] orelse continue));
+            const wall: [*]const i32 = @ptrCast(@alignCast(pf.pWallLayer[li] orelse continue));
+            var yy: usize = 0;
+            while (yy < H) : (yy += 1) {
+                var xx: usize = 0;
+                while (xx < W) : (xx += 1) {
+                    const o = orient[yy * W + xx];
+                    if (o != 0xa and o != 0xb) continue;
+                    const wc: u32 = @bitCast(wall[yy * W + xx]);
+                    const nTileType: i32 = @bitCast((wc >> 0x14) & 0x3f);
+                    const nPopSubIndex = (wc >> 8) & 0xff;
+                    if (nTileType >= 8) continue;
+                    if (!(nPopSubIndex == 0 or nPopSubIndex == 4 or (wc & 0x80000000) != 0)) continue;
+                    const gx: i32 = if (bSingleRoom) 0 else @divTrunc(@as(i32, @intCast(xx)), 8);
+                    const gy: i32 = if (bSingleRoom) 0 else @divTrunc(@as(i32, @intCast(yy)), 8);
+                    DrlgGrid.AlterGridFlag(pDrlgGrid, gx, gy, @as(i32, 1) << @intCast(nTileType + 4), 0);
+                }
+            }
+        }
+    }
 
     const nPopCount: i32 = 0;
     if (nPopsCfg != 0) {
@@ -484,13 +522,12 @@ pub fn buildPresetArea(pDrlgMap: [*c]s.D2DrlgMapStrc, pLevel: [*c]s.D2DrlgLevelS
         @memset(@as([*]u8, @ptrCast(pDrlgMap.*.pPosLocation))[0 .. n * 16], 0);
     }
 
-    // nWallLayers == 0 -> the per-cell scan loop and the object-flag loop (recon
-    // 1828-1945) are dormant; they place pops/spawns (no seed) from real DS1 grid
-    // data we do not load. The seed-affecting work (AddPresetUnit) is already done.
+    // The pops/spawn-point population (recon 1858-1945) stays dormant; it consumes no
+    // seed and feeds features we do not populate here. The warp-tile flags (1856) are
+    // set by the scan above. The seed-affecting work (AddPresetUnit) is already done.
     if (nPopsCfg != 0) {
         initDrlgMapPopLocations(nPopCount, pDrlgMap);
     }
-    _ = bSingleRoom;
 }
 
 const ASSET_ROOT = "assets/tiles/";
