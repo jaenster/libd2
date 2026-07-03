@@ -503,6 +503,9 @@ pub fn generateActFull(
     // pure geometry over out.items — no engine call, no RNG. Union with the per-room warp
     // slots already gathered in l.adjacents (the far-away dungeon-entrance warp doors).
     {
+        var conn_arena = std.heap.ArenaAllocator.init(ctx.gpa);
+        defer conn_arena.deinit();
+        const ca = conn_arena.allocator();
         var boxes = try out_alloc.alloc(SeamLevelBox, out.items.len);
         defer out_alloc.free(boxes);
         for (out.items, 0..) |*l, i| boxes[i] = .{
@@ -510,6 +513,7 @@ pub fn generateActFull(
             .origin_x = l.meta.origin_x,
             .origin_y = l.meta.origin_y,
             .rooms = l.meta.rooms,
+            .conn = try buildSeamConn(ca, &pDrlg, act.warps.items, l.meta.level_id, ids.items),
         };
         for (out.items, 0..) |*l, i| {
             var merged: std.ArrayListUnmanaged(LevelAdjacent) = .empty;
@@ -2075,6 +2079,7 @@ pub fn generateLevelAdjacents(
             .origin_x = pLevel.sCoordinatesAndSize.WorldPosition.x,
             .origin_y = pLevel.sCoordinatesAndSize.WorldPosition.y,
             .rooms = try rooms.toOwnedSlice(aa),
+            .conn = try buildSeamConn(aa, &pDrlg, act.warps.items, lid, ids.items),
         });
     }
 
@@ -2130,20 +2135,33 @@ fn collectLevelAdjacents(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelS
     return out.toOwnedSlice(out_alloc);
 }
 
-/// One level's placed rooms (world TILE bounding boxes) + its origin, for the seam pass.
-pub const SeamLevelBox = struct { id: i32, origin_x: i32, origin_y: i32, rooms: []const RoomRect };
+/// One level's placed rooms (world TILE bounding boxes) + its origin + the ids of the
+/// levels it is STITCHED to (`conn`), for the seam pass. See `appendSeamAdjacents`.
+pub const SeamLevelBox = struct { id: i32, origin_x: i32, origin_y: i32, rooms: []const RoomRect, conn: []const i32 = &.{} };
+
+/// Signed axis gap between two world-TILE spans [ap, ap+aw] and [bp, bp+bw]: the empty
+/// distance between them (negative when they overlap). The LEFT span's width is the one
+/// subtracted, exactly as DrlgRoom.cpp DefineRoomsNear (0x66bc20) computes it.
+fn axisGap(ap: i32, aw: i32, bp: i32, bw: i32) i32 {
+    return if (ap < bp) bp - aw - ap else ap - bw - bp;
+}
 
 /// Append the cross-level SEAM bridge tiles for `boxes[target_idx]` to `out`. A bridge is
-/// emitted for every pair (room R of the target level, room S of a DIFFERENT level) whose
-/// world-tile bounding boxes TOUCH (share an edge or corner), positioned at R's centre in
-/// the target's level-local subtile frame. This is the outdoor border-junction adjacency
-/// the engine builds as warp tiles between coordinate-adjacent rooms across a level seam
-/// (DRLGROOMTILE warp matching): two rooms in vertically/horizontally neighbouring level
-/// slabs whose edge projections overlap-or-touch get a warp. Reproducing it as geometry
-/// over the already-placed rooms is faithful to that output and consumes NO RNG, so it
-/// cannot perturb room generation. Validated multiset-exact against the DeadlyBossMods
-/// map API across seeds (the ONLY residual per level is the single far-away dungeon-
-/// entrance warp door, which is a preset warp unit, not a seam).
+/// emitted for every pair (room R of the target level, room S of a STITCHED neighbour
+/// level) that the engine's own near-room test (DrlgRoom.cpp DefineRoomsNear, 0x66bc20)
+/// deems NEAR — inter-box gap < 6 tiles on BOTH axes — positioned at R's centre in the
+/// target's level-local subtile frame. DefineRoomsNear is exactly the pRoomsNear relation
+/// the DeadlyBossMods map API reports as adjacency; a gap-<6 (not merely touching) window
+/// picks up the thin (2-tile) border rows that preset transition levels lay along a seam,
+/// so the per-tile bridge multiplicity matches DBM for preset seams (Tamoe↔Monastery Gate,
+/// Cloister↔Cathedral, Outer Cloister↔Barracks) — for thick 8-tile wilderness rooms only
+/// one row falls inside gap<6, so it degrades to the touching case and wilderness seams are
+/// unchanged. The `conn` gate restricts pairs to genuinely stitched levels (Levels.txt Vis
+/// links + the act placement chain); two levels merely placed edge-to-edge but not linked
+/// (e.g. Black Marsh beside Monastery Gate) are near but carry no warp, so emit nothing.
+/// Pure geometry over the already-placed rooms: consumes NO RNG, cannot perturb generation.
+/// Validated multiset-exact against DBM across seeds (residual per level = the single
+/// far-away dungeon-entrance warp door, a preset warp unit, not a seam).
 fn appendSeamAdjacents(
     out: *std.ArrayListUnmanaged(LevelAdjacent),
     alloc: std.mem.Allocator,
@@ -2156,15 +2174,59 @@ fn appendSeamAdjacents(
         const cy = (r.y - t.origin_y) * SUB + @divTrunc(r.h * SUB, 2);
         for (boxes, 0..) |b, bi| {
             if (bi == target_idx) continue;
+            if (std.mem.indexOfScalar(i32, t.conn, b.id) == null) continue;
             for (b.rooms) |sroom| {
-                if (r.x + r.w >= sroom.x and sroom.x + sroom.w >= r.x and
-                    r.y + r.h >= sroom.y and sroom.y + sroom.h >= r.y)
+                if (axisGap(r.x, r.w, sroom.x, sroom.w) < 6 and
+                    axisGap(r.y, r.h, sroom.y, sroom.h) < 6)
                 {
                     try out.append(alloc, .{ .dest_level_id = b.id, .x = cx, .y = cy });
                 }
             }
         }
     }
+}
+
+/// Build the seed-invariant STITCH set for `level_id`: the ids of levels the engine links
+/// it to. A level B is stitched to A when B is in A's Levels.txt Vis array or A is in B's
+/// (the interior warp/vis links — Cloister↔Cathedral, Outer Cloister↔Barracks), or A and B
+/// are consecutive in the act placement chain (`warps` from act.build — the wilderness
+/// border stitch, e.g. Tamoe Highland↔Monastery Gate). Only stitched levels get seam
+/// bridges. Caller owns the returned slice.
+fn buildSeamConn(
+    alloc: std.mem.Allocator,
+    pDrlg: *abi.D2DrlgStrc,
+    warps: []const [2]i64,
+    level_id: i32,
+    all_ids: []const i32,
+) ![]i32 {
+    var set: std.ArrayListUnmanaged(i32) = .empty;
+    errdefer set.deinit(alloc);
+    const add = struct {
+        fn f(s: *std.ArrayListUnmanaged(i32), a: std.mem.Allocator, id: i32) !void {
+            if (id != 0 and std.mem.indexOfScalar(i32, s.items, id) == null) try s.append(a, id);
+        }
+    }.f;
+    // Forward Vis of this level.
+    const vis = DrlgRoom.getVisArrayFromLevelId(pDrlg, @enumFromInt(level_id));
+    for (0..8) |i| try add(&set, alloc, @intFromEnum(vis[i]));
+    // Reverse Vis: any act level whose Vis names this one (Vis is normally symmetric,
+    // but include both directions so a one-sided entry still stitches).
+    for (all_ids) |oid| {
+        if (oid == level_id) continue;
+        const vo = DrlgRoom.getVisArrayFromLevelId(pDrlg, @enumFromInt(oid));
+        for (0..8) |i| {
+            if (@intFromEnum(vo[i]) == level_id) {
+                try add(&set, alloc, oid);
+                break;
+            }
+        }
+    }
+    // Act placement chain (bidirectional prev/next warps).
+    for (warps) |w| {
+        if (@as(i32, @intCast(w[0])) == level_id) try add(&set, alloc, @intCast(w[1]));
+        if (@as(i32, @intCast(w[1])) == level_id) try add(&set, alloc, @intCast(w[0]));
+    }
+    return set.toOwnedSlice(alloc);
 }
 
 // Process-global Objects.txt lookup (name / description columns), decoded once and
