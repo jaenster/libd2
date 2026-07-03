@@ -94,7 +94,11 @@ const MatCtx = struct {
     }
 };
 
-var g_ctx: *MatCtx = undefined;
+// Set at the top of each materialize entry (a poor-man's closure for the C-style tilegen
+// callbacks) and read only within that same synchronous call. Thread-local so concurrent
+// generations on different threads don't clobber each other's MatCtx (single-threaded
+// behaviour is identical — each thread still sets+reads its own).
+threadlocal var g_ctx: *MatCtx = undefined;
 
 // ===========================================================================
 // RoomTile.cpp count/init/processTile — faithful transforms wired to the

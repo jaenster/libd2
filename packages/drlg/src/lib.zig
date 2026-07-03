@@ -28,6 +28,10 @@ pub const monpop = @import("drlg/monpop.zig");
 /// byte-exact-validation residual.
 pub const path = @import("path.zig");
 
+/// DBM-shaped map JSON serializer (whole act) — used by drlg-server + reusable by
+/// the wasm shim. See renderjson.zig.
+pub const renderJson = @import("renderjson.zig").renderJson;
+
 const drlg = @import("drlg/drlg.zig");
 const dtables = @import("drlg/tables.zig");
 const dpool = @import("drlg/pool.zig");
