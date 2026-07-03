@@ -1,0 +1,19 @@
+.{
+    .name = .d2_drlg_server,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x21fa62ea9766a4f9,
+
+    // Native speed-focused HTTP server that serves the DeadlyBossMods-shaped map JSON.
+    // Depends on d2-drlg (which pulls d2-formats / d2-fog transitively) for the native
+    // `renderJson` serializer + one-act generation.
+    .dependencies = .{
+        .d2_drlg = .{ .path = "../drlg" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
