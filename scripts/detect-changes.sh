@@ -31,6 +31,8 @@ bump_patch() { # X.Y.Z -> X.Y.(Z+1)
   local IFS=.; read -r ma mi pa <<<"$1"; echo "${ma}.${mi}.$((pa + 1))"
 }
 
+max_ver() { printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1; }  # higher of two X.Y.Z
+
 zon_version() { # read .version = "X.Y.Z" from a build.zig.zon
   sed -nE 's/.*\.version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$1" | head -1
 }
@@ -60,7 +62,11 @@ for dir in packages/*/; do
     if [ -z "$forced" ] && git diff --quiet "$last" HEAD -- "$dir"; then
       continue
     fi
+    # The zon .version acts as a FLOOR: bump it to cut a minor/major, and the
+    # auto-patch continues from there on subsequent releases.
     version="$(bump_patch "${last#"${name}"-v}")"
+    zv="$(zon_version "$dir/build.zig.zon")"
+    [ -n "$zv" ] && version="$(max_ver "$version" "$zv")"
   fi
 
   out="$(printf '%s' "$out" | jq -c \
