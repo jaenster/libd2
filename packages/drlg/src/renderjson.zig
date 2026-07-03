@@ -134,43 +134,26 @@ fn writeJsonEscaped(w: *std.Io.Writer, s: []const u8, upcase_first: bool) !void 
     }
 }
 
-/// zlib-deflate `input` (rfc1950 container, fastest flate level). Byte-identical to the
-/// C-ABI `deflateZlib` (capi.zig) so the inflated grid matches the shim/DBM cell-for-cell.
-fn deflateZlib(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
-    const flate = std.compress.flate;
-    const window = try allocator.alloc(u8, flate.max_window_len);
-    defer allocator.free(window);
-    var sink = try std.Io.Writer.Allocating.initCapacity(allocator, @max(input.len / 2, 64));
-    errdefer sink.deinit();
-    var comp = try flate.Compress.init(&sink.writer, window, .zlib, .level_1);
-    try comp.writer.writeAll(input);
-    try comp.finish();
-    return sink.toOwnedSlice();
-}
-
-/// Deflate a level's LE-u16 CollMap `cells` (or a fw*fh 0xFFFF OOB-fill grid when the level
-/// has none) and base64-encode it, appending the quoted string to `w`. Mirrors the shim's
-/// `#actCollisionZlib` fallback (0xFFFF fill of size[0]*size[1] when no grid exists).
+/// Base64-encode already-`deflateZlib`'d CollMap bytes (the level holds only these), appending
+/// the quoted string to `w`. When the level has NO collision (`deflated` empty), synthesize the
+/// shim's `#actCollisionZlib` fallback: deflate a fw*fh 0xFFFF OOB-fill grid, then base64 it.
 fn writeCollisionB64(
     w: *std.Io.Writer,
     scratch: std.mem.Allocator,
-    cells: []const u16,
+    deflated: []const u8,
     fw: i32,
     fh: i32,
 ) !void {
-    var src: []u8 = undefined;
-    if (cells.len != 0) {
-        src = try scratch.alloc(u8, cells.len * 2);
-        for (cells, 0..) |cell, i| std.mem.writeInt(u16, src[i * 2 ..][0..2], cell, .little);
-    } else {
+    var bytes: []const u8 = deflated;
+    if (bytes.len == 0) {
         const n: usize = @intCast(@max(fw, 0) * @max(fh, 0));
-        src = try scratch.alloc(u8, n * 2);
+        const src = try scratch.alloc(u8, n * 2);
         @memset(src, 0xff); // 0xFFFF LE per cell — the shim's OOB-fill fallback
+        bytes = try lib.deflateZlib(scratch, src);
     }
-    const deflated = try deflateZlib(scratch, src);
     const enc = std.base64.standard.Encoder;
-    const b64 = try scratch.alloc(u8, enc.calcSize(deflated.len));
-    _ = enc.encode(b64, deflated);
+    const b64 = try scratch.alloc(u8, enc.calcSize(bytes.len));
+    _ = enc.encode(b64, bytes);
     try writeJsonString(w, b64);
 }
 
@@ -193,70 +176,100 @@ pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i3
     try w.print("{{\"seed\":{d},\"levels\":[", .{seed});
     for (result.levels, 0..) |lf, li| {
         if (li != 0) try w.writeByte(',');
-        const m = lf.meta;
-        const level_no = m.level_id;
-        const display_name = dbmDisplayName(ctx, level_no);
-
-        try w.print("{{\"levelNo\":{d},\"name\":", .{level_no});
-        try writeDbmName(w, level_no, display_name);
-        try w.writeAll(",\"displayName\":");
-        try writeJsonString(w, display_name);
-        try w.print(",\"act\":{d},\"origin\":[{d},{d}],\"size\":[{d},{d}]", .{
-            act_no + 1, m.origin_x * 5, m.origin_y * 5, m.width * 5, m.height * 5,
-        });
-
-        // rooms: level-local subtile rect + DS1 pick (roomNo == subNo == pickedFile)
-        try w.writeAll(",\"rooms\":[");
-        for (m.rooms, 0..) |r, ri| {
-            if (ri != 0) try w.writeByte(',');
-            try w.print("{{\"x\":{d},\"y\":{d},\"sizeX\":{d},\"sizeY\":{d},\"roomNo\":{d},\"subNo\":{d}}}", .{
-                (r.x - m.origin_x) * 5, (r.y - m.origin_y) * 5, r.w * 5, r.h * 5, r.picked_file, r.picked_file,
-            });
-        }
-        try w.writeAll("]");
-
-        // presets: etype 2 => obj (with name/description), else => npc
-        try w.writeAll(",\"presets\":[");
-        for (lf.presets, 0..) |p, pi| {
-            if (pi != 0) try w.writeByte(',');
-            if (p.etype == 2) {
-                try w.print("{{\"type\":\"obj\",\"txtFileNo\":{d},\"x\":{d},\"y\":{d},\"name\":", .{ p.txt_file_no, p.x, p.y });
-                try writeJsonString(w, lib.objectName(p.txt_file_no));
-                try w.writeAll(",\"description\":");
-                try writeJsonString(w, lib.objectDescription(p.txt_file_no));
-                try w.writeByte('}');
-            } else {
-                try w.print("{{\"type\":\"npc\",\"txtFileNo\":{d},\"x\":{d},\"y\":{d}}}", .{ p.txt_file_no, p.x, p.y });
-            }
-        }
-        try w.writeAll("]");
-
-        // adjacents: destination level bridge tiles (name/displayName resolved as render() does)
-        try w.writeAll(",\"adjacents\":[");
-        for (lf.adjacents, 0..) |adj, ai| {
-            if (ai != 0) try w.writeByte(',');
-            const dest = adj.dest_level_id;
-            const dn = dbmDisplayName(ctx, dest);
-            try w.print("{{\"levelNo\":{d},\"name\":", .{dest});
-            try writeDbmName(w, dest, dn);
-            try w.writeAll(",\"displayName\":");
-            try writeJsonString(w, dn);
-            try w.print(",\"bridgeX\":{d},\"bridgeY\":{d}}}", .{ adj.x, adj.y });
-        }
-        try w.writeAll("]");
-
-        // tells: filled by a later phase (always empty, matches the shim)
-        try w.writeAll(",\"tells\":[]");
-
-        // collision: dims + zlib-deflate(LE u16 grid), base64. Fallback fw/fh = size[0]/size[1].
-        const cw = if (lf.coll_cells.len != 0) lf.coll_w else m.width * 5;
-        const ch = if (lf.coll_cells.len != 0) lf.coll_h else m.height * 5;
-        try w.print(",\"collisionWidth\":{d},\"collisionHeight\":{d},\"collisionDeflateB64\":", .{ cw, ch });
-        try writeCollisionB64(w, a, lf.coll_cells, m.width * 5, m.height * 5);
-
-        try w.writeByte('}');
+        try writeLevel(w, a, ctx, act_no, lf);
     }
     try w.writeAll("]}");
 
     return out.toOwnedSlice();
+}
+
+/// Serialize a whole act to the DeadlyBossMods map JSON for a SINGLE level (one-element
+/// `levels` array — same per-level shape as `renderJson`). Generates ONLY the target level
+/// (`generateLevelFull`), so its `adjacents` are WARP DOORS ONLY: the cross-level seam bridges
+/// are a whole-act Pass-3 product and are absent here. `act_no` is 0-based; `level_id` is a
+/// Levels.txt id. Returns the JSON bytes (owned by `alloc`).
+pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i32, level_id: i32, diff: lib.Difficulty) ![]u8 {
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const lf = try lib.generateLevelFull(ctx, a, act_no, seed, level_id, diff);
+
+    var out = try std.Io.Writer.Allocating.initCapacity(alloc, 1 << 14);
+    errdefer out.deinit();
+    const w = &out.writer;
+
+    try w.print("{{\"seed\":{d},\"levels\":[", .{seed});
+    try writeLevel(w, a, ctx, act_no, lf);
+    try w.writeAll("]}");
+
+    return out.toOwnedSlice();
+}
+
+/// Emit one level's DBM object (metadata / rooms / presets / adjacents / tells / collision).
+/// Shared by `renderJson` (every level) and `renderLevelJson` (one), so a level serializes
+/// identically either way — modulo the seam adjacents only a whole-act render can supply.
+fn writeLevel(w: *std.Io.Writer, a: std.mem.Allocator, ctx: *lib.Ctx, act_no: i32, lf: lib.LevelFull) !void {
+    const m = lf.meta;
+    const level_no = m.level_id;
+    const display_name = dbmDisplayName(ctx, level_no);
+
+    try w.print("{{\"levelNo\":{d},\"name\":", .{level_no});
+    try writeDbmName(w, level_no, display_name);
+    try w.writeAll(",\"displayName\":");
+    try writeJsonString(w, display_name);
+    try w.print(",\"act\":{d},\"origin\":[{d},{d}],\"size\":[{d},{d}]", .{
+        act_no + 1, m.origin_x * 5, m.origin_y * 5, m.width * 5, m.height * 5,
+    });
+
+    // rooms: level-local subtile rect + DS1 pick (roomNo == subNo == pickedFile)
+    try w.writeAll(",\"rooms\":[");
+    for (m.rooms, 0..) |r, ri| {
+        if (ri != 0) try w.writeByte(',');
+        try w.print("{{\"x\":{d},\"y\":{d},\"sizeX\":{d},\"sizeY\":{d},\"roomNo\":{d},\"subNo\":{d}}}", .{
+            (r.x - m.origin_x) * 5, (r.y - m.origin_y) * 5, r.w * 5, r.h * 5, r.picked_file, r.picked_file,
+        });
+    }
+    try w.writeAll("]");
+
+    // presets: etype 2 => obj (with name/description), else => npc
+    try w.writeAll(",\"presets\":[");
+    for (lf.presets, 0..) |p, pi| {
+        if (pi != 0) try w.writeByte(',');
+        if (p.etype == 2) {
+            try w.print("{{\"type\":\"obj\",\"txtFileNo\":{d},\"x\":{d},\"y\":{d},\"name\":", .{ p.txt_file_no, p.x, p.y });
+            try writeJsonString(w, lib.objectName(p.txt_file_no));
+            try w.writeAll(",\"description\":");
+            try writeJsonString(w, lib.objectDescription(p.txt_file_no));
+            try w.writeByte('}');
+        } else {
+            try w.print("{{\"type\":\"npc\",\"txtFileNo\":{d},\"x\":{d},\"y\":{d}}}", .{ p.txt_file_no, p.x, p.y });
+        }
+    }
+    try w.writeAll("]");
+
+    // adjacents: destination level bridge tiles (name/displayName resolved as render() does)
+    try w.writeAll(",\"adjacents\":[");
+    for (lf.adjacents, 0..) |adj, ai| {
+        if (ai != 0) try w.writeByte(',');
+        const dest = adj.dest_level_id;
+        const dn = dbmDisplayName(ctx, dest);
+        try w.print("{{\"levelNo\":{d},\"name\":", .{dest});
+        try writeDbmName(w, dest, dn);
+        try w.writeAll(",\"displayName\":");
+        try writeJsonString(w, dn);
+        try w.print(",\"bridgeX\":{d},\"bridgeY\":{d}}}", .{ adj.x, adj.y });
+    }
+    try w.writeAll("]");
+
+    // tells: filled by a later phase (always empty, matches the shim)
+    try w.writeAll(",\"tells\":[]");
+
+    // collision: dims + base64(zlib-deflated LE u16 grid). Fallback fw/fh = size[0]/size[1].
+    const cw = if (lf.coll_deflated.len != 0) lf.coll_w else m.width * 5;
+    const ch = if (lf.coll_deflated.len != 0) lf.coll_h else m.height * 5;
+    try w.print(",\"collisionWidth\":{d},\"collisionHeight\":{d},\"collisionDeflateB64\":", .{ cw, ch });
+    try writeCollisionB64(w, a, lf.coll_deflated, m.width * 5, m.height * 5);
+
+    try w.writeByte('}');
 }

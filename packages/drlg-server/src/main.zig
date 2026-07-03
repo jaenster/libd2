@@ -150,21 +150,32 @@ fn handleRequest(gpa: std.mem.Allocator, ctx: *drlg.Ctx, request: *std.http.Serv
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
 
-    const body = drlg.renderJson(ctx, arena.allocator(), params.seed, params.act_no, params.diff) catch {
-        return request.respond("render failed\n", .{ .status = .internal_server_error });
+    // `&level=<levelNo>` renders ONLY that level (single-element `levels` array — cheap: it
+    // skips generating the act's other 38 levels); without it the whole act is rendered.
+    const body = blk: {
+        if (params.level) |lid| {
+            break :blk drlg.renderLevelJson(ctx, arena.allocator(), params.seed, params.act_no, lid, params.diff) catch {
+                return request.respond("render failed\n", .{ .status = .internal_server_error });
+            };
+        }
+        break :blk drlg.renderJson(ctx, arena.allocator(), params.seed, params.act_no, params.diff) catch {
+            return request.respond("render failed\n", .{ .status = .internal_server_error });
+        };
     };
     return request.respond(body, .{ .extra_headers = &.{json_ct} });
 }
 
-const RenderParams = struct { seed: u32, act_no: i32, diff: drlg.Difficulty };
+const RenderParams = struct { seed: u32, act_no: i32, diff: drlg.Difficulty, level: ?i32 = null };
 
 fn parseRenderParams(query: []const u8) !RenderParams {
     var seed: u32 = 0;
     var acts: u32 = 1;
     var diff_n: u32 = 0;
+    var level: ?i32 = null;
     if (getParam(query, "seed")) |v| seed = try std.fmt.parseInt(u32, v, 10);
     if (getParam(query, "acts")) |v| acts = try std.fmt.parseInt(u32, v, 10);
     if (getParam(query, "difficulty")) |v| diff_n = try std.fmt.parseInt(u32, v, 10);
+    if (getParam(query, "level")) |v| level = try std.fmt.parseInt(i32, v, 10);
     if (acts < 1 or acts > 5) return error.BadParam;
     const diff: drlg.Difficulty = switch (diff_n) {
         0 => .normal,
@@ -172,7 +183,7 @@ fn parseRenderParams(query: []const u8) !RenderParams {
         2 => .hell,
         else => return error.BadParam,
     };
-    return .{ .seed = seed, .act_no = @intCast(acts - 1), .diff = diff };
+    return .{ .seed = seed, .act_no = @intCast(acts - 1), .diff = diff, .level = level };
 }
 
 fn pathOf(target: []const u8) []const u8 {

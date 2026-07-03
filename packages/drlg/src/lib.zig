@@ -32,6 +32,11 @@ pub const path = @import("path.zig");
 /// the wasm shim. See renderjson.zig.
 pub const renderJson = @import("renderjson.zig").renderJson;
 
+/// DBM-shaped map JSON for a SINGLE level (one-element `levels` array). See renderjson.zig
+/// / `generateLevelFull` — generates only the target level, so its adjacents are warp doors
+/// only (no cross-level seam bridges).
+pub const renderLevelJson = @import("renderjson.zig").renderLevelJson;
+
 const drlg = @import("drlg/drlg.zig");
 const dtables = @import("drlg/tables.zig");
 const dpool = @import("drlg/pool.zig");
@@ -341,7 +346,12 @@ pub const LevelFull = struct {
     adjacents: []LevelAdjacent,
     coll_w: i32,
     coll_h: i32,
-    coll_cells: []u16, // raw Colbit per subtile, row-major (coll_w*coll_h); empty if none
+    /// zlib-deflated LE-u16 raw CollMap (row-major coll_w*coll_h), NOT the raw grid —
+    /// the raw grids are deflated the moment they are materialized (while the level is
+    /// live) and only these small compressed bytes are retained, so an act handle holds
+    /// ~one deflated stream per level instead of every level's ~2 MB raw grid. Empty if
+    /// the level has no collision. Inflate on demand (see `inflateColl`) for raw cells.
+    coll_deflated: []u8,
 };
 
 pub const ActFullResult = struct {
@@ -352,11 +362,132 @@ pub const ActFullResult = struct {
             alloc.free(l.meta.rooms);
             alloc.free(l.presets);
             alloc.free(l.adjacents);
-            if (l.coll_cells.len != 0) alloc.free(l.coll_cells);
+            if (l.coll_deflated.len != 0) alloc.free(l.coll_deflated);
         }
         alloc.free(self.levels);
     }
 };
+
+/// zlib-deflate (rfc1950, fastest flate level) `input` into a fresh `alloc` slice. The
+/// single collision-compression primitive shared by the whole-act/single-level generators
+/// and the render/C-ABI serializers, so every path emits byte-identical compressed CollMap.
+pub fn deflateZlib(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
+    const flate = std.compress.flate;
+    const window = try alloc.alloc(u8, flate.max_window_len);
+    defer alloc.free(window);
+    var sink = try std.Io.Writer.Allocating.initCapacity(alloc, @max(input.len / 2, 64));
+    errdefer sink.deinit();
+    var comp = try flate.Compress.init(&sink.writer, window, .zlib, .level_1);
+    try comp.writer.writeAll(input);
+    try comp.finish();
+    return sink.toOwnedSlice();
+}
+
+/// Inflate a `deflateZlib` stream back to its raw bytes. `expected_len` is the known
+/// decompressed size (coll_w*coll_h*2); the result is `alloc`-owned and trimmed to what
+/// actually inflated. Cheap — used by the C-ABI raw-CollMap accessor to rehydrate the
+/// deflated grid on demand instead of the handle holding the raw grid.
+pub fn inflateZlib(alloc: std.mem.Allocator, deflated: []const u8, expected_len: usize) ![]u8 {
+    const flate = std.compress.flate;
+    var in: std.Io.Reader = .fixed(deflated);
+    const window = try alloc.alloc(u8, flate.max_window_len);
+    defer alloc.free(window);
+    var dec = flate.Decompress.init(&in, .zlib, window);
+    const out = try alloc.alloc(u8, expected_len);
+    errdefer alloc.free(out);
+    const n = try dec.reader.readSliceShort(out);
+    return out[0..n];
+}
+
+/// Materialize + composite ONE live level's raw CollMap, serialize it LE, and deflate it.
+/// `sa` is the per-level scratch arena (the raw grid + LE bytes live here and die on the
+/// next reset); the returned deflated bytes are `out_alloc`-owned and small. Sets w/h to the
+/// grid dims. Returns empty deflated (w=h=0) when the level materialized no collision.
+fn deflateLevelColl(
+    out_alloc: std.mem.Allocator,
+    sa: std.mem.Allocator,
+    ctx: *Ctx,
+    idx: *const dt1blob.Index,
+    pLevel: *abi.D2DrlgLevelStrc,
+    lid: i32,
+) !struct { w: i32, h: i32, deflated: []u8 } {
+    if (try materializeLevelColl(sa, ctx, idx, pLevel, lid)) |lc| {
+        if (try compositeLevelRaw(sa, lc)) |rc| {
+            const src = try sa.alloc(u8, rc.cells.len * 2);
+            for (rc.cells, 0..) |cell, i| std.mem.writeInt(u16, src[i * 2 ..][0..2], cell, .little);
+            return .{ .w = @intCast(rc.w), .h = @intCast(rc.h), .deflated = try deflateZlib(out_alloc, src) };
+        }
+    }
+    return .{ .w = 0, .h = 0, .deflated = &.{} };
+}
+
+/// Pull EVERY per-level DBM field from ONE already-generated + InitLevel'd level: rooms/meta,
+/// preset units, per-room warp adjacents, and the deflated raw CollMap. `sa` is a per-level
+/// scratch arena for the transient materialize work; the returned slices are `out_alloc`-owned.
+/// Shared by `generateActFull` (all levels) and `generateLevelFull` (one), so a single level's
+/// DBM object is byte-identical whichever generator produced it (modulo cross-level SEAM
+/// adjacents, which only `generateActFull`'s Pass 3 can add). `act` supplies the placement flag.
+fn collectLevelFull(
+    out_alloc: std.mem.Allocator,
+    sa: std.mem.Allocator,
+    ctx: *Ctx,
+    idx: *const dt1blob.Index,
+    act: *const act_mod.Act,
+    pLevel: *abi.D2DrlgLevelStrc,
+    lid: i32,
+) !LevelFull {
+    var rooms: std.ArrayListUnmanaged(RoomRect) = .empty;
+    errdefer rooms.deinit(out_alloc);
+    var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+    while (pr) |p| : (pr = p.pRoomExNext) {
+        try rooms.append(out_alloc, .{
+            .x = p.sCoords.WorldPosition.x,
+            .y = p.sCoords.WorldPosition.y,
+            .w = p.sCoords.WorldSize.x,
+            .h = p.sCoords.WorldSize.y,
+            .n_type = p.nType,
+            .n_preset_type = p.nPresetType,
+            .picked_file = roomPickedFile(p),
+        });
+    }
+    const placed = act.positions.get(lid) != null;
+    const dtype: i32 = if (ctx.act.level(lid)) |lv| @intFromEnum(lv.drlg_type) else 0;
+    const lpos = pLevel.sCoordinatesAndSize.WorldPosition;
+    const lsize = pLevel.sCoordinatesAndSize.WorldSize;
+
+    const presets = try out_alloc.dupe(PresetUnit, try collectLevelPresets(sa, pLevel));
+    errdefer out_alloc.free(presets);
+    const adjacents = try out_alloc.dupe(LevelAdjacent, try collectLevelAdjacents(sa, pLevel));
+    errdefer out_alloc.free(adjacents);
+
+    const coll = try deflateLevelColl(out_alloc, sa, ctx, idx, pLevel, lid);
+    errdefer if (coll.deflated.len != 0) out_alloc.free(coll.deflated);
+
+    return .{
+        .meta = .{
+            .level_id = lid,
+            .drlg_type = dtype,
+            .placed = placed,
+            .origin_x = lpos.x,
+            .origin_y = lpos.y,
+            .width = lsize.x,
+            .height = lsize.y,
+            .rooms = try rooms.toOwnedSlice(out_alloc),
+        },
+        .presets = presets,
+        .adjacents = adjacents,
+        .coll_w = coll.w,
+        .coll_h = coll.h,
+        .coll_deflated = coll.deflated,
+    };
+}
+
+pub fn freeLevelFull(alloc: std.mem.Allocator, l: LevelFull) void {
+    alloc.free(l.meta.rooms);
+    alloc.free(l.presets);
+    alloc.free(l.adjacents);
+    if (l.coll_deflated.len != 0) alloc.free(l.coll_deflated);
+}
 
 /// Generate an ENTIRE act ONCE and pull EVERY per-level field the DBM shim needs from
 /// that single generation: rooms/meta, preset units, warp adjacents, and the raw u16
@@ -426,80 +557,21 @@ pub fn generateActFull(
     var scratch = std.heap.ArenaAllocator.init(ctx.gpa);
     defer scratch.deinit();
 
-    // Pass 2: generate each level once; pull rooms + presets + adjacents + raw collision
-    // from the live rooms before the pool is torn down.
+    // Pass 2: generate each level once; pull rooms + presets + adjacents + collision from
+    // the live rooms before the pool is torn down. Each level's raw CollMap is deflated the
+    // instant it is materialized (in collectLevelFull) so only the small compressed stream
+    // is retained — the transient raw grid never outlives its per-level scratch reset.
     var out: std.ArrayListUnmanaged(LevelFull) = .empty;
     errdefer {
-        for (out.items) |l| {
-            out_alloc.free(l.meta.rooms);
-            out_alloc.free(l.presets);
-            out_alloc.free(l.adjacents);
-            if (l.coll_cells.len != 0) out_alloc.free(l.coll_cells);
-        }
+        for (out.items) |l| freeLevelFull(out_alloc, l);
         out.deinit(out_alloc);
     }
     for (ids.items) |lid| {
         _ = scratch.reset(.free_all);
         const sa = scratch.allocator();
-
         const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
         drlg.InitLevel(pLevel);
-
-        var rooms: std.ArrayListUnmanaged(RoomRect) = .empty;
-        errdefer rooms.deinit(out_alloc);
-        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
-        while (pr) |p| : (pr = p.pRoomExNext) {
-            try rooms.append(out_alloc, .{
-                .x = p.sCoords.WorldPosition.x,
-                .y = p.sCoords.WorldPosition.y,
-                .w = p.sCoords.WorldSize.x,
-                .h = p.sCoords.WorldSize.y,
-                .n_type = p.nType,
-                .n_preset_type = p.nPresetType,
-                .picked_file = roomPickedFile(p),
-            });
-        }
-        const placed = act.positions.get(lid) != null;
-        const dtype: i32 = if (ctx.act.level(lid)) |lv| @intFromEnum(lv.drlg_type) else 0;
-        const lpos = pLevel.sCoordinatesAndSize.WorldPosition;
-        const lsize = pLevel.sCoordinatesAndSize.WorldSize;
-
-        const presets = try out_alloc.dupe(PresetUnit, try collectLevelPresets(sa, pLevel));
-        errdefer out_alloc.free(presets);
-        const adjacents = try out_alloc.dupe(LevelAdjacent, try collectLevelAdjacents(sa, pLevel));
-        errdefer out_alloc.free(adjacents);
-
-        // Raw u16 CollMap composite — identical to generateActCompositeRaw's per-level
-        // output (materializeLevelColl → compositeLevelRaw). All intermediates go in the
-        // scratch arena; only the composited cells are duped into the handle arena.
-        var coll_w: i32 = 0;
-        var coll_h: i32 = 0;
-        var coll_cells: []u16 = &.{};
-        if (try materializeLevelColl(sa, ctx, idx, pLevel, lid)) |lc| {
-            if (try compositeLevelRaw(sa, lc)) |rc| {
-                coll_w = @intCast(rc.w);
-                coll_h = @intCast(rc.h);
-                coll_cells = try out_alloc.dupe(u16, rc.cells);
-            }
-        }
-
-        try out.append(out_alloc, .{
-            .meta = .{
-                .level_id = lid,
-                .drlg_type = dtype,
-                .placed = placed,
-                .origin_x = lpos.x,
-                .origin_y = lpos.y,
-                .width = lsize.x,
-                .height = lsize.y,
-                .rooms = try rooms.toOwnedSlice(out_alloc),
-            },
-            .presets = presets,
-            .adjacents = adjacents,
-            .coll_w = coll_w,
-            .coll_h = coll_h,
-            .coll_cells = coll_cells,
-        });
+        try out.append(out_alloc, try collectLevelFull(out_alloc, sa, ctx, idx, &act, pLevel, lid));
     }
 
     // Pass 3: cross-level SEAM adjacency. Every level's rooms are now placed, so the
@@ -530,6 +602,77 @@ pub fn generateActFull(
     }
 
     return .{ .levels = try out.toOwnedSlice(out_alloc) };
+}
+
+/// Generate ONE level's full DBM payload without generating the other levels of the act.
+/// Runs the whole act's cheap Pass 1 (every level's world coords + preset picks + inter-level
+/// orths — required so the target level knows its world origin + act), then InitLevels + pulls
+/// the DBM fields for ONLY `level_id` (byte-identical to that level's object in a whole-act
+/// `generateActFull`, via the shared `collectLevelFull`). `act_no` is 0-based; caller owns the
+/// result (free with `freeLevelFull`).
+///
+/// CAVEAT — adjacents are WARP DOORS ONLY. The cross-level SEAM adjacents (outdoor
+/// border-junction bridges) are `generateActFull`'s Pass 3, which needs every neighbour
+/// level's rooms placed; single-level generation has only this level's rooms, so those seam
+/// bridges are absent here. The per-room warp adjacents (dungeon-entrance doors) are complete.
+pub fn generateLevelFull(
+    ctx: *Ctx,
+    out_alloc: std.mem.Allocator,
+    act_no: i32,
+    seed: u32,
+    level_id: i32,
+    diff: Difficulty,
+) !LevelFull {
+    var pool = fog.PoolManager.init(ctx.gpa);
+    defer pool.deinit();
+    const saved_alloc = dpool.allocator;
+    const saved_tables = dtables.g_lvl_tables;
+    defer {
+        dpool.allocator = saved_alloc;
+        dtables.g_lvl_tables = saved_tables;
+    }
+    dtables.g_lvl_tables = &ctx.lvl;
+    dpool.allocator = pool.allocator();
+    dpool.resetRegistry();
+    ctx.lvl.resetGenCache();
+
+    var act = try act_mod.build(ctx.gpa, &ctx.act, act_no, seed);
+    defer act.deinit(ctx.gpa);
+
+    var pDrlg: abi.D2DrlgStrc = undefined;
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+
+    var ids: std.ArrayListUnmanaged(i32) = .empty;
+    defer ids.deinit(out_alloc);
+    var row: usize = 0;
+    while (row < ctx.act.levelCount()) : (row += 1) {
+        if (ctx.act.levelAtRow(row)) |lv| {
+            if (lv.act == act_no) try ids.append(out_alloc, @intCast(lv.id));
+        }
+    }
+
+    // Pass 1: every level's real world coords BEFORE orths (identical to generateActFull) — the
+    // target level's origin/act depend on the whole placement graph even though we only build it.
+    for (ids.items) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const c = act.coords(&ctx.act, lid);
+        pLevel.sCoordinatesAndSize = .{
+            .WorldPosition = .{ .x = c.x, .y = c.y },
+            .WorldSize = .{ .x = c.w, .y = c.h },
+        };
+    }
+    if (act_no == 0) drlg.applyAct1PresetPicks(&pDrlg, &ctx.act, seed);
+    if (act_no == 1) drlg.applyAct2PresetPicks(&pDrlg, &ctx.act, seed);
+    drlg.buildInterLevelOrths(&pDrlg);
+
+    const idx = dt1Index();
+    var scratch = std.heap.ArenaAllocator.init(ctx.gpa);
+    defer scratch.deinit();
+
+    // Pass 2 for the target level ONLY (no Pass 3 seam adjacents — see the doc caveat).
+    const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(level_id));
+    drlg.InitLevel(pLevel);
+    return try collectLevelFull(out_alloc, scratch.allocator(), ctx, idx, &act, pLevel, level_id);
 }
 
 // ---- collision maps --------------------------------------------------------
