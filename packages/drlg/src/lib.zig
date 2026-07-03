@@ -352,6 +352,11 @@ pub const LevelFull = struct {
     /// ~one deflated stream per level instead of every level's ~2 MB raw grid. Empty if
     /// the level has no collision. Inflate on demand (see `inflateColl`) for raw cells.
     coll_deflated: []u8,
+    /// zlib-deflated 1-byte-per-cell WALK grid (row-major, same dims/origin as the raw
+    /// CollMap: coll_w×coll_h). Each cell is 0 (blocked) or 1 (walkable), derived from the
+    /// raw u16 CollMap via `collision.walkable`. Path-ready: consumers inflate and A* on it
+    /// directly. Empty when the level has no collision. Deflates to a fraction of the u16 grid.
+    walk_deflated: []u8,
 };
 
 pub const ActFullResult = struct {
@@ -363,6 +368,7 @@ pub const ActFullResult = struct {
             alloc.free(l.presets);
             alloc.free(l.adjacents);
             if (l.coll_deflated.len != 0) alloc.free(l.coll_deflated);
+            if (l.walk_deflated.len != 0) alloc.free(l.walk_deflated);
         }
         alloc.free(self.levels);
     }
@@ -417,16 +423,23 @@ fn deflateLevelColl(
     pLevel: *abi.D2DrlgLevelStrc,
     lid: i32,
     deflate_fn: ?DeflateFn,
-) !struct { w: i32, h: i32, deflated: []u8 } {
+) !struct { w: i32, h: i32, deflated: []u8, walk_deflated: []u8 } {
     if (try materializeLevelColl(sa, ctx, idx, pLevel, lid)) |lc| {
         if (try compositeLevelRaw(sa, lc)) |rc| {
             const src = try sa.alloc(u8, rc.cells.len * 2);
-            for (rc.cells, 0..) |cell, i| std.mem.writeInt(u16, src[i * 2 ..][0..2], cell, .little);
+            // Walk grid: 1 byte/cell (0=blocked, 1=walkable) from the SAME raw cells, in the
+            // same streaming pass — cheap. Deflated with the injected deflate_fn like collision.
+            const walk = try sa.alloc(u8, rc.cells.len);
+            for (rc.cells, 0..) |cell, i| {
+                std.mem.writeInt(u16, src[i * 2 ..][0..2], cell, .little);
+                walk[i] = @intFromBool(collision.walkable(cell));
+            }
             const deflated = if (deflate_fn) |df| try df(out_alloc, src) else try deflateZlib(out_alloc, src);
-            return .{ .w = @intCast(rc.w), .h = @intCast(rc.h), .deflated = deflated };
+            const walk_deflated = if (deflate_fn) |df| try df(out_alloc, walk) else try deflateZlib(out_alloc, walk);
+            return .{ .w = @intCast(rc.w), .h = @intCast(rc.h), .deflated = deflated, .walk_deflated = walk_deflated };
         }
     }
-    return .{ .w = 0, .h = 0, .deflated = &.{} };
+    return .{ .w = 0, .h = 0, .deflated = &.{}, .walk_deflated = &.{} };
 }
 
 /// Pull EVERY per-level DBM field from ONE already-generated + InitLevel'd level: rooms/meta,
@@ -471,6 +484,7 @@ fn collectLevelFull(
 
     const coll = try deflateLevelColl(out_alloc, sa, ctx, idx, pLevel, lid, deflate_fn);
     errdefer if (coll.deflated.len != 0) out_alloc.free(coll.deflated);
+    errdefer if (coll.walk_deflated.len != 0) out_alloc.free(coll.walk_deflated);
 
     return .{
         .meta = .{
@@ -488,6 +502,7 @@ fn collectLevelFull(
         .coll_w = coll.w,
         .coll_h = coll.h,
         .coll_deflated = coll.deflated,
+        .walk_deflated = coll.walk_deflated,
     };
 }
 
@@ -496,6 +511,7 @@ pub fn freeLevelFull(alloc: std.mem.Allocator, l: LevelFull) void {
     alloc.free(l.presets);
     alloc.free(l.adjacents);
     if (l.coll_deflated.len != 0) alloc.free(l.coll_deflated);
+    if (l.walk_deflated.len != 0) alloc.free(l.walk_deflated);
 }
 
 /// Generate an ENTIRE act ONCE and pull EVERY per-level field the DBM shim needs from
@@ -1101,8 +1117,8 @@ pub fn generateActComposite(
 
 /// A level composited into ONE level-local subtile grid of RAW u16 CollMap flags —
 /// the exact per-subtile bits the engine's Room1.pColl carries at room init
-/// (collision.Colbit: 0x01 wall, 0x02 visible, 0x04 missile_barrier, 0x08 noplayer,
-/// 0x10 preset, 0x20 no_floor, …). Dims equal the level's WorldSize×SUBTILES_PER_TILE
+/// (collision.Colbit: 0x01 block_walk, 0x02 block_los, 0x04 wall, 0x08 block_player,
+/// 0x10 alternate_tile, 0x20 blank, …). Dims equal the level's WorldSize×SUBTILES_PER_TILE
 /// (what DBM reports as collisionWidth/Height); origin is level-local (0,0) at the
 /// level WorldPosition. Uncovered cells (the level rect exceeds room coverage) are
 /// the OOB fill 0x00FF, matching DBM.
@@ -1179,17 +1195,17 @@ fn compositeLevelRaw(alloc: std.mem.Allocator, lc: LevelColl) !?RawLevelComposit
     }
 
     // Any subtile no room covered is the DBM OOB fill. Un-floored IN-ROOM cells
-    // carry our internal synthetic no_floor marker (0x20 — NOT an engine bit): the
+    // carry our internal synthetic blank marker (0x20 — NOT an engine bit): the
     // runtime CollMap has no walkable void inside a room, an un-floored cell is
     // solid rock = block-walk + block-missile (0x05). Emit that engine-faithful
     // value here so the raw grid matches the runtime CollMap (DBM) exactly; the
     // CompState composite keeps reading the internal 0x20 for its own void logic.
-    const solid = collision.Colbit.wall | collision.Colbit.missile_barrier;
+    const solid = collision.Colbit.block_walk | collision.Colbit.wall;
     for (cells) |*c| {
         if (c.* == 0xFFFF) {
             c.* = RAW_OOB_FILL;
-        } else if (c.* & collision.Colbit.no_floor != 0) {
-            c.* = (c.* & ~collision.Colbit.no_floor) | solid;
+        } else if (c.* & collision.Colbit.blank != 0) {
+            c.* = (c.* & ~collision.Colbit.blank) | solid;
         }
     }
 
@@ -2149,7 +2165,12 @@ fn collectLevelPresets(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelStr
 /// exact same coordinate DRLGWARP_InitLevelWarpCoordinates computes, but split out
 /// per-destination. A room with N slots pointing at the same neighbour yields N entries
 /// at the same tile (the staircase counts DBM reports).
-pub const LevelAdjacent = struct { dest_level_id: i32, x: i32, y: i32 };
+/// How an adjacency is reached: a `warp` (a per-room warp-slot door — dungeon entrance /
+/// stairs) or a `seam` (a cross-level border bridge between edge-to-edge outdoor levels).
+/// DBM output ignores this; it feeds the pather-friendly `exits` view.
+pub const AdjacentKind = enum { warp, seam };
+
+pub const LevelAdjacent = struct { dest_level_id: i32, x: i32, y: i32, kind: AdjacentKind = .warp };
 
 /// Generate an entire act and return the WARP/ADJACENCY BRIDGE TILES of one level
 /// (`level_id`) in the DBM shape: one entry per (room, set warp slot) whose destination
@@ -2284,7 +2305,7 @@ fn collectLevelAdjacents(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelS
                 // (!= -1); the destination level reported is the vis-array entry.
                 if (DrlgWarp.getWarpDestinationFromArray(pLevel, slot) != -1) {
                     const dest = @intFromEnum(vis[slot]);
-                    if (dest != 0) try out.append(out_alloc, .{ .dest_level_id = dest, .x = cx, .y = cy });
+                    if (dest != 0) try out.append(out_alloc, .{ .dest_level_id = dest, .x = cx, .y = cy, .kind = .warp });
                 }
             }
             if (slot == 7) break;
@@ -2337,7 +2358,7 @@ fn appendSeamAdjacents(
                 if (axisGap(r.x, r.w, sroom.x, sroom.w) < 6 and
                     axisGap(r.y, r.h, sroom.y, sroom.h) < 6)
                 {
-                    try out.append(alloc, .{ .dest_level_id = b.id, .x = cx, .y = cy });
+                    try out.append(alloc, .{ .dest_level_id = b.id, .x = cx, .y = cy, .kind = .seam });
                 }
             }
         }
@@ -2483,6 +2504,51 @@ test "lib: Cold Plains adjacents reproduce the DBM cross-seam bridge staircase" 
     }
     try std.testing.expectEqual(@as(usize, 1), stony_at_260);
     try std.testing.expectEqual(@as(usize, 3), stony_at_60);
+}
+
+test "lib: walk grid derives cell-for-cell from the raw CollMap (Cold Plains, seed 0)" {
+    const gpa = std.testing.allocator;
+    defer dpool.allocator = dpool.default_allocator;
+    var ctx = try Ctx.init(gpa);
+    defer ctx.deinit();
+
+    // One whole-act generation carries both the deflated raw u16 CollMap and the deflated
+    // 1-byte-per-cell walk grid per level. Verify the walk grid is EXACTLY the d2bs walkable
+    // mask applied to the raw CollMap — proving it is path-ready and free of drift.
+    var result = try generateActFull(&ctx, gpa, 0, 0, .normal, null);
+    defer result.deinit(gpa);
+
+    var checked_l3 = false;
+    for (result.levels) |lf| {
+        if (lf.coll_deflated.len == 0) {
+            try std.testing.expectEqual(@as(usize, 0), lf.walk_deflated.len);
+            continue;
+        }
+        const total: usize = @intCast(@as(i64, lf.coll_w) * @as(i64, lf.coll_h));
+        const raw = try inflateZlib(gpa, lf.coll_deflated, total * 2);
+        defer gpa.free(raw);
+        const walk = try inflateZlib(gpa, lf.walk_deflated, total);
+        defer gpa.free(walk);
+        try std.testing.expectEqual(total, walk.len);
+
+        var walkable_n: usize = 0;
+        var i: usize = 0;
+        while (i < total) : (i += 1) {
+            const v = std.mem.readInt(u16, raw[i * 2 ..][0..2], .little);
+            const want: u8 = @intFromBool(collision.walkable(v));
+            try std.testing.expectEqual(want, walk[i]);
+            walkable_n += walk[i];
+        }
+        if (lf.meta.level_id == 3) { // Cold Plains: 400x400, a real mix of open ground + walls
+            checked_l3 = true;
+            try std.testing.expectEqual(@as(i32, 400), lf.coll_w);
+            try std.testing.expectEqual(@as(i32, 400), lf.coll_h);
+            // Sane outdoor level: mostly-but-not-entirely walkable.
+            try std.testing.expect(walkable_n > total / 2);
+            try std.testing.expect(walkable_n < total);
+        }
+    }
+    try std.testing.expect(checked_l3);
 }
 
 test "lib: outdoor shrines for Cold Plains (seed 1337, act 0 level 3) >= 1" {

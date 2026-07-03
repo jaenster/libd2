@@ -100,7 +100,7 @@ fn prewarm(gpa: std.mem.Allocator) !void {
     while (act < 5) : (act += 1) {
         // renderJson's output is owned by the passed allocator (the arena here);
         // arena.reset reclaims it — do NOT free it with gpa (invalid free).
-        _ = try drlg.renderJson(&ctx, arena.allocator(), 0, act, .normal, zlibDeflate);
+        _ = try drlg.renderJson(&ctx, arena.allocator(), 0, act, .normal, zlibDeflate, false);
         _ = arena.reset(.retain_capacity);
     }
 }
@@ -174,28 +174,32 @@ fn handleRequest(gpa: std.mem.Allocator, ctx: *drlg.Ctx, request: *std.http.Serv
     // skips generating the act's other 38 levels); without it the whole act is rendered.
     const body = blk: {
         if (params.level) |lid| {
-            break :blk drlg.renderLevelJson(ctx, arena.allocator(), params.seed, params.act_no, lid, params.diff, zlibDeflate) catch {
+            break :blk drlg.renderLevelJson(ctx, arena.allocator(), params.seed, params.act_no, lid, params.diff, zlibDeflate, params.include_walk) catch {
                 return request.respond("render failed\n", .{ .status = .internal_server_error });
             };
         }
-        break :blk drlg.renderJson(ctx, arena.allocator(), params.seed, params.act_no, params.diff, zlibDeflate) catch {
+        break :blk drlg.renderJson(ctx, arena.allocator(), params.seed, params.act_no, params.diff, zlibDeflate, params.include_walk) catch {
             return request.respond("render failed\n", .{ .status = .internal_server_error });
         };
     };
     return request.respond(body, .{ .extra_headers = &.{json_ct} });
 }
 
-const RenderParams = struct { seed: u32, act_no: i32, diff: drlg.Difficulty, level: ?i32 = null };
+const RenderParams = struct { seed: u32, act_no: i32, diff: drlg.Difficulty, level: ?i32 = null, include_walk: bool = false };
 
 fn parseRenderParams(query: []const u8) !RenderParams {
     var seed: u32 = 0;
     var acts: u32 = 1;
     var diff_n: u32 = 0;
     var level: ?i32 = null;
+    var include_walk = false;
     if (getParam(query, "seed")) |v| seed = try std.fmt.parseInt(u32, v, 10);
     if (getParam(query, "acts")) |v| acts = try std.fmt.parseInt(u32, v, 10);
     if (getParam(query, "difficulty")) |v| diff_n = try std.fmt.parseInt(u32, v, 10);
     if (getParam(query, "level")) |v| level = try std.fmt.parseInt(i32, v, 10);
+    // `?walk=true` (or 1) adds the pather walk grid + exits per level; default off keeps the
+    // response DBM-byte-identical.
+    if (getParam(query, "walk")) |v| include_walk = std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "1");
     if (acts < 1 or acts > 5) return error.BadParam;
     const diff: drlg.Difficulty = switch (diff_n) {
         0 => .normal,
@@ -203,7 +207,7 @@ fn parseRenderParams(query: []const u8) !RenderParams {
         2 => .hell,
         else => return error.BadParam,
     };
-    return .{ .seed = seed, .act_no = @intCast(acts - 1), .diff = diff, .level = level };
+    return .{ .seed = seed, .act_no = @intCast(acts - 1), .diff = diff, .level = level, .include_walk = include_walk };
 }
 
 fn pathOf(target: []const u8) []const u8 {

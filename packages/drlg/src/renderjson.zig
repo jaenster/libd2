@@ -162,7 +162,9 @@ fn writeCollisionB64(
 /// and emits every level's metadata / rooms / presets / adjacents / collision from that one
 /// handle — the native equal of the shim's `render()`. `act_no` is 0-based (Act I = 0);
 /// `diff` is normal/nightmare/hell. Returns the JSON bytes (owned by `alloc`).
-pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i32, diff: lib.Difficulty, deflate_fn: ?lib.DeflateFn) ![]u8 {
+/// `include_walk` gates the ADDITIVE pather fields (`walkDeflateB64`/`walkWidth`/`walkHeight`
+/// per level + the `exits` array): false ⇒ output is byte-identical to the DBM-matched shim.
+pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i32, diff: lib.Difficulty, deflate_fn: ?lib.DeflateFn, include_walk: bool) ![]u8 {
     // Per-render arena: the whole-act result + all transient serialize scratch. Freed here.
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
@@ -177,7 +179,7 @@ pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i3
     try w.print("{{\"seed\":{d},\"levels\":[", .{seed});
     for (result.levels, 0..) |lf, li| {
         if (li != 0) try w.writeByte(',');
-        try writeLevel(w, a, ctx, act_no, lf, deflate_fn);
+        try writeLevel(w, a, ctx, act_no, lf, deflate_fn, include_walk);
     }
     try w.writeAll("]}");
 
@@ -189,7 +191,7 @@ pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i3
 /// (`generateLevelFull`), so its `adjacents` are WARP DOORS ONLY: the cross-level seam bridges
 /// are a whole-act Pass-3 product and are absent here. `act_no` is 0-based; `level_id` is a
 /// Levels.txt id. Returns the JSON bytes (owned by `alloc`).
-pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i32, level_id: i32, diff: lib.Difficulty, deflate_fn: ?lib.DeflateFn) ![]u8 {
+pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i32, level_id: i32, diff: lib.Difficulty, deflate_fn: ?lib.DeflateFn, include_walk: bool) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
     const a = arena.allocator();
@@ -201,7 +203,7 @@ pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_n
     const w = &out.writer;
 
     try w.print("{{\"seed\":{d},\"levels\":[", .{seed});
-    try writeLevel(w, a, ctx, act_no, lf, deflate_fn);
+    try writeLevel(w, a, ctx, act_no, lf, deflate_fn, include_walk);
     try w.writeAll("]}");
 
     return out.toOwnedSlice();
@@ -210,7 +212,7 @@ pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_n
 /// Emit one level's DBM object (metadata / rooms / presets / adjacents / tells / collision).
 /// Shared by `renderJson` (every level) and `renderLevelJson` (one), so a level serializes
 /// identically either way — modulo the seam adjacents only a whole-act render can supply.
-fn writeLevel(w: *std.Io.Writer, a: std.mem.Allocator, ctx: *lib.Ctx, act_no: i32, lf: lib.LevelFull, deflate_fn: ?lib.DeflateFn) !void {
+fn writeLevel(w: *std.Io.Writer, a: std.mem.Allocator, ctx: *lib.Ctx, act_no: i32, lf: lib.LevelFull, deflate_fn: ?lib.DeflateFn, include_walk: bool) !void {
     const m = lf.meta;
     const level_no = m.level_id;
     const display_name = dbmDisplayName(ctx, level_no);
@@ -271,6 +273,30 @@ fn writeLevel(w: *std.Io.Writer, a: std.mem.Allocator, ctx: *lib.Ctx, act_no: i3
     const ch = if (lf.coll_deflated.len != 0) lf.coll_h else m.height * 5;
     try w.print(",\"collisionWidth\":{d},\"collisionHeight\":{d},\"collisionDeflateB64\":", .{ cw, ch });
     try writeCollisionB64(w, a, lf.coll_deflated, m.width * 5, m.height * 5, deflate_fn);
+
+    // ADDITIVE pather fields, gated so the default output stays DBM-byte-identical.
+    if (include_walk) {
+        // walk grid: same dims as the raw CollMap; 1 byte/cell (0=blocked, 1=walkable),
+        // already zlib-deflated in the level handle. Omit when the level has no collision.
+        if (lf.walk_deflated.len != 0) {
+            try w.print(",\"walkWidth\":{d},\"walkHeight\":{d},\"walkDeflateB64\":", .{ lf.coll_w, lf.coll_h });
+            const enc = std.base64.standard.Encoder;
+            const b64 = try a.alloc(u8, enc.calcSize(lf.walk_deflated.len));
+            _ = enc.encode(b64, lf.walk_deflated);
+            try writeJsonString(w, b64);
+        }
+        // exits: pather-friendly view of `adjacents`, tagged warp vs seam with the dest name.
+        try w.writeAll(",\"exits\":[");
+        for (lf.adjacents, 0..) |adj, ai| {
+            if (ai != 0) try w.writeByte(',');
+            const dest = adj.dest_level_id;
+            const dn = dbmDisplayName(ctx, dest);
+            try w.print("{{\"targetLevelNo\":{d},\"targetName\":", .{dest});
+            try writeJsonString(w, dn);
+            try w.print(",\"x\":{d},\"y\":{d},\"type\":\"{s}\"}}", .{ adj.x, adj.y, @tagName(adj.kind) });
+        }
+        try w.writeAll("]");
+    }
 
     try w.writeByte('}');
 }

@@ -193,6 +193,17 @@ int32_t d2drlg_act_level_collision_zlib(D2DrlgAct *act, int32_t level_index, uin
                                         int32_t *out_w, int32_t *out_h);
 
 /*
+ * Writes up to `cap` bytes of the level-at-`level_index` WALK grid into `out`: one byte per
+ * subtile (0 = blocked, 1 = walkable), row-major, SAME dims/origin as the RAW CollMap. Derived
+ * during generation from the raw CollMap via the d2bs LevelMap mask (walkable = not
+ * BlockWalk(0x01)|BlockPlayer(0x08)|Object(0x400) and not OOB 0xFFFF). Always sets *w/*h to the
+ * full grid dims. Returns the FULL cell count (w*h, >=0, may exceed `cap`), 0 if the level has
+ * no collision grid, or a negative error code. Path-ready: A* on these bytes directly.
+ */
+int32_t d2drlg_act_level_walk(D2DrlgAct *act, int32_t level_index, uint8_t *out, int32_t cap,
+                              int32_t *w, int32_t *h);
+
+/*
  * zlib-DEFLATE (rfc1950) an arbitrary caller byte buffer. Reads `in_len` bytes from `in`,
  * writes up to `cap` compressed bytes to `out`, returns the FULL deflated byte length
  * (>=0, may exceed `cap` => grow+retry) or a negative error code. Lets a host deflate any
