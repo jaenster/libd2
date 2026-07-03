@@ -235,14 +235,18 @@ export fn d2drlg_act_level_collision(
     if (cap < 0) return -2;
     if (level_index < 0 or level_index >= a.result.levels.len) return -3;
     const lf = a.result.levels[@intCast(level_index)];
-    if (lf.coll_cells.len == 0) return 0; // no collision grid for this level
+    if (lf.coll_deflated.len == 0) return 0; // no collision grid for this level
     out_w.* = lf.coll_w;
     out_h.* = lf.coll_h;
-    const total = lf.coll_cells.len;
+    // The handle keeps the CollMap DEFLATED (memory win); rehydrate the raw u16 grid on demand.
+    const total: usize = @intCast(@as(i64, lf.coll_w) * @as(i64, lf.coll_h));
+    const pa = std.heap.page_allocator;
+    const raw = lib.inflateZlib(pa, lf.coll_deflated, total * 2) catch return -4;
+    defer pa.free(raw);
     const cap_us: usize = @intCast(cap);
     const n = @min(total, cap_us);
     var i: usize = 0;
-    while (i < n) : (i += 1) out[i] = std.mem.nativeToLittle(u16, lf.coll_cells[i]);
+    while (i < n) : (i += 1) out[i] = std.mem.readInt(u16, raw[i * 2 ..][0..2], .little);
     return @intCast(total);
 }
 
@@ -283,23 +287,16 @@ export fn d2drlg_act_level_collision_zlib(
     if (cap < 0) return -2;
     if (level_index < 0 or level_index >= a.result.levels.len) return -3;
     const lf = a.result.levels[@intCast(level_index)];
-    if (lf.coll_cells.len == 0) return 0; // no collision grid for this level
+    if (lf.coll_deflated.len == 0) return 0; // no collision grid for this level
     out_w.* = lf.coll_w;
     out_h.* = lf.coll_h;
 
-    const pa = std.heap.page_allocator;
-    // Source = row-major little-endian u16 per cell (same bytes as the raw accessor).
-    const src = pa.alloc(u8, lf.coll_cells.len * 2) catch return -4;
-    defer pa.free(src);
-    for (lf.coll_cells, 0..) |cell, idx| std.mem.writeInt(u16, src[idx * 2 ..][0..2], cell, .little);
-
-    const deflated = deflateZlib(pa, src) catch return -5;
-    defer pa.free(deflated);
-
+    // The handle already stores the CollMap deflated in exactly this rfc1950 form — no
+    // re-deflate, just copy the stored compressed bytes straight out.
     const cap_us: usize = @intCast(cap);
-    const n = @min(deflated.len, cap_us);
-    @memcpy(out[0..n], deflated[0..n]);
-    return @intCast(deflated.len);
+    const n = @min(lf.coll_deflated.len, cap_us);
+    @memcpy(out[0..n], lf.coll_deflated[0..n]);
+    return @intCast(lf.coll_deflated.len);
 }
 
 /// zlib-DEFLATE (rfc1950) an arbitrary caller byte buffer. Reads `in_len` bytes from `in`,
