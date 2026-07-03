@@ -21,6 +21,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addImport("d2-drlg", drlg.module("d2-drlg"));
+    // Native libz for the fast collision-deflate (server binary only — the d2-drlg library
+    // and its wasm build stay libc/libz-free; they use the pure-Zig std.compress.flate).
+    exe.root_module.linkSystemLibrary("z", .{});
+    exe.root_module.link_libc = true;
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

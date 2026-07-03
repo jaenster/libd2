@@ -78,7 +78,7 @@ export fn d2drlg_gen_act(ctx: ?*Ctx, seed: u32, difficulty: i32, act_no: i32) ?*
     const act = pa.create(Act) catch return null;
     act.arena = std.heap.ArenaAllocator.init(pa);
     const a = act.arena.allocator();
-    act.result = lib.generateActFull(&c.inner, a, act_no, seed, diff) catch {
+    act.result = lib.generateActFull(&c.inner, a, act_no, seed, diff, null) catch {
         act.arena.deinit();
         pa.destroy(act);
         return null;

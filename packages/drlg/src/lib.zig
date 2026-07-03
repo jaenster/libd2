@@ -368,9 +368,15 @@ pub const ActFullResult = struct {
     }
 };
 
+/// Pluggable collision-deflate primitive. `raw` is the LE-u16 CollMap; the result is an
+/// `alloc`-owned zlib-container (rfc1950) stream that inflates back to `raw`. When a generator
+/// is passed `null` for its `deflate_fn`, it uses the pure-Zig `deflateZlib` below (the default,
+/// keeping the library + wasm build libc-free). The native server injects a libz-backed impl.
+pub const DeflateFn = *const fn (alloc: std.mem.Allocator, raw: []const u8) anyerror![]u8;
+
 /// zlib-deflate (rfc1950, fastest flate level) `input` into a fresh `alloc` slice. The
-/// single collision-compression primitive shared by the whole-act/single-level generators
-/// and the render/C-ABI serializers, so every path emits byte-identical compressed CollMap.
+/// single pure-Zig collision-compression primitive; the DEFAULT `DeflateFn` when a caller
+/// injects none. Any injected impl must produce a zlib stream that inflates to the same bytes.
 pub fn deflateZlib(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
     const flate = std.compress.flate;
     const window = try alloc.alloc(u8, flate.max_window_len);
@@ -410,12 +416,14 @@ fn deflateLevelColl(
     idx: *const dt1blob.Index,
     pLevel: *abi.D2DrlgLevelStrc,
     lid: i32,
+    deflate_fn: ?DeflateFn,
 ) !struct { w: i32, h: i32, deflated: []u8 } {
     if (try materializeLevelColl(sa, ctx, idx, pLevel, lid)) |lc| {
         if (try compositeLevelRaw(sa, lc)) |rc| {
             const src = try sa.alloc(u8, rc.cells.len * 2);
             for (rc.cells, 0..) |cell, i| std.mem.writeInt(u16, src[i * 2 ..][0..2], cell, .little);
-            return .{ .w = @intCast(rc.w), .h = @intCast(rc.h), .deflated = try deflateZlib(out_alloc, src) };
+            const deflated = if (deflate_fn) |df| try df(out_alloc, src) else try deflateZlib(out_alloc, src);
+            return .{ .w = @intCast(rc.w), .h = @intCast(rc.h), .deflated = deflated };
         }
     }
     return .{ .w = 0, .h = 0, .deflated = &.{} };
@@ -435,6 +443,7 @@ fn collectLevelFull(
     act: *const act_mod.Act,
     pLevel: *abi.D2DrlgLevelStrc,
     lid: i32,
+    deflate_fn: ?DeflateFn,
 ) !LevelFull {
     var rooms: std.ArrayListUnmanaged(RoomRect) = .empty;
     errdefer rooms.deinit(out_alloc);
@@ -460,7 +469,7 @@ fn collectLevelFull(
     const adjacents = try out_alloc.dupe(LevelAdjacent, try collectLevelAdjacents(sa, pLevel));
     errdefer out_alloc.free(adjacents);
 
-    const coll = try deflateLevelColl(out_alloc, sa, ctx, idx, pLevel, lid);
+    const coll = try deflateLevelColl(out_alloc, sa, ctx, idx, pLevel, lid, deflate_fn);
     errdefer if (coll.deflated.len != 0) out_alloc.free(coll.deflated);
 
     return .{
@@ -505,6 +514,7 @@ pub fn generateActFull(
     act_no: i32,
     seed: u32,
     diff: Difficulty,
+    deflate_fn: ?DeflateFn,
 ) !ActFullResult {
     var pool = fog.PoolManager.init(ctx.gpa);
     defer pool.deinit();
@@ -571,7 +581,7 @@ pub fn generateActFull(
         const sa = scratch.allocator();
         const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
         drlg.InitLevel(pLevel);
-        try out.append(out_alloc, try collectLevelFull(out_alloc, sa, ctx, idx, &act, pLevel, lid));
+        try out.append(out_alloc, try collectLevelFull(out_alloc, sa, ctx, idx, &act, pLevel, lid, deflate_fn));
     }
 
     // Pass 3: cross-level SEAM adjacency. Every level's rooms are now placed, so the
@@ -622,6 +632,7 @@ pub fn generateLevelFull(
     seed: u32,
     level_id: i32,
     diff: Difficulty,
+    deflate_fn: ?DeflateFn,
 ) !LevelFull {
     var pool = fog.PoolManager.init(ctx.gpa);
     defer pool.deinit();
@@ -672,7 +683,7 @@ pub fn generateLevelFull(
     // Pass 2 for the target level ONLY (no Pass 3 seam adjacents — see the doc caveat).
     const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(level_id));
     drlg.InitLevel(pLevel);
-    return try collectLevelFull(out_alloc, scratch.allocator(), ctx, idx, &act, pLevel, level_id);
+    return try collectLevelFull(out_alloc, scratch.allocator(), ctx, idx, &act, pLevel, level_id, deflate_fn);
 }
 
 // ---- collision maps --------------------------------------------------------
