@@ -26,6 +26,60 @@ const Z_OK: c_int = 0;
 extern "c" fn compressBound(sourceLen: c_ulong) c_ulong;
 extern "c" fn compress2(dest: [*]u8, destLen: *c_ulong, source: [*]const u8, sourceLen: c_ulong, level: c_int) c_int;
 
+// std.time.Timer/Instant/std.time.nanoTimestamp are gone in this Zig, and std.posix has no
+// clock_gettime wrapper here — but the binary links libc, so pull the C clock_gettime in
+// directly. std.posix.CLOCK is the platform enum (right constant on both macOS and Linux).
+extern "c" fn clock_gettime(clk_id: std.posix.clockid_t, tp: *std.posix.timespec) c_int;
+extern "c" fn write(fd: c_int, buf: [*]const u8, n: usize) isize;
+
+/// Monotonic microseconds — for latency deltas (immune to wall-clock jumps).
+fn monoUs() i64 {
+    var ts: std.posix.timespec = undefined;
+    _ = clock_gettime(std.posix.CLOCK.MONOTONIC, &ts);
+    return @as(i64, ts.sec) * 1_000_000 + @divTrunc(@as(i64, ts.nsec), 1000);
+}
+
+/// Wall-clock unix milliseconds — for the log line's "ts" field.
+fn wallMs() i64 {
+    var ts: std.posix.timespec = undefined;
+    _ = clock_gettime(std.posix.CLOCK.REALTIME, &ts);
+    return @as(i64, ts.sec) * 1000 + @divTrunc(@as(i64, ts.nsec), 1_000_000);
+}
+
+/// Build one line fully in a stack buffer and emit it with a SINGLE write() to stderr (fd 2)
+/// so concurrent workers never interleave. Line stays well under PIPE_BUF, so the write is atomic.
+fn logLine(comptime fmt: []const u8, args: anytype) void {
+    var buf: [768]u8 = undefined;
+    const out = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    _ = write(2, out.ptr, out.len);
+}
+
+/// One structured JSON access-log line per HTTP request, shaped for Loki `| json`. Latency is
+/// integer microseconds in "us" (whole-act renders are ~hundreds of ms, but a single-level or
+/// /health request is often sub-millisecond, so ms would round to 0 too often). Render params
+/// are included only when `rp` is set (i.e. /api/render); `err` adds an "err" field on failures.
+fn logReq(method: []const u8, path: []const u8, status: u16, bytes: usize, us: i64, rp: ?RenderParams, err: ?[]const u8) void {
+    var extra_buf: [192]u8 = undefined;
+    var extra: []const u8 = "";
+    if (rp) |p| {
+        const act1: i32 = p.act_no + 1;
+        const dn: u8 = switch (p.diff) {
+            .normal => 0,
+            .nightmare => 1,
+            .hell => 2,
+        };
+        const walk = if (p.include_walk) "true" else "false";
+        extra = if (p.level) |lv|
+            std.fmt.bufPrint(&extra_buf, ",\"seed\":{d},\"act\":{d},\"difficulty\":{d},\"level\":{d},\"walk\":{s}", .{ p.seed, act1, dn, lv, walk }) catch ""
+        else
+            std.fmt.bufPrint(&extra_buf, ",\"seed\":{d},\"act\":{d},\"difficulty\":{d},\"level\":null,\"walk\":{s}", .{ p.seed, act1, dn, walk }) catch "";
+    }
+    var err_buf: [160]u8 = undefined;
+    var err_str: []const u8 = "";
+    if (err) |e| err_str = std.fmt.bufPrint(&err_buf, ",\"err\":\"{s}\"", .{e}) catch "";
+    logLine("{{\"ts\":{d},\"level\":\"info\",\"msg\":\"req\",\"method\":\"{s}\",\"path\":\"{s}\",\"status\":{d},\"bytes\":{d},\"us\":{d}{s}{s}}}\n", .{ wallMs(), method, path, status, bytes, us, extra, err_str });
+}
+
 /// zlib-deflate `raw` (LE-u16 CollMap) into a fresh `alloc` slice, level 1 (Z_BEST_SPEED),
 /// producing an rfc1950 zlib-container stream that inflates back to `raw` byte-for-byte —
 /// the drop-in native `drlg.DeflateFn` for `renderJson`/`renderLevelJson`.
@@ -72,7 +126,7 @@ pub fn main(init: std.process.Init) !void {
     // (own Ctx + own thread-local pool) never race on shared build state.
     prewarm(gpa) catch |e| std.debug.print("drlg-server: prewarm failed: {s}\n", .{@errorName(e)});
 
-    std.debug.print("drlg-server: listening on http://0.0.0.0:{d} ({d} workers)\n", .{ port, want });
+    logLine("{{\"level\":\"info\",\"msg\":\"listening\",\"port\":{d},\"workers\":{d}}}\n", .{ port, want });
 
     // Spawn want-1 workers; run one worker loop on the main thread too.
     var threads: std.ArrayListUnmanaged(std.Thread) = .empty;
@@ -161,18 +215,29 @@ const json_ct: std.http.Header = .{ .name = "content-type", .value = "applicatio
 const text_ct: std.http.Header = .{ .name = "content-type", .value = "text/plain" };
 
 fn handleRequest(gpa: std.mem.Allocator, ctx: *drlg.Ctx, request: *std.http.Server.Request) !void {
+    const start = monoUs();
+    const method = @tagName(request.head.method);
     const target = request.head.target;
     const path = pathOf(target);
 
     if (std.mem.eql(u8, path, "/health")) {
-        return request.respond("ok", .{ .extra_headers = &.{text_ct} });
+        // k8s liveness/readiness probes hit this every few seconds; do NOT log it (it would
+        // drown the access log). Everything else is still logged below.
+        const body = "ok";
+        return request.respond(body, .{ .extra_headers = &.{text_ct} });
     }
     if (!std.mem.eql(u8, path, "/api/render")) {
-        return request.respond("not found\n", .{ .status = .not_found });
+        const body = "not found\n";
+        const res = request.respond(body, .{ .status = .not_found });
+        logReq(method, path, 404, body.len, monoUs() - start, null, null);
+        return res;
     }
 
     const params = parseRenderParams(queryOf(target)) catch {
-        return request.respond("bad request: invalid params\n", .{ .status = .bad_request });
+        const body = "bad request: invalid params\n";
+        const res = request.respond(body, .{ .status = .bad_request });
+        logReq(method, path, 400, body.len, monoUs() - start, null, "invalid params");
+        return res;
     };
 
     // Per-request arena: renderJson's output + its internal generation scratch. Freed here.
@@ -184,14 +249,22 @@ fn handleRequest(gpa: std.mem.Allocator, ctx: *drlg.Ctx, request: *std.http.Serv
     const body = blk: {
         if (params.level) |lid| {
             break :blk drlg.renderLevelJson(ctx, arena.allocator(), params.seed, params.act_no, lid, params.diff, zlibDeflate, params.include_walk) catch {
-                return request.respond("render failed\n", .{ .status = .internal_server_error });
+                const b = "render failed\n";
+                const res = request.respond(b, .{ .status = .internal_server_error });
+                logReq(method, path, 500, b.len, monoUs() - start, params, "render failed");
+                return res;
             };
         }
         break :blk drlg.renderJson(ctx, arena.allocator(), params.seed, params.act_no, params.diff, zlibDeflate, params.include_walk) catch {
-            return request.respond("render failed\n", .{ .status = .internal_server_error });
+            const b = "render failed\n";
+            const res = request.respond(b, .{ .status = .internal_server_error });
+            logReq(method, path, 500, b.len, monoUs() - start, params, "render failed");
+            return res;
         };
     };
-    return request.respond(body, .{ .extra_headers = &.{json_ct} });
+    const res = request.respond(body, .{ .extra_headers = &.{json_ct} });
+    logReq(method, path, 200, body.len, monoUs() - start, params, null);
+    return res;
 }
 
 const RenderParams = struct { seed: u32, act_no: i32, diff: drlg.Difficulty, level: ?i32 = null, include_walk: bool = false };

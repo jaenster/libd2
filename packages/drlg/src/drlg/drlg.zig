@@ -545,6 +545,16 @@ pub fn allocDrlgLevelFromLevelIdToLevelId(
                     &pCurLevel.sCoordinatesAndSize,
                     &pAdj.sCoordinatesAndSize,
                 );
+                // The two rects share no exact edge -> no seam. In the engine every
+                // Vis/warp-linked wilderness pair is placed edge-adjacent, so this never
+                // fires for a level generated in its own act; it only guards levels reached
+                // outside their act (single-level render of a level whose act wasn't set up
+                // — its neighbours have no seed-placed coords), whose GetDirectionFromCoordinates
+                // is DIRECTION_INVALID. Building an orth from an INVALID direction would leave
+                // neDrlgDirection out of [0,3] and crash CreateVerticesFromEdges. Mirror the
+                // coordinate-adjacency builder (SetWarpConnectionsBetweenTwoAreas), which
+                // likewise skips INVALID seams.
+                if (eDirection == mdeps.DIRECTION_INVALID) continue;
                 // (D2RoomExStrc*)&pData->pOrthData : pOrth is field 0 of D2RoomExStrc.
                 const pFakeRoomEx: [*c]s.D2RoomExStrc = @ptrCast(@alignCast(&pData.pOrthData));
                 DrlgRoom.AllocDrlgOrth(

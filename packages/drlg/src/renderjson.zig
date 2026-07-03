@@ -196,14 +196,17 @@ pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_n
     defer arena.deinit();
     const a = arena.allocator();
 
-    const lf = try lib.generateLevelFull(ctx, a, act_no, seed, level_id, diff, deflate_fn);
+    // A level belongs to exactly one act; render it in that act (the whole-act oracle) so
+    // both the geometry and the emitted "act" field match, regardless of the caller's hint.
+    const eff_act = lib.levelActNo(ctx, level_id) orelse act_no;
+    const lf = try lib.generateLevelFull(ctx, a, eff_act, seed, level_id, diff, deflate_fn);
 
     var out = try std.Io.Writer.Allocating.initCapacity(alloc, 1 << 14);
     errdefer out.deinit();
     const w = &out.writer;
 
     try w.print("{{\"seed\":{d},\"levels\":[", .{seed});
-    try writeLevel(w, a, ctx, act_no, lf, deflate_fn, include_walk);
+    try writeLevel(w, a, ctx, eff_act, lf, deflate_fn, include_walk);
     try w.writeAll("]}");
 
     return out.toOwnedSlice();

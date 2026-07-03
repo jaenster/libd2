@@ -641,15 +641,29 @@ pub fn generateActFull(
 /// border-junction bridges) are `generateActFull`'s Pass 3, which needs every neighbour
 /// level's rooms placed; single-level generation has only this level's rooms, so those seam
 /// bridges are absent here. The per-room warp adjacents (dungeon-entrance doors) are complete.
+/// The 0-based act a level belongs to (Levels.txt Act column), or null if unknown.
+/// A level's DRLG generation context IS its own act — the whole placement graph that
+/// `generateActFull(levelActNo)` builds — so single-level generation/serialization must
+/// use this, not a caller-supplied act hint that may disagree.
+pub fn levelActNo(ctx: *Ctx, level_id: i32) ?i32 {
+    return if (ctx.act.level(level_id)) |lv| @intCast(lv.act) else null;
+}
+
 pub fn generateLevelFull(
     ctx: *Ctx,
     out_alloc: std.mem.Allocator,
-    act_no: i32,
+    act_no_hint: i32,
     seed: u32,
     level_id: i32,
     diff: Difficulty,
     deflate_fn: ?DeflateFn,
 ) !LevelFull {
+    // Generate the level in its OWN act's placement context (not the caller's hint): Pass 1
+    // places only this act's levels' world coords, so a level whose act != act_no_hint would
+    // otherwise get zero/unset coords and no inter-level orths — crashing generation. Byte
+    // output is unchanged for a matching hint; for a mismatching hint it now matches the
+    // level's whole-act render instead of crashing.
+    const act_no: i32 = levelActNo(ctx, level_id) orelse act_no_hint;
     var pool = fog.PoolManager.init(ctx.gpa);
     defer pool.deinit();
     const saved_alloc = dpool.allocator;
