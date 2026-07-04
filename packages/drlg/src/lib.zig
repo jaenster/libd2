@@ -1774,6 +1774,9 @@ pub fn verifyActCollision(
     var worst: std.ArrayListUnmanaged(Worst) = .empty;
     defer worst.deinit(alloc);
 
+    // Confusion matrix over the masked-0x1F value: confusion[golden][ours] for mismatches.
+    var confusion = [_][32]u64{[_]u64{0} ** 32} ** 32;
+
     for (golden.items) |g| {
         const li: usize = if (g.level >= 0 and g.level < MAXID) @intCast(g.level) else continue;
         seen_ids[li] = true;
@@ -1804,6 +1807,7 @@ pub fn verifyActCollision(
                 out.masked_ok += 1;
             } else {
                 room_mism += 1;
+                confusion[gc & 0x1F][oc & 0x1F] += 1;
                 var b: u4 = 0;
                 while (b < 5) : (b += 1) {
                     const m = @as(u16, 1) << b;
@@ -1830,6 +1834,24 @@ pub fn verifyActCollision(
     }
 
     if (verbose) {
+        // Top masked-0x1F confusion pairs (golden value -> ours value) over all mismatches.
+        std.debug.print("\n=== TOP CONFUSION PAIRS (golden0x1F -> ours0x1F : count) ===\n", .{});
+        var shown: usize = 0;
+        while (shown < 12) : (shown += 1) {
+            var bg: usize = 0;
+            var bo: usize = 0;
+            var bc: u64 = 0;
+            for (confusion, 0..) |row, gi| for (row, 0..) |c, oi| {
+                if (c > bc) {
+                    bc = c;
+                    bg = gi;
+                    bo = oi;
+                }
+            };
+            if (bc == 0) break;
+            std.debug.print("  0x{X:0>2} -> 0x{X:0>2} : {d}\n", .{ bg, bo, bc });
+            confusion[bg][bo] = 0;
+        }
         const bitname = [_][]const u8{ "WALL", "VISIBLE", "MISSILE_BAR", "NOPLAYER", "PRESET" };
         std.debug.print("\n=== PER-LEVEL COLLISION MATCH (seed {d}) ===\n", .{seed});
         std.debug.print("  Lvl name                     matched g-only o-only dim  exact%%  masked0x1F%%\n", .{});
