@@ -13,6 +13,7 @@ test {
     _ = @import("oracle.zig");
     _ = @import("verify.zig");
     _ = @import("monpop_verify.zig");
+    _ = @import("coll_crc_verify.zig");
     _ = @import("lib.zig");
     _ = @import("path.zig");
     _ = @import("serial.zig");
