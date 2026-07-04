@@ -2927,6 +2927,11 @@ test "lib: collision vs d2probe engine golden (seed 1, Act 1 — maze/outdoor/pr
         .{ r.matched_rooms, r.dim_mismatch, r.golden_only, r.total_cells, r.masked_ok, pct },
     );
     try std.testing.expect(r.matched_rooms > 0);
+    // Lock the masked-0x1F terrain fidelity (94% after the main=30 solid-fill fix). The
+    // residual is DT1-completeness (tiles the engine's level DT1 set has that our per-level
+    // load misses -> the 0x10 alternate-floor bit + a few over/under-marks). Raise this
+    // floor as that closes; never regress below it.
+    try std.testing.expect(r.masked_ok >= 2_060_000);
 }
 
 test "lib: Ctx round-trips + API type-checks" {
