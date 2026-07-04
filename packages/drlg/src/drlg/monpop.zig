@@ -71,6 +71,11 @@ pub const MonStat = struct {
     spawn: i32, // spawn (resolved class id, -1 = none) — spawn-replacement target
     place_spawn: i32, // placespawn
     base_id: i32, // BaseId (resolved class id) — fallen(19)/scarab(91) check
+    /// MonStats2.txt fields (linked via MonStats.MonStatsEx -> MonStats2.Id), used by
+    /// the spawn-position collision probe: SizeX selects the sampled subtile shape and
+    /// spawnCol selects the collision mask (see spawnColMask). Empty spawnCol -> 0.
+    size_x: i32, // MonStats2.SizeX
+    spawn_col: i32, // MonStats2.spawnCol (0..3; empty -> 0)
 };
 
 /// A level's Levels.txt monster fields (resolved to class ids). `mon`/`nmon`/`umon`
@@ -128,6 +133,26 @@ pub const Tables = struct {
             }
         }.f;
 
+        // MonStats2.txt collision fields, keyed by MonStats2.Id (the value a MonStats
+        // row's MonStatsEx column points at). Parsed here; the table (and its backing
+        // strings, which the map keys borrow) stays alive until the fill loop below runs.
+        var m2t = try txt.Table.parse(gpa, @embedFile("../excel/MonStats2.txt"));
+        defer m2t.deinit();
+        const Stat2 = struct { size_x: i32, spawn_col: i32 };
+        var ex_to_stat2 = std.StringHashMapUnmanaged(Stat2){};
+        defer ex_to_stat2.deinit(gpa);
+        {
+            var r: usize = 0;
+            while (r < m2t.rowCount()) : (r += 1) {
+                const ex_id = m2t.str(r, "Id");
+                if (ex_id.len == 0) continue;
+                try ex_to_stat2.put(gpa, ex_id, .{
+                    .size_x = @intCast(m2t.int(r, "SizeX")),
+                    .spawn_col = @intCast(m2t.int(r, "spawnCol")), // empty -> 0
+                });
+            }
+        }
+
         const mon_stats = try gpa.alloc(MonStat, names.items.len);
         errdefer gpa.free(mon_stats);
         {
@@ -136,6 +161,8 @@ pub const Tables = struct {
             while (r < mt.rowCount()) : (r += 1) {
                 const nm = mt.str(r, "Id");
                 if (std.mem.eql(u8, nm, "Expansion")) continue;
+                const ex = mt.str(r, "MonStatsEx");
+                const s2 = ex_to_stat2.get(ex) orelse Stat2{ .size_x = 1, .spawn_col = 0 };
                 mon_stats[out_i] = .{
                     .rarity = @intCast(mt.int(r, "Rarity")),
                     .is_spawn = mt.int(r, "isSpawn") != 0,
@@ -146,6 +173,8 @@ pub const Tables = struct {
                     .spawn = resolve(&name_to_id, &mt, r, "spawn"),
                     .place_spawn = @intCast(mt.int(r, "placespawn")),
                     .base_id = resolve(&name_to_id, &mt, r, "BaseId"),
+                    .size_x = s2.size_x,
+                    .spawn_col = s2.spawn_col,
                 };
                 out_i += 1;
             }
@@ -488,6 +517,7 @@ pub fn spawnRoomMonsters(
     is_not_normal: bool,
     out: *std.ArrayListUnmanaged(MonSpawn),
     gpa: std.mem.Allocator,
+    coll: ?*SpawnColl,
 ) bool {
     var density = reg.n_monster_density;
     if (density > 10000) density = 10000;
@@ -495,6 +525,11 @@ pub fn spawnRoomMonsters(
 
     const cx = room.x_start + @divTrunc(room.x_size, 2);
     const cy = room.y_start + @divTrunc(room.y_size, 2);
+    // GetRoomCorners (0x54dac0) inset bounds for the leader position roll.
+    const rleft = room.x_start + 1;
+    const rtop = room.y_start + 1;
+    const rwidth = room.x_size - 1;
+    const rheight = room.y_size - 1;
 
     var any_spawned = false;
     var slots: i32 = @divTrunc(room.y_size, 3) * @divTrunc(room.x_size, 3);
@@ -509,12 +544,14 @@ pub fn spawnRoomMonsters(
         if (dens == 1) dens = 2;
 
         if (dens == 0) {
-            // UNIQUE PACK — reroll type (umon on normal), emit boss.
+            // UNIQUE PACK — reroll type (umon on normal), emit boss at its rolled position.
             const boss_id = rollRandomMonsterType(reg, tbl, lm, room_seed, 0, 1, is_not_normal);
             if (boss_id >= 0) {
+                const bs = tbl.stat(boss_id).?;
+                const pos = findRandomPosition(room_seed, rleft, rtop, rwidth, rheight, bs.size_x, spawnColMask(bs.spawn_col), coll);
                 out.append(gpa, .{
-                    .class_id = boss_id, .x = cx, .y = cy, .count = 1,
-                    .flags = .{ .unique = true }, .placeholder_pos = true,
+                    .class_id = boss_id, .x = if (pos) |p| p.x else cx, .y = if (pos) |p| p.y else cy, .count = 1,
+                    .flags = .{ .unique = true }, .placeholder_pos = pos == null,
                 }) catch {};
                 reg.dw_unique_count += 1;
                 any_spawned = true;
@@ -534,10 +571,16 @@ pub fn spawnRoomMonsters(
                 if (ms.sparse_populate < mod100(game_seed.nSeedLow)) continue; // sparse skip
             }
             if (min_grp != 0 and max_grp != 0 and min_grp <= max_grp) {
+                // SPAWN_SpawnMonsterWithMinions: the LEADER position rolls off the room
+                // seed (findRandomPosition); the minion COUNT rolls off the leader's own
+                // unit seed (unmodeled) and minion ring positions don't touch the room
+                // seed — so the group is emitted as its leader at the real position with
+                // count = min_grp (per-minion spread is a documented residual).
+                const pos = findRandomPosition(room_seed, rleft, rtop, rwidth, rheight, ms.size_x, spawnColMask(ms.spawn_col), coll);
                 out.append(gpa, .{
-                    .class_id = class_id, .x = cx, .y = cy,
+                    .class_id = class_id, .x = if (pos) |p| p.x else cx, .y = if (pos) |p| p.y else cy,
                     .count = min_grp, // guaranteed min; random extra up to max_grp = residual
-                    .placeholder_pos = true,
+                    .placeholder_pos = pos == null,
                 }) catch {};
                 any_spawned = true;
             }
@@ -545,6 +588,122 @@ pub fn spawnRoomMonsters(
     }
     if (any_spawned) reg.n_rooms_with_monsters += 1;
     return any_spawned;
+}
+
+// ── Seeded position placement (SPAWN_FindRandomPositionForMonster 0x54dc40 + the
+//    CreateMonster ring-walk probe 0x5B2A00 at nSpawnRadius=-1) ────────────────────
+//
+// See docs/re/monster-spawn-position.md. Each placement rolls a candidate off the ROOM
+// seed and probes it; on collision reject it retries (≤20), each attempt advancing the
+// room seed by exactly 5 (2 for the x/y roll + 3 for the probe). Replaying these
+// advances is what keeps the room-seed stream — and therefore every LATER monster's type
+// roll in the room — faithful to the engine.
+
+/// CreateMonster spawnCol switch (0x5B2AA7): MonStats2.spawnCol -> collision mask.
+/// 3 (or any unmapped) selects the no-check mask 0.
+pub inline fn spawnColMask(spawn_col: i32) u16 {
+    return switch (spawn_col) {
+        1 => 0x01C0,
+        2 => 0x3F11,
+        3 => 0x0000,
+        else => 0x3C01, // 0 / empty / default
+    };
+}
+
+/// Optional room collision view for the spawn probe: room-local u16 subtile cells
+/// (same bits as the engine's Room1.pColl.pMapStart), plus the world-subtile origin.
+/// `blocked` samples the SizeX shape and ANDs the spawnCol mask; `place` writes a
+/// placed monster's footprint so later spawns in the room avoid it (the engine mutates
+/// pMapStart via PATH_AddUnitCollision mid-pass). When no view is supplied the probe
+/// accepts the first candidate (the open-room common case) — collision-driven retries
+/// are then a documented gap for that room.
+pub const SpawnColl = struct {
+    cells: []u16,
+    x_start: i32,
+    y_start: i32,
+    width: i32,
+    height: i32,
+    /// Bit a placed monster stamps into the map (npc collision, tested by mask 0x3C01).
+    pub const UNIT_BIT: u16 = 0x1000;
+
+    fn at(self: *const SpawnColl, x: i32, y: i32) u16 {
+        const lx = x - self.x_start;
+        const ly = y - self.y_start;
+        if (lx < 0 or ly < 0 or lx >= self.width or ly >= self.height) return 0xFFFF; // off-map = blocked
+        return self.cells[@intCast(ly * self.width + lx)];
+    }
+
+    /// CheckCollision_BlockAll_Width (0x64D9B0): OR the SizeX-shaped sample, AND the mask.
+    pub fn blocked(self: *const SpawnColl, x: i32, y: i32, size_x: i32, mask: u16) bool {
+        if (mask == 0) return false;
+        var acc: u16 = self.at(x, y);
+        switch (size_x) {
+            2 => { // SMALL cross
+                acc |= self.at(x - 1, y) | self.at(x + 1, y) | self.at(x, y - 1) | self.at(x, y + 1);
+            },
+            3 => { // BIG 3x3 box
+                var dy: i32 = -1;
+                while (dy <= 1) : (dy += 1) {
+                    var dx: i32 = -1;
+                    while (dx <= 1) : (dx += 1) acc |= self.at(x + dx, y + dy);
+                }
+            },
+            else => {}, // 0/1 single cell (already sampled)
+        }
+        return (acc & mask) != 0;
+    }
+
+    /// Stamp a placed unit's footprint (single cell — the engine footprint over SizeX is
+    /// approximated by the center cell; refine with the true PATH_AddUnitCollision shape).
+    pub fn place(self: *SpawnColl, x: i32, y: i32) void {
+        const lx = x - self.x_start;
+        const ly = y - self.y_start;
+        if (lx < 0 or ly < 0 or lx >= self.width or ly >= self.height) return;
+        self.cells[@intCast(ly * self.width + lx)] |= UNIT_BIT;
+    }
+};
+
+/// One CreateMonster probe (0x5B2A00) at nSpawnRadius=-1: 3 room-seed advances
+/// (parity; the RANDOM(seed,0) between them does not advance; sign-x; sign-y). The
+/// offsets are 0 at radius -1 so the candidate is exactly (nx,ny).
+inline fn createMonsterProbe(room_seed: *s.D2SeedStrc) void {
+    advance(room_seed); // parity
+    _ = randSel(room_seed, 0); // RANDOM(seed,0) -> 0, no advance
+    advance(room_seed); // sign x (offset 0 -> no effect)
+    advance(room_seed); // sign y
+}
+
+/// SPAWN_FindRandomPositionForMonster (0x54dc40): roll a candidate off the room seed,
+/// probe it, retry on collision (≤20). `left/top/width/height` are the GetRoomCorners
+/// inset bounds (rect.left+1, rect.top+1, rect.right-rect.left-1, rect.bottom-rect.top-1).
+/// Returns the accepted world-subtile position, or null after 20 failures. Advances the
+/// room seed by 5 per attempt regardless of accept/reject.
+pub fn findRandomPosition(
+    room_seed: *s.D2SeedStrc,
+    left: i32,
+    top: i32,
+    width: i32,
+    height: i32,
+    size_x: i32,
+    mask: u16,
+    coll: ?*SpawnColl,
+) ?struct { x: i32, y: i32 } {
+    const w: u32 = @intCast(@max(1, width));
+    const h: u32 = @intCast(@max(1, height));
+    var tries: u32 = 0;
+    while (tries < 20) : (tries += 1) {
+        const nx = @as(i32, @intCast(randSel(room_seed, w))) + left;
+        const ny = @as(i32, @intCast(randSel(room_seed, h))) + top;
+        createMonsterProbe(room_seed);
+        // Pure accept checks (no seed advances): PtInRect holds by construction here;
+        // MONSTERAI_CanSpawnMonsterAt returns 1 for ordinary monsters.
+        if (coll) |cv| {
+            if (cv.blocked(nx, ny, size_x, mask)) continue;
+            cv.place(nx, ny);
+        }
+        return .{ .x = nx, .y = ny };
+    }
+    return null;
 }
 
 // ── Wandering monsters (MONSTER_InitWanderingForLevel 0x54eff0) ──────────────────
@@ -673,7 +832,7 @@ test "room spawn: deterministic + density scaling + plausible classes" {
             var rseed = s.D2SeedStrc{ .nSeedLow = @bitCast(room_lo), .nSeedHigh = 0x29a };
             var out: std.ArrayListUnmanaged(MonSpawn) = .empty;
             const rctx = RoomCtx{ .x_start = 0, .y_start = 0, .x_size = xs, .y_size = ys };
-            _ = spawnRoomMonsters(rg, tbl, level, &gseed, &rseed, &rctx, false, &out, alloc);
+            _ = spawnRoomMonsters(rg, tbl, level, &gseed, &rseed, &rctx, false, &out, alloc, null);
             return out;
         }
     }.f;
@@ -705,6 +864,66 @@ test "room spawn: deterministic + density scaling + plausible classes" {
     var big = try runOnce(&t, lm, 7, 9, 90, 90, testing.allocator);
     defer big.deinit(testing.allocator);
     try testing.expect(big.items.len >= small.items.len);
+}
+
+test "findRandomPosition: deterministic, in-bounds, exactly 5 room-seed advances" {
+    const left: i32 = 100;
+    const top: i32 = 200;
+    const width: i32 = 38;
+    const height: i32 = 38;
+
+    var seed = s.D2SeedStrc{ .nSeedLow = 0x12345, .nSeedHigh = 0x29a };
+    // One accepted attempt = 5 advances: RANDOM(width), RANDOM(height), then the probe's
+    // parity + sign-x + sign-y (the RANDOM(seed,0) in the probe does not advance).
+    var expect = seed;
+    inline for (0..5) |_| expect = sEEDNEXT(expect);
+
+    const p = findRandomPosition(&seed, left, top, width, height, 1, spawnColMask(0), null).?;
+    try testing.expect(p.x >= left and p.x < left + width);
+    try testing.expect(p.y >= top and p.y < top + height);
+    try testing.expectEqual(expect.nSeedLow, seed.nSeedLow);
+    try testing.expectEqual(expect.nSeedHigh, seed.nSeedHigh);
+
+    // Determinism: same seed -> same position.
+    var seed2 = s.D2SeedStrc{ .nSeedLow = 0x12345, .nSeedHigh = 0x29a };
+    const p2 = findRandomPosition(&seed2, left, top, width, height, 1, spawnColMask(0), null).?;
+    try testing.expectEqual(p.x, p2.x);
+    try testing.expectEqual(p.y, p2.y);
+}
+
+test "findRandomPosition: a blocked first candidate forces a retry to a free cell" {
+    const left: i32 = 100;
+    const top: i32 = 200;
+    const width: i32 = 38;
+    const height: i32 = 38;
+
+    // First, learn the free-roll candidate (no collision view).
+    var s0 = s.D2SeedStrc{ .nSeedLow = 0x777, .nSeedHigh = 0x29a };
+    const p1 = findRandomPosition(&s0, left, top, width, height, 1, spawnColMask(0), null).?;
+
+    // Build a collision view spanning the bounds and block exactly p1's cell.
+    const gx = left - 1;
+    const gy = top - 1;
+    const gw: i32 = width + 2;
+    const gh: i32 = height + 2;
+    const cells = try testing.allocator.alloc(u16, @intCast(gw * gh));
+    defer testing.allocator.free(cells);
+    @memset(cells, 0);
+    var coll = SpawnColl{ .cells = cells, .x_start = gx, .y_start = gy, .width = gw, .height = gh };
+    coll.place(p1.x, p1.y); // stamp UNIT_BIT at the first candidate
+
+    // Re-roll from the same seed with collision on: the first candidate is now blocked
+    // so it must retry (>= 2 attempts => >= 10 advances) and land elsewhere.
+    var s1 = s.D2SeedStrc{ .nSeedLow = 0x777, .nSeedHigh = 0x29a };
+    var after5 = s1;
+    inline for (0..5) |_| after5 = sEEDNEXT(after5); // exactly one attempt's worth
+    const p2 = findRandomPosition(&s1, left, top, width, height, 1, spawnColMask(0), &coll).?;
+    // Moved off the blocked cell (findRandomPosition only returns cells that passed the
+    // collision check; it then stamps its own footprint, so a post-hoc blocked() check
+    // would see that footprint — the accept guarantee is internal).
+    try testing.expect(p2.x != p1.x or p2.y != p1.y);
+    // More than one attempt was consumed (seed is past the single-attempt state).
+    try testing.expect(s1.nSeedLow != after5.nSeedLow or s1.nSeedHigh != after5.nSeedHigh);
 }
 
 test "resolveSpawnMonsterCode: fixed codes + passthrough" {
