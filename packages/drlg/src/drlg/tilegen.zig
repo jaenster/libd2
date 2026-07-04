@@ -40,12 +40,13 @@ const dt1 = @import("d2-formats").dt1;
 pub var g_lookup_fallback: usize = 0;
 pub var g_lookup_null: usize = 0;
 
-/// The engine's orientation-10 "special/opaque" fallback tile — uniformly solid rock
-/// (block_walk 0x01 | wall 0x04 = 0x05 across all 25 subtiles). Returned by
-/// getTileLibraryEntry when neither the primary identity nor the type-10 fallback resolve
-/// in the loaded DT1 set, so uncarved-rock cells (DS1 main=30 fill) get their real 0x05
-/// collision instead of being dropped to walkable.
+/// The engine's Act1\Outdoors\Blank.dt1 "blank fill" tiles, returned when neither the
+/// primary identity nor the type-10 fallback resolve in the loaded DT1 set (that DT1 isn't
+/// in our baked blob). Values verified against the real Blank.dt1 subtile blocks:
+///   main=30 sub=0 -> 0x05 (block_walk|wall)  — uncarved solid rock
+///   main=30 sub=1 -> 0x01 (block_walk only)  — the Arcane-Sanctuary/void fill (0x1e00100)
 const solid_fill_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 0, .rarity = 1, .flags = [_]u8{0x05} ** 25 };
+const blank_fill_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 1, .rarity = 1, .flags = [_]u8{0x01} ** 25 };
 
 /// The room's loaded tile library: the engine's `apTiles[32]` array of tile
 /// projects, modelled here as the set of parsed DT1 files (in load order). A
@@ -136,7 +137,7 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
         // known solid-rock value for the main=30 fill ONLY. Other unresolved identities are
         // genuine DT1-completeness gaps (the engine resolves them to a real, usually
         // walkable tile) — leave those null so we don't over-mark them solid.
-        if (nMainIndex == 30) return &solid_fill_tile;
+        if (nMainIndex == 30) return if (nSub == 1) &blank_fill_tile else &solid_fill_tile;
         return null; // engine: ERROR_UnrecoverableInternalError_Halt(line 0x73)
     }
 
