@@ -1749,6 +1749,13 @@ pub fn verifyActCollision(
             for (res.rooms) |r| {
                 const key = Key{ .level = r.level_id, .px = r.px, .py = r.py };
                 const cp = try alloc.dupe(u8, r.cells);
+                // No-floor subtiles carry the synthetic `blank` (0x20) render marker; the
+                // engine's runtime CollMap encodes void as solid rock (block_walk|wall =
+                // 0x05). Promote so the collision compare — and any real pathing consumer —
+                // sees void as blocked, matching the engine.
+                for (cp) |*c| {
+                    if (c.* & 0x20 != 0) c.* = (c.* & ~@as(u8, 0x20)) | 0x05;
+                }
                 const gop = try ours.getOrPut(alloc, key);
                 if (gop.found_existing) alloc.free(gop.value_ptr.cells);
                 gop.value_ptr.* = .{ .w = r.w, .h = r.h, .cells = cp };
@@ -2875,11 +2882,9 @@ test "lib: collision vs real-engine golden (seed 72, act 5)" {
     // We reproduce STATIC TERRAIN (the low 0x1F COLBITs). The golden also carries
     // static door/object bits (0x400 COLBIT_OBJECT / 0x800 COLBIT_DOOR) which are
     // out of scope, so compare on the masked-0x1F basis, not exact u16.
-    // Baseline floor: don't regress below the current masked-0x1F match (69.05%).
-    // Remaining gap is dominated by Act-5 wilderness floor rooms (our outdoor
-    // materialization overlay is ACT_I-specific) + the PRESET 0x10 bit; tracked in
-    // the CollMap fidelity campaign. Raise this floor as those close.
-    try std.testing.expect(r.masked_ok >= 300000);
+    // Floor now ~96% after promoting no-floor void to the engine's solid-rock (0x05)
+    // encoding; the residual is the PRESET 0x10 bit. Don't regress below ~95%.
+    try std.testing.expect(r.masked_ok >= 415000);
 }
 
 test "lib: collision vs d2probe engine golden (seed 1, Act 1 — maze/outdoor/preset)" {
