@@ -2882,6 +2882,26 @@ test "lib: collision vs real-engine golden (seed 72, act 5)" {
     try std.testing.expect(r.masked_ok >= 300000);
 }
 
+test "lib: collision vs d2probe engine golden (seed 1, Act 1 — maze/outdoor/preset)" {
+    // Comprehensive cross-room-type collision check against a fresh d2probe capture of
+    // the runtime CollMap (pure DT1 terrain — dumped before monster spawn adds unit
+    // footprints). Reports the current masked-0x1F fidelity across every Act-1 level;
+    // report-only (the residual is the CollMap fidelity campaign, task #32). Skips if the
+    // data tables aren't present.
+    const golden_bytes = @embedFile("golden/coll_seed1_act1.jsonl");
+    var ctx = Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+
+    const r = try verifyActCollision(std.testing.allocator, &ctx, golden_bytes, .hell, false);
+    try std.testing.expectEqual(@as(u32, 1), r.seed);
+    const pct: u64 = if (r.total_cells > 0) @as(u64, r.masked_ok) * 100 / r.total_cells else 0;
+    std.debug.print(
+        "\n[coll-verify seed 1 Act1] rooms matched={d} dim_mismatch={d} golden_only={d} | cells={d} masked-0x1F ok={d} ({d}%)\n",
+        .{ r.matched_rooms, r.dim_mismatch, r.golden_only, r.total_cells, r.masked_ok, pct },
+    );
+    try std.testing.expect(r.matched_rooms > 0);
+}
+
 test "lib: Ctx round-trips + API type-checks" {
     // Compile-check the generation entrypoints (runtime generation is covered by
     // the byte-exact gate; a runtime smoke test needs valid placement coords,
