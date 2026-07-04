@@ -128,13 +128,16 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
             return aTileResults[0];
         }
         g_lookup_null += 1;
-        // The engine's fallback resolves to the level's orientation-10 "special/opaque"
-        // tile, whose 5x5 subtile block is uniformly 0x05 (block_walk|wall) — solid rock
-        // (verified in 1.14d Game.exe: TileLibrary_AddCollision ORs it in). Some level DT1
-        // sets we load lack that art (e.g. Act1/Barracks: no orient-10 tile), so instead of
-        // returning null (which drops the collision and leaves uncarved rock walkable) we
-        // return the known solid-rock fill tile. This is the engine's fallback value.
-        return &solid_fill_tile;
+        // The "uncarved rock" blank fill (main index 30, from processTile's 0x1e00000)
+        // resolves in the engine — via the orientation-10 special/opaque tile — to a 5x5
+        // block of solid rock (0x05 = block_walk|wall; verified in 1.14d Game.exe). Some
+        // level DT1 sets we load lack that orient-10 art (e.g. Act1/Barracks), so the
+        // fallback yields nothing and whole solid-fill rooms read as walkable. Return the
+        // known solid-rock value for the main=30 fill ONLY. Other unresolved identities are
+        // genuine DT1-completeness gaps (the engine resolves them to a real, usually
+        // walkable tile) — leave those null so we don't over-mark them solid.
+        if (nMainIndex == 30) return &solid_fill_tile;
+        return null; // engine: ERROR_UnrecoverableInternalError_Halt(line 0x73)
     }
 
     // Rarity sum over the matches (recon 1396-1409).
