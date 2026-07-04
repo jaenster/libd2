@@ -157,6 +157,23 @@ fn blit(grid: *CollisionGrid, t: *const dt1.Tile, tx: usize, ty: usize) void {
     }
 }
 
+/// Stamp uniform solid rock (0x05 = block_walk|wall) across a tile's 5x5 footprint —
+/// the engine's orientation-10 "special/opaque" fallback tile for the main=30 uncarved-
+/// rock fill, which some level DT1 sets don't ship (so `lib.find` misses it).
+fn blitSolid(grid: *CollisionGrid, tx: usize, ty: usize) void {
+    var sy: usize = 0;
+    while (sy < SUBTILES_PER_TILE) : (sy += 1) {
+        const gy = ty * SUBTILES_PER_TILE + sy;
+        if (gy >= grid.height) break;
+        var sx: usize = 0;
+        while (sx < SUBTILES_PER_TILE) : (sx += 1) {
+            const gx = tx * SUBTILES_PER_TILE + sx;
+            if (gx >= grid.width) continue;
+            grid.cells[gy * grid.width + gx] |= 0x05;
+        }
+    }
+}
+
 /// Build the subtile collision grid for a single parsed DS1 using the tiles in
 /// `lib`. Floor layers contribute their base walkability; wall layers OR their
 /// blocking on top. Caller owns and must `deinit` the result.
@@ -180,6 +197,8 @@ pub fn rasterize(allocator: std.mem.Allocator, d: *const ds1.Ds1, lib: *const Dt
             const sub = @as(i32, @intCast((c.raw >> 8) & 0xff));
             if (lib.find(0, main, sub)) |t| {
                 blit(&grid, t, i % w, i / w);
+            } else if (main == 30) {
+                blitSolid(&grid, i % w, i / w); // uncarved-rock fill (engine type-10 fallback -> 0x05)
             } else grid.unresolved += 1;
         }
     }
@@ -195,6 +214,8 @@ pub fn rasterize(allocator: std.mem.Allocator, d: *const ds1.Ds1, lib: *const Dt
             const orient: i32 = wl.orient[i].prop1;
             if (lib.find(orient, main, sub)) |t| {
                 blit(&grid, t, i % w, i / w);
+            } else if (main == 30) {
+                blitSolid(&grid, i % w, i / w);
             } else grid.unresolved += 1;
         }
     }
@@ -380,12 +401,14 @@ test "rasterize with empty DT1 library: all tiles unresolved, nothing blocked" {
     var g = try rasterize(a, &d, &lib);
     defer g.deinit();
 
-    // Nothing resolves, so every placed tile is counted unresolved and no flag
-    // byte is blitted — the interior grid stays fully walkable.
+    // Nothing resolves via the DT1 art, so ordinary tiles are counted unresolved and
+    // leave no collision. The ONE exception is the main=30 "uncarved rock" fill: it is
+    // definitionally solid (the engine's orient-10 fallback tile, 0x05), so it blocks
+    // even with no art loaded — one tile's 5x5 = 25 blocked subtiles.
     try testing.expect(g.unresolved > 0);
     var blocked: usize = 0;
     for (g.cells) |c| {
         if (c & dt1.SubtileFlag.block_walk != 0) blocked += 1;
     }
-    try testing.expectEqual(@as(usize, 0), blocked);
+    try testing.expectEqual(@as(usize, 25), blocked);
 }
