@@ -196,12 +196,6 @@ fn allocTileDataArrays(pRoomEx: [*c]s.D2RoomExStrc, a: std.mem.Allocator) !void 
 
 /// RoomTile.cpp 720-724 wall block — createWallTileData + (skipped) warp setup.
 fn processWallBlock(pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nFlags: i32, nOtherFlags: i32) void {
-    // orient 8/9 (preset-spawn markers) would panic in setWallTileFlags and carry
-    // no base collision tile — treat as a special-excluded cell.
-    if (nOtherFlags == 8 or nOtherFlags == 9) {
-        g_ctx.markSpecial(nX, nY);
-        return;
-    }
     const pTileGrid: [*c]s.D2DrlgTileGridStrc = @ptrCast(pRoom.*.pRoomTiles);
     const before: usize = @intCast(pTileGrid.*.nWalls);
     const e = tilegen.getTileLibraryEntry(pRoom, nOtherFlags, @bitCast(nFlags));
