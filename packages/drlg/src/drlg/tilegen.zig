@@ -40,6 +40,13 @@ const dt1 = @import("d2-formats").dt1;
 pub var g_lookup_fallback: usize = 0;
 pub var g_lookup_null: usize = 0;
 
+/// The engine's orientation-10 "special/opaque" fallback tile — uniformly solid rock
+/// (block_walk 0x01 | wall 0x04 = 0x05 across all 25 subtiles). Returned by
+/// getTileLibraryEntry when neither the primary identity nor the type-10 fallback resolve
+/// in the loaded DT1 set, so uncarved-rock cells (DS1 main=30 fill) get their real 0x05
+/// collision instead of being dropped to walkable.
+const solid_fill_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 0, .rarity = 1, .flags = [_]u8{0x05} ** 25 };
+
 /// The room's loaded tile library: the engine's `apTiles[32]` array of tile
 /// projects, modelled here as the set of parsed DT1 files (in load order). A
 /// `*const TileLib` is stashed in `pRoomEx.apTiles[0]`.
@@ -121,7 +128,13 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
             return aTileResults[0];
         }
         g_lookup_null += 1;
-        return null; // engine: ERROR_UnrecoverableInternalError_Halt(line 0x73)
+        // The engine's fallback resolves to the level's orientation-10 "special/opaque"
+        // tile, whose 5x5 subtile block is uniformly 0x05 (block_walk|wall) — solid rock
+        // (verified in 1.14d Game.exe: TileLibrary_AddCollision ORs it in). Some level DT1
+        // sets we load lack that art (e.g. Act1/Barracks: no orient-10 tile), so instead of
+        // returning null (which drops the collision and leaves uncarved rock walkable) we
+        // return the known solid-rock fill tile. This is the engine's fallback value.
+        return &solid_fill_tile;
     }
 
     // Rarity sum over the matches (recon 1396-1409).
