@@ -2933,7 +2933,7 @@ test "lib: collision vs d2probe engine golden (seed 1, Act 1 — maze/outdoor/pr
     var ctx = Ctx.init(std.heap.page_allocator) catch return;
     defer ctx.deinit();
 
-    const r = try verifyActCollision(std.testing.allocator, &ctx, golden_bytes, .hell, false);
+    const r = try verifyActCollision(std.testing.allocator, &ctx, golden_bytes, .nightmare, false);
     try std.testing.expectEqual(@as(u32, 1), r.seed);
     const pct: u64 = if (r.total_cells > 0) @as(u64, r.masked_ok) * 100 / r.total_cells else 0;
     std.debug.print(
@@ -2941,11 +2941,12 @@ test "lib: collision vs d2probe engine golden (seed 1, Act 1 — maze/outdoor/pr
         .{ r.matched_rooms, r.dim_mismatch, r.golden_only, r.total_cells, r.masked_ok, pct },
     );
     try std.testing.expect(r.matched_rooms > 0);
-    // Lock the masked-0x1F terrain fidelity (95%: main=30 solid-fill + orient-8/9 preset-
-    // marker wall 0x10 stamp). Residual: the 3 always-appended global DT1s (Blank/InvisWal/
-    // Warp.dt1) aren't in the baked dt1_blob, so main=30 uses a synthetic solid stand-in and
-    // some outdoor 0x10 tiles stay unresolved. Raise this floor as that closes; never regress.
-    try std.testing.expect(r.masked_ok >= 2_118_000);
+    // Lock the masked-0x1F terrain fidelity. Golden captured at Nightmare; maze levels
+    // (Crypt/Mausoleum/TowerCellar) now match exactly. Residual: the 3 always-appended
+    // global DT1s (Blank/InvisWal/Warp.dt1) aren't in the baked dt1_blob, so main=30 uses a
+    // synthetic solid stand-in and some outdoor 0x10 tiles stay unresolved. Raise this floor
+    // as that closes; never regress.
+    try std.testing.expect(r.masked_ok >= 2_177_000);
 }
 
 test "lib: Ctx round-trips + API type-checks" {

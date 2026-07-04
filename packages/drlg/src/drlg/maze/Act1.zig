@@ -237,11 +237,7 @@ inline fn mazeTxt(pLevel: [*c]s.D2DrlgLevelStrc) [*c]@import("../tables.zig").D2
 }
 
 /// DRLGMAZE_GenerateBarracksLayout (Act1/Barracks.cpp:27, 1.14d 00673120).
-const DBG_BARRACKS = false;
 pub fn GenerateBarracksLayout(pDrlgLevelStrc: [*c]s.D2DrlgLevelStrc) void {
-    if (DBG_BARRACKS) {
-        @import("std").debug.print("PORT barracks_entry seedLo=0x{x:0>8} roomEx={d}\n", .{ @as(u32, @bitCast(pDrlgLevelStrc.*.sSeed.nSeedLow)), pDrlgLevelStrc.*.nRoomExCount });
-    }
     const pJailLevel = deps.GetLevelAndAlloc(pDrlgLevelStrc.*.pDrlg, .OuterCloister);
     // Level 0x1b (Courtyard 1) is a PRESET level, so its pDrlgLevelData is a
     // D2DrlgLevelDataPresetArea, not a maze row. The engine reads the jail-exit
@@ -258,7 +254,6 @@ pub fn GenerateBarracksLayout(pDrlgLevelStrc: [*c]s.D2DrlgLevelStrc) void {
         else => return,
     };
     if (pEdgeRoom == null) return;
-    if (DBG_BARRACKS) @import("std").debug.print("PORT T1 afterFind seedLo=0x{x:0>8} roomEx={d}\n", .{ @as(u32, @bitCast(pDrlgLevelStrc.*.sSeed.nSeedLow)), pDrlgLevelStrc.*.nRoomExCount });
     var nOffsetX: i32 = pJailLevel.*.sCoordinatesAndSize.WorldPosition.x;
     var nOffsetY: i32 = pJailLevel.*.sCoordinatesAndSize.WorldPosition.y;
     const pLvlMazeTxt = mazeTxt(pDrlgLevelStrc);
@@ -285,7 +280,6 @@ pub fn GenerateBarracksLayout(pDrlgLevelStrc: [*c]s.D2DrlgLevelStrc) void {
         },
         else => unreachable,
     }
-    if (DBG_BARRACKS) @import("std").debug.print("PORT T2 afterConn seedLo=0x{x:0>8} roomEx={d}\n", .{ @as(u32, @bitCast(pDrlgLevelStrc.*.sSeed.nSeedLow)), pDrlgLevelStrc.*.nRoomExCount });
     // Seed-roll picks which replacement set runs first; the SECOND ReplaceRoom
     // indexes the table with the post-advance roll (faithful to the recon ordering).
     var nRoll: i32 = nJailExitVariant;
