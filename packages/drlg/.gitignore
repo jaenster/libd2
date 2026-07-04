@@ -42,3 +42,4 @@ src/golden/deep_seed_*_roads.jsonl
 
 ./docs/*
 src/golden/monpop_seed1_all_acts.json
+src/golden/coll_seed1_all_acts.jsonl
