@@ -222,9 +222,6 @@ pub fn fillTileData(pRoomEx: [*c]s.D2RoomExStrc, pTileData: *s.D2DrlgTileDataStr
 
 /// DRLGROOMTILE_SetWallTileFlags (Drlg.cpp:1451, 1.14d 0066db20).
 fn setWallTileFlags(pTileData: *s.D2DrlgTileDataStrc, nTileType: i32, nGridFlags: u32) void {
-    if (nTileType == 9 or nTileType == 8) {
-        @panic("setWallTileFlags: preset-spawn tile (type 8/9) needs Preset::CreatesPresets (cross-file stub)");
-    }
     if (nTileType != 0xd) {
         pTileData.nFlags |= @as(i32, @intCast((nGridFlags >> 0x12) & 3)) * 0x4000 + 0x4000;
     }
