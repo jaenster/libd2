@@ -1339,7 +1339,14 @@ fn materializeLevelColl(
             });
         } else if (p.eRoomExFlags.noLos) {
             // Wilderness FLOOR cell (an 8x8 CreateOutdoorRoomEx shell, no DS1).
-            var mr = materialize.materializeOutdoorFloorRoom(out_alloc, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, materialize.outdoorOverlayFor(pLevel, p)) catch continue;
+            const sub_type, const sub_theme, const sub_picked = blk: {
+                if (p.pRoomExData) |rd| {
+                    const maze: *abi.D2DrlgRoomExDataMazeStrc = @ptrCast(@alignCast(rd));
+                    break :blk .{ maze.nSubType, maze.nSubTheme, maze.nSubThemePicked };
+                }
+                break :blk .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
+            };
+            var mr = materialize.materializeOutdoorFloorRoom(out_alloc, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type, sub_theme, sub_picked) catch continue;
             defer mr.deinit(out_alloc);
             try grids.append(out_alloc, .{
                 .x = gx,
@@ -1571,7 +1578,14 @@ pub fn generateActRoomCollision(
                     .cells = try out_alloc.dupe(u8, mr.coll.cells),
                 });
             } else if (p.eRoomExFlags.noLos) {
-                var mr = materialize.materializeOutdoorFloorRoom(out_alloc, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p)) catch continue;
+                const sub_type2, const sub_theme2, const sub_picked2 = blk: {
+                    if (p.pRoomExData) |rd| {
+                        const maze: *abi.D2DrlgRoomExDataMazeStrc = @ptrCast(@alignCast(rd));
+                        break :blk .{ maze.nSubType, maze.nSubTheme, maze.nSubThemePicked };
+                    }
+                    break :blk .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
+                };
+                var mr = materialize.materializeOutdoorFloorRoom(out_alloc, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2) catch continue;
                 defer mr.deinit(out_alloc);
                 try rooms.append(out_alloc, .{
                     .level_id = lid,
@@ -2931,7 +2945,7 @@ test "lib: collision vs d2probe engine golden (seed 1, Act 1 — maze/outdoor/pr
     // marker wall 0x10 stamp). Residual: the 3 always-appended global DT1s (Blank/InvisWal/
     // Warp.dt1) aren't in the baked dt1_blob, so main=30 uses a synthetic solid stand-in and
     // some outdoor 0x10 tiles stay unresolved. Raise this floor as that closes; never regress.
-    try std.testing.expect(r.masked_ok >= 2_085_000);
+    try std.testing.expect(r.masked_ok >= 2_118_000);
 }
 
 test "lib: Ctx round-trips + API type-checks" {
@@ -2945,4 +2959,5 @@ test "lib: Ctx round-trips + API type-checks" {
     var ctx = Ctx.init(std.testing.allocator) catch return;
     defer ctx.deinit();
 }
+
 

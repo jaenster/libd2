@@ -55,6 +55,8 @@ const dtables = @import("tables.zig");
 const drlgmod = @import("drlg.zig");
 const act_mod = @import("../act.zig");
 const fog = @import("d2-fog").memory;
+const TileSub = @import("TileSub.zig");
+const drlg_rng = @import("rng.zig");
 
 const SUBTILES = collision.SUBTILES_PER_TILE;
 
@@ -807,6 +809,195 @@ fn applyAct1WallOverlay(ar: std.mem.Allocator, fg: *OwnedGrid, ov: OutdoorOverla
     }
 }
 
+// LvlSub sub-theme terrain placement (InitGridCells step: SubTypeWpShrine, 3rd call).
+//
+// InitGridCells (0067d2d0) calls SubTypeWpShrine three times before Count/Alloc/Init:
+//   1. Waypoint (nSubTypeLookupId = LvlDefs.SubWaypoint, nSubTypeCount = shrineFlags>>16&3)
+//   2. Shrine   (nSubTypeLookupId = LvlDefs.SubShrine,   nSubTypeCount = shrineFlags>>12&0xf)
+//   3. Terrain  (nSubTypeLookupId = nSubType, nSubTypeIndex = nSubTheme, nSubTypeCount = nSubThemePicked)
+//
+// Calls 1 and 2 place waypoint/shrine DS1 tiles, which we skip (they affect wall layers
+// and preset units, not floor collision). Call 3 places sub-theme terrain (Stone, Trees,
+// Puddles, Swamp, etc.) into the floor grid — this IS the source of the 0x10 collision
+// bit gap. The DS1 floor cells carry 0x10000002 (bit 28 = alternate + bit 1 = has floor);
+// ApplyLvlSubTileData writes (flags | 0x80) to the room floor grid; createFloorTileData
+// then sees bit 28 and sets nFlags |= 0x102, which drawExtraColl maps to 0x10 COLBIT_PRESET.
+//
+// Faithful to: SubTypeWpShrine (1.14d @0x6707a0), DoNotCheckAll (0x670170),
+//   DRLGOUTDOOR_CheckSubTileOverlap (0x66fcf0), DRLGOUTDOOR_ApplyLvlSubTileData (floor
+//   grid path only) (0x66fad0).
+
+// DRLGOUTDOOR_CheckSubTileOverlap (0x66fcf0): returns true if the sub-tile DS1 group
+// can be placed at (baseX, baseY) without overlapping existing terrain in the room floor
+// grid. Simplified: only floor check (no wall-layer check; sub-theme LvlSub DS1s have
+// no wall layers, so wall grid is always clear).
+fn checkSubTileOverlap(
+    baseX: i32,
+    baseY: i32,
+    fg: *s.D2DrlgGridStrc,
+    pSubstGroup: *const s.D2DrlgSubstGroupStrc,
+    pSubTxt: *dtables.D2LvlSubTxt,
+) bool {
+    const pw = pSubstGroup.tBox.nWidth;
+    const ph = pSubstGroup.tBox.nHeight;
+    if (ph <= 0) return true;
+    const srcX = pSubstGroup.tBox.nPosX;
+    const srcY = pSubstGroup.tBox.nPosY;
+    var dy: i32 = 0;
+    while (dy < ph) : (dy += 1) {
+        if (pw <= 0) { dy += 1; continue; }
+        var dx: i32 = 0;
+        while (dx < pw) : (dx += 1) {
+            const sub_flags: u32 = @bitCast(DrlgGrid.GetGridFlags(&pSubTxt.pFloorGrid, srcX + dx, srcY + dy));
+            if (sub_flags & 2 == 0) continue;
+            // Room cell must have plain floor (bit 1 set) and no terrain bits already stamped.
+            const room_flags: u32 = @bitCast(DrlgGrid.GetGridFlags(fg, baseX + dx, baseY + dy));
+            if (room_flags & 0x3f0ff00 != 0 or room_flags & 2 == 0) return false;
+        }
+    }
+    return true;
+}
+
+// DRLGOUTDOOR_ApplyLvlSubTileData (0x66fad0) — floor grid write only (we skip wall layers
+// and shadow tiles; sub-theme terrain DS1s only carry floor data that affects collision).
+fn applySubTileFloor(
+    fg: *s.D2DrlgGridStrc,
+    baseX: i32,
+    baseY: i32,
+    pSubstGroup: *const s.D2DrlgSubstGroupStrc,
+    pSubTxt: *dtables.D2LvlSubTxt,
+) void {
+    const pw = pSubstGroup.tBox.nWidth;
+    const ph = pSubstGroup.tBox.nHeight;
+    const srcX = pSubstGroup.tBox.nPosX;
+    const srcY = pSubstGroup.tBox.nPosY;
+    var dy: i32 = 0;
+    while (dy < ph) : (dy += 1) {
+        var dx: i32 = 0;
+        while (dx < pw) : (dx += 1) {
+            const flags = DrlgGrid.GetGridFlags(&pSubTxt.pFloorGrid, srcX + dx, srcY + dy);
+            if (flags & 2 != 0) {
+                DrlgGrid.AlterGridFlag(fg, baseX + dx, baseY + dy, flags | 0x80, 3);
+            }
+        }
+    }
+}
+
+// DoNotCheckAll (1.14d 0x670170): seeded sub-tile placement — picks a random substitution
+// group, then either tries random positions (Trials >= 0) or shuffles all positions
+// exhaustively (Trials == -1), placing the group when overlap-free. Runs Max[nSubTypeIndex]
+// times. Faithful to the C reconstruction (same seed consumption order, same shuffle).
+fn doNotCheckAll(
+    pRoom: *s.D2RoomExStrc,
+    fg: *s.D2DrlgGridStrc,
+    pSubTxt: *dtables.D2LvlSubTxt,
+    nSubTypeIndex: i32,
+) void {
+    const pFile = pSubTxt.pDrlgFile orelse return;
+    if (pFile.nSubstGroups == 0) return;
+    const idx: usize = @intCast(@max(0, nSubTypeIndex));
+    if (idx >= 5) return;
+    if (pSubTxt.Max[idx] < 1) return;
+
+    const ws_x = pRoom.sCoords.WorldSize.x;
+    const ws_y = pRoom.sCoords.WorldSize.y;
+
+    var nMaxRemaining: i32 = pSubTxt.Max[idx];
+    while (true) {
+        // Pick a random substitution group from the DS1.
+        const nGroupIdx = drlg_rng.randomNumberSelector(&pRoom.sSeed, @intCast(pFile.nSubstGroups));
+        const pSubstGroups: [*]s.D2DrlgSubstGroupStrc = @ptrCast(@alignCast(pFile.pSubstGroups.?));
+        const pSubstGroup = &pSubstGroups[nGroupIdx];
+
+        const nMaxX: u32 = @bitCast(ws_x - pSubstGroup.tBox.nWidth);
+        const nMaxY: u32 = @bitCast(ws_y - pSubstGroup.tBox.nHeight);
+        // Condition: (int)(nMaxX+1) > 1 && (int)(nMaxY+1) > 1 (i.e. nMaxX >= 1, nMaxY >= 1).
+        if (@as(i32, @bitCast(nMaxX + 1)) > 1 and @as(i32, @bitCast(nMaxY + 1)) > 1) {
+            const nTrialCount = pSubTxt.Trials[idx];
+            if (nTrialCount == -1) {
+                // Exhaustive shuffle: fill all positions, shuffle, try each.
+                const nTotalPositions: u32 = nMaxY * nMaxX;
+                if (nTotalPositions > 0) {
+                    // Array big enough for any 8x8 room minus group (max ~64 entries).
+                    var coordBuf: [514]i32 = undefined;
+                    var nPosX: u32 = 0;
+                    while (nPosX < nTotalPositions) : (nPosX += 1) {
+                        coordBuf[nPosX * 2] = @intCast(nPosX % nMaxX);     // x
+                        coordBuf[nPosX * 2 + 1] = @intCast(nPosX / nMaxX); // y
+                    }
+                    // Shuffle: nTotalPositions-1 random swaps (each uses two randomNumberSelector calls).
+                    var nRem: u32 = nTotalPositions;
+                    while (nRem > 1) : (nRem -= 1) {
+                        const a_idx = drlg_rng.randomNumberSelector(&pRoom.sSeed, nTotalPositions);
+                        const b_idx = drlg_rng.randomNumberSelector(&pRoom.sSeed, nTotalPositions);
+                        const tx = coordBuf[a_idx * 2];
+                        const ty = coordBuf[a_idx * 2 + 1];
+                        coordBuf[a_idx * 2] = coordBuf[b_idx * 2];
+                        coordBuf[a_idx * 2 + 1] = coordBuf[b_idx * 2 + 1];
+                        coordBuf[b_idx * 2] = tx;
+                        coordBuf[b_idx * 2 + 1] = ty;
+                    }
+                    // Try each shuffled position.
+                    var i: u32 = 0;
+                    while (i < nTotalPositions) : (i += 1) {
+                        const bx: i32 = coordBuf[i * 2] + 1;
+                        const by: i32 = coordBuf[i * 2 + 1] + 1;
+                        if (checkSubTileOverlap(bx, by, fg, pSubstGroup, pSubTxt)) {
+                            applySubTileFloor(fg, bx, by, pSubstGroup, pSubTxt);
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Random trial: try nTrialCount random positions.
+                var nTrialIter: i32 = 0;
+                while (nTrialIter < nTrialCount) : (nTrialIter += 1) {
+                    const bx: i32 = @intCast(drlg_rng.randomNumberSelector(&pRoom.sSeed, nMaxX) + 1);
+                    const by: i32 = @intCast(drlg_rng.randomNumberSelector(&pRoom.sSeed, nMaxY) + 1);
+                    if (checkSubTileOverlap(bx, by, fg, pSubstGroup, pSubTxt)) {
+                        applySubTileFloor(fg, bx, by, pSubstGroup, pSubTxt);
+                        break;
+                    }
+                }
+            }
+        }
+
+        nMaxRemaining -= 1;
+        if (nMaxRemaining == 0) return;
+    }
+}
+
+// SubTypeWpShrine (1.14d 0x6707a0) — sub-theme terrain pass: iterate the bit-mask of which
+// consecutive LvlSub rows (by Type) to apply, load each DS1 file, and call DoNotCheckAll
+// (or CheckAll, but all outdoor terrain subs have CheckAll=0). Only the floor grid is
+// written; we skip the wall-layer and shadow parts of ApplyLvlSubTileData.
+fn applySubThemeTerrain(
+    pRoom: *s.D2RoomExStrc,
+    fg: *s.D2DrlgGridStrc,
+    nSubTypeLookupId: i32,
+    nSubTypeIndex: i32,
+    nSubTypeCount: i32,
+) void {
+    if (nSubTypeLookupId == -1) return;
+    var dwBitMask: u32 = @bitCast(nSubTypeCount);
+    var pLine = dtables.lvlSubGetLineFromSubType(nSubTypeLookupId);
+    if (pLine == null) return;
+    while (dwBitMask != 0) : ({
+        dwBitMask >>= 1;
+        pLine += 1;
+    }) {
+        if (dwBitMask & 1 == 0) continue;
+        const pRec: *dtables.D2LvlSubTxt = @ptrCast(pLine);
+        TileSub.InitializeDrlgFile(null, pRec);
+        const pFile = pRec.pDrlgFile orelse continue;
+        if (pFile.nSubstGroups == 0) continue;
+        if (pRec.CheckAll == 0) {
+            doNotCheckAll(pRoom, fg, pRec, nSubTypeIndex);
+        }
+        // CheckAll (nAct 1 or 2 path) not needed for outdoor terrain subs (all CheckAll=0).
+    }
+}
+
 /// Materialize one outdoor FLOOR room (an 8x8 CreateOutdoorRoomEx shell) into a
 /// room-local floor collision grid. Faithful transform of InitGridCells
 /// (0067d2d0), including the ACT_I wall-orientation overlay (step 3) when
@@ -823,6 +1014,9 @@ pub fn materializeOutdoorFloorRoom(
     level_id: i32,
     room_seed: i32,
     overlay: ?OutdoorOverlay,
+    nSubType: i32,
+    nSubTheme: i32,
+    nSubThemePicked: i32,
 ) !MaterializeResult {
     var arena_impl = std.heap.ArenaAllocator.init(a);
     defer arena_impl.deinit();
@@ -871,6 +1065,12 @@ pub fn materializeOutdoorFloorRoom(
     // `(cell & 0x3f0ff80)==0` guard then skips them.
     if (overlay) |ov| try applyAct1WallOverlay(ar, &fg, ov, ws_x, ws_y);
 
+    // Sub-theme terrain (SubTypeWpShrine, 3rd call in InitGridCells): place LvlSub
+    // DS1 floor cells (bit 28 = alternate → 0x10 COLBIT_PRESET via createFloorTileData).
+    // Engine order: AllocRoomTileGrid → SubTypeWpShrine → OR-fill.
+    try allocRoomTileGrid(pRoom, ar);
+    applySubThemeTerrain(&room, &fg.grid, nSubType, nSubTheme, nSubThemePicked);
+
     // OR the level-type fill flag into cells with no terrain bits (OrFlag / op 0).
     const nGridFlag = outdoorFillFlag(nLevelType, level_id);
     if (nGridFlag != 0) {
@@ -894,7 +1094,6 @@ pub fn materializeOutdoorFloorRoom(
     // separate RE task; skipping the seam marking changes no collision bit.
 
     // ── Count → alloc → InitRoomTiles (as DRLGROOMEX_InitializeMazeRoom). ──
-    try allocRoomTileGrid(pRoom, ar);
     countTilesFromGrid(pRoom, &fg.grid, 0, 0, 0);
 
     const pTileGrid: [*c]s.D2DrlgTileGridStrc = @ptrCast(room.pRoomTiles);
@@ -1398,10 +1597,10 @@ fn checkWildernessLevel(a: std.mem.Allocator, ctx: *lib.Ctx, idx: *const dt1blob
             preset_rooms += 1;
         } else if (p.eRoomExFlags.noLos) {
             // FLOOR cell — the M2b path. Baseline (no overlay) + overlay pass.
-            var rb = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, null) catch continue;
+            var rb = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, null, -1, 0, 0) catch continue;
             defer rb.deinit(a);
             blitInto(&level_base, &rb.coll, ox, oy);
-            var rc = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, outdoorOverlayFor(pLevel, p)) catch continue;
+            var rc = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, outdoorOverlayFor(pLevel, p), -1, 0, 0) catch continue;
             defer rc.deinit(a);
             floor_tiles += @intCast(rc.n_floors);
             blitInto(&level_over, &rc.coll, ox, oy);
