@@ -75,6 +75,18 @@ fn filterToLevels(gpa: std.mem.Allocator, golden: []const u8, min: i64, max: i64
     return out.toOwnedSlice(gpa);
 }
 
+test "coll: DUMP ours rooms for diff viz" {
+    if (true) return; // opt-in debug dump: flip to `if (false)` to emit OURSROOM lines
+    const gpa = std.testing.allocator;
+    const golden = decompressGolden(gpa) catch return;
+    defer gpa.free(golden);
+    var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+    lib.dump_ours_rooms = true;
+    _ = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
+    lib.dump_ours_rooms = false;
+}
+
 test "coll: Act-1 from all-acts golden (seed 1, per-cell floor)" {
     const gpa = std.testing.allocator;
     const golden = decompressGolden(gpa) catch return;
