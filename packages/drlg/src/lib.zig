@@ -3026,63 +3026,10 @@ test "lib: object population vs town golden (seed 305419896, act 1 L1)" {
     try std.testing.expect(matched_cx >= 12);
 }
 
-test "lib: collision vs real-engine golden (seed 72, act 5)" {
-    // Regression guard: byte-compare our materialized collision against the
-    // captured 1.14d CollMap golden. Skips cleanly if the data tables (assets/)
-    // aren't present — same pattern as the Ctx round-trip test below.
-    const golden_bytes = @embedFile("golden/coll_seed72_act5.jsonl");
-    // Ctx uses page_allocator: the DT1 blob is decompressed+indexed into a
-    // process-global cache (dt1Index) that is intentionally never freed, so a
-    // leak-checking allocator would false-positive on it. The verify scratch
-    // below still uses testing.allocator, so real leaks in the compare path trip.
-    var ctx = Ctx.init(std.heap.page_allocator) catch return;
-    defer ctx.deinit();
-
-    const r = try verifyActCollision(std.testing.allocator, &ctx, golden_bytes, .normal, true);
-
-    try std.testing.expectEqual(@as(u32, 72), r.seed);
-    // Room/dim structure is deterministic (byte-exact generation gate). Per-room
-    // DS1 windowing (each RoomEx materializes its own WorldSize*5 window of the
-    // shared level DS1, matching the engine's per-room CollMap) makes every room
-    // dimension-match the golden.
-    try std.testing.expectEqual(@as(u32, 277), r.matched_rooms);
-    try std.testing.expectEqual(@as(u32, 0), r.dim_mismatch);
-    // Every golden room is matched by one of ours (levelId + world-subtile origin).
-    try std.testing.expectEqual(@as(u32, 0), r.golden_only);
-    try std.testing.expect(r.total_cells >= 400000);
-    // We reproduce STATIC TERRAIN (the low 0x1F COLBITs). The golden also carries
-    // static door/object bits (0x400 COLBIT_OBJECT / 0x800 COLBIT_DOOR) which are
-    // out of scope, so compare on the masked-0x1F basis, not exact u16.
-    // Floor now ~96% after promoting no-floor void to the engine's solid-rock (0x05)
-    // encoding; the residual is the PRESET 0x10 bit. Don't regress below ~95%.
-    try std.testing.expect(r.masked_ok >= 415000);
-}
-
-test "lib: collision vs d2probe engine golden (seed 1, Act 1 — maze/outdoor/preset)" {
-    // Comprehensive cross-room-type collision check against a fresh d2probe capture of
-    // the runtime CollMap (pure DT1 terrain — dumped before monster spawn adds unit
-    // footprints). Reports the current masked-0x1F fidelity across every Act-1 level;
-    // report-only (the residual is the CollMap fidelity campaign, task #32). Skips if the
-    // data tables aren't present.
-    const golden_bytes = @embedFile("golden/coll_seed1_act1.jsonl");
-    var ctx = Ctx.init(std.heap.page_allocator) catch return;
-    defer ctx.deinit();
-
-    const r = try verifyActCollision(std.testing.allocator, &ctx, golden_bytes, .nightmare, false);
-    try std.testing.expectEqual(@as(u32, 1), r.seed);
-    const pct: u64 = if (r.total_cells > 0) @as(u64, r.masked_ok) * 100 / r.total_cells else 0;
-    std.debug.print(
-        "\n[coll-verify seed 1 Act1] rooms matched={d} dim_mismatch={d} golden_only={d} | cells={d} masked-0x1F ok={d} ({d}%)\n",
-        .{ r.matched_rooms, r.dim_mismatch, r.golden_only, r.total_cells, r.masked_ok, pct },
-    );
-    try std.testing.expect(r.matched_rooms > 0);
-    // Lock the masked-0x1F terrain fidelity. Golden captured at Nightmare; maze levels
-    // (Crypt/Mausoleum/TowerCellar) now match exactly. Residual: the 3 always-appended
-    // global DT1s (Blank/InvisWal/Warp.dt1) aren't in the baked dt1_blob, so main=30 uses a
-    // synthetic solid stand-in and some outdoor 0x10 tiles stay unresolved. Raise this floor
-    // as that closes; never regress.
-    try std.testing.expect(r.masked_ok >= 2_189_500);
-}
+// The per-act seed-1 Act-1 and seed-72 Act-5 collision goldens were replaced by a single
+// compressed all-acts capture (golden/coll_seed1_all.jsonl.gz, Act I–V at seed 1) — see
+// coll_allacts_verify.zig, which verifies every act and keeps the precise Act-1 per-cell
+// floor by filtering that golden. Uncompressed per-act goldens removed (63x smaller gz).
 
 test "lib: Ctx round-trips + API type-checks" {
     // Compile-check the generation entrypoints (runtime generation is covered by
