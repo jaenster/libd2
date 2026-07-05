@@ -47,8 +47,8 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     try std.testing.expect(r.matched_rooms > 0);
     // Lock overall all-acts fidelity; raise as acts close. Never regress.
     // Per-act masked-0x1F: Act1 ~99.1%, Act2 ~99.7% (Arcane Sanctuary void-fill fixed),
-    // Act3 ~99.1%, Act4 ~99.9%, Act5 ~98.8%. Overall 99.1%.
-    try std.testing.expect(r.masked_ok >= 10_985_000);
+    // Act3 ~99.1%, Act4 ~99.9%, Act5 ~98.8%. Overall 99.15% (outdoor shuffle off-by-one fixed).
+    try std.testing.expect(r.masked_ok >= 10_993_000);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
