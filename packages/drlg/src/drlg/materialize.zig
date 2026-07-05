@@ -383,12 +383,33 @@ fn buildGridWindow(a: std.mem.Allocator, cells: []i32, full_w: usize, off_x: i32
     };
 }
 
+/// One placed tile in room-local TILE coords, carrying its resolved DT1 art and the
+/// draw nFlags — the exact inputs the engine's per-room CollMap builder consumes
+/// (AllocRoomCollisionGrid 0x64c900 → TileLibrary_SetupCollision 0x64c790). The
+/// tile pointer is borrowed (into the level DT1 set or the static fill tiles); it is
+/// valid for the lifetime of the DT1 set that produced it.
+pub const CollTile = struct {
+    nPosX: i32,
+    nPosY: i32,
+    nFlags: i32,
+    tile: *const dt1.Tile,
+    /// True for FLOOR-layer tiles. A room tile-cell with no floor tile is engine "void":
+    /// the runtime CollMap has the Act1\Outdoors\Blank.dt1 fill (solid rock) stamped there
+    /// (that DT1 is absent from our blob, so the caller uses the solid_fill stand-in).
+    is_floor: bool,
+};
+
 pub const MaterializeResult = struct {
     /// Subtile collision grid rasterized from the materialized FLOOR + WALL tiles
     /// (roof/shadow array and type-3 companions excluded, matching collision.zig).
     coll: collision.CollisionGrid,
     /// tile positions (y*w+x) diverted to the artifact-blocked warp/preset path.
     special: []bool,
+    /// The room's placed FLOOR + WALL + ROOF tiles in room-local tile coords, for the
+    /// faithful per-room CollMap build (AllocRoomCollisionGrid). Includes the +1
+    /// kill-edge tiles (their world origin lands in the adjacent room, so a neighbour
+    /// picks them up — that is the engine's inter-room border blend).
+    tiles: []CollTile,
     n_floors: i32,
     n_walls: i32,
     n_shadows: i32,
@@ -400,8 +421,60 @@ pub const MaterializeResult = struct {
     pub fn deinit(self: *MaterializeResult, a: std.mem.Allocator) void {
         self.coll.deinit();
         a.free(self.special);
+        a.free(self.tiles);
     }
 };
+
+/// Collect a room's FLOOR + WALL + ROOF tile-data (post-InitRoomTiles) into a flat
+/// `CollTile` list — the input to the faithful per-room CollMap stamp. Mirrors the
+/// layer order AllocRoomCollisionGrid stamps (floor, wall, roof); OR is order-free so
+/// order is cosmetic. Wall companions (type-3 second-half tiles) are skipped exactly
+/// as the rasterizer does. Tiles whose art did not resolve are dropped.
+fn collectCollTiles(a: std.mem.Allocator, pTileGrid: [*c]s.D2DrlgTileGridStrc, companion: []const bool, max_tx: i32, max_ty: i32) ![]CollTile {
+    var list: std.ArrayListUnmanaged(CollTile) = .empty;
+    errdefer list.deinit(a);
+    const pushArr = struct {
+        fn go(l: *std.ArrayListUnmanaged(CollTile), alloc: std.mem.Allocator, base: ?*anyopaque, n: i32, comp: ?[]const bool, is_floor: bool, mtx: i32, mty: i32) !void {
+            const p: [*]s.D2DrlgTileDataStrc = @ptrCast(@alignCast(base orelse return));
+            var i: usize = 0;
+            while (i < @as(usize, @intCast(n))) : (i += 1) {
+                if (comp) |c| if (i < c.len and c[i]) continue;
+                const td = &p[i];
+                // Drop tiles outside the room's own [0,size) tile rect: those are the
+                // materialize window's +1 kill-edge blend cells, not real engine room tiles.
+                if (td.nPosX < 0 or td.nPosY < 0 or td.nPosX >= mtx or td.nPosY >= mty) continue;
+                const t = tilegen.tileFromEntry(td.pTileLibraryEntry) orelse continue;
+                try l.append(alloc, .{ .nPosX = td.nPosX, .nPosY = td.nPosY, .nFlags = td.nFlags, .tile = t, .is_floor = is_floor });
+            }
+        }
+    }.go;
+    try pushArr(&list, a, pTileGrid.*.pFloorTiles, pTileGrid.*.nFloors, null, true, max_tx, max_ty);
+    try pushArr(&list, a, pTileGrid.*.pWallTiles, pTileGrid.*.nWalls, companion, false, max_tx, max_ty);
+    try pushArr(&list, a, pTileGrid.*.pRoofTiles, pTileGrid.*.nShadows, null, false, max_tx, max_ty);
+    return list.toOwnedSlice(a);
+}
+
+/// Faithful port of TileLibrary_AddCollision (0x64c4c0) + AddCollisionFlagToCoords
+/// (0x64c700): stamp one tile into a room CollMap `grid` (row-major, `grid_w` subtiles
+/// wide, `grid_h` tall) at room-relative subtile base (relX, relY). The DT1 25-byte
+/// subtile block is OR'd with the Y (row) axis flipped — grid subtile (dc, dr) reads
+/// block byte (4-dr)*5+dc — and the tile's derived collision flags (drawExtraColl) are
+/// OR'd flat across the whole 5x5 footprint. relX/relY are tile-aligned so the 5x5 fits;
+/// the bounds guards mirror the engine's low-clamp / high-overspill-into-padding.
+pub fn stampCollTile(grid: []u8, grid_w: usize, grid_h: usize, relX: usize, relY: usize, ct: CollTile) void {
+    const extra = drawExtraColl(ct.nFlags);
+    var dr: usize = 0;
+    while (dr < SUBTILES) : (dr += 1) {
+        const gy = relY + dr;
+        if (gy >= grid_h) break;
+        var dc: usize = 0;
+        while (dc < SUBTILES) : (dc += 1) {
+            const gx = relX + dc;
+            if (gx >= grid_w) continue;
+            grid[gy * grid_w + gx] |= ct.tile.subtile(dc, SUBTILES - 1 - dr) | extra;
+        }
+    }
+}
 
 /// Materialize one DS1 (a room's DrlgMap) via the full InitRoomTiles orchestration
 /// and rasterize its floor+wall subtile collision. `dts` is the level's DT1 set
@@ -587,6 +660,7 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     return .{
         .coll = coll,
         .special = ctx.special,
+        .tiles = try collectCollTiles(a, pTileGrid, ctx.companion, win.size_x, win.size_y),
         .n_floors = pTileGrid.*.nFloors,
         .n_walls = pTileGrid.*.nWalls,
         .n_shadows = pTileGrid.*.nShadows,
@@ -1017,6 +1091,8 @@ pub fn materializeOutdoorFloorRoom(
     nSubType: i32,
     nSubTheme: i32,
     nSubThemePicked: i32,
+    nWaypointCount: i32,
+    nShrineCount: i32,
 ) !MaterializeResult {
     var arena_impl = std.heap.ArenaAllocator.init(a);
     defer arena_impl.deinit();
@@ -1065,10 +1141,17 @@ pub fn materializeOutdoorFloorRoom(
     // `(cell & 0x3f0ff80)==0` guard then skips them.
     if (overlay) |ov| try applyAct1WallOverlay(ar, &fg, ov, ws_x, ws_y);
 
-    // Sub-theme terrain (SubTypeWpShrine, 3rd call in InitGridCells): place LvlSub
-    // DS1 floor cells (bit 28 = alternate → 0x10 COLBIT_PRESET via createFloorTileData).
-    // Engine order: AllocRoomTileGrid → SubTypeWpShrine → OR-fill.
+    // Sub-theme passes (SubTypeWpShrine, 3 calls in InitGridCells) run after
+    // AllocRoomTileGrid, in this exact order: waypoint, shrine, terrain. The waypoint
+    // and shrine calls place their own LvlSub DS1s AND consume the room seed via
+    // DoNotCheckAll; skipping them drifts the room seed so the terrain pass then picks
+    // different substitution groups/positions (the dominant outdoor 0x10 error). The
+    // waypoint/shrine sub-type ids come from the level's LvlDefs line; counts from the
+    // room's eRoomExFlags (>>0x10&3 waypoint, >>0xc&0xf shrine).
     try allocRoomTileGrid(pRoom, ar);
+    const pDef = dtables.levelDefsGetLine(@enumFromInt(level_id));
+    if (nWaypointCount != 0) applySubThemeTerrain(&room, &fg.grid, pDef.*.SubWaypoint, 0, nWaypointCount);
+    if (nShrineCount != 0) applySubThemeTerrain(&room, &fg.grid, pDef.*.SubShrine, 0, nShrineCount);
     applySubThemeTerrain(&room, &fg.grid, nSubType, nSubTheme, nSubThemePicked);
 
     // OR the level-type fill flag into cells with no terrain bits (OrFlag / op 0).
@@ -1134,6 +1217,7 @@ pub fn materializeOutdoorFloorRoom(
     return .{
         .coll = coll,
         .special = ctx.special,
+        .tiles = try collectCollTiles(a, pTileGrid, ctx.companion, ws_x, ws_y),
         .n_floors = pTileGrid.*.nFloors,
         .n_walls = pTileGrid.*.nWalls,
         .n_shadows = pTileGrid.*.nShadows,
@@ -1597,10 +1681,10 @@ fn checkWildernessLevel(a: std.mem.Allocator, ctx: *lib.Ctx, idx: *const dt1blob
             preset_rooms += 1;
         } else if (p.eRoomExFlags.noLos) {
             // FLOOR cell — the M2b path. Baseline (no overlay) + overlay pass.
-            var rb = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, null, -1, 0, 0) catch continue;
+            var rb = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, null, -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
             defer rb.deinit(a);
             blitInto(&level_base, &rb.coll, ox, oy);
-            var rc = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, outdoorOverlayFor(pLevel, p), -1, 0, 0) catch continue;
+            var rc = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, outdoorOverlayFor(pLevel, p), -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
             defer rc.deinit(a);
             floor_tiles += @intCast(rc.n_floors);
             blitInto(&level_over, &rc.coll, ox, oy);
