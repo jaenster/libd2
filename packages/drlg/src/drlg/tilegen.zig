@@ -48,6 +48,12 @@ pub var g_lookup_null: usize = 0;
 const solid_fill_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 0, .rarity = 1, .flags = [_]u8{0x05} ** 25 };
 const blank_fill_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 1, .rarity = 1, .flags = [_]u8{0x01} ** 25 };
 
+/// The solid-rock Blank.dt1 stand-in (0x05 across its 5x5), for stamping engine "void"
+/// (room cells with no floor tile) into a CollMap the way the runtime does.
+pub fn solidFillTile() *const dt1.Tile {
+    return &solid_fill_tile;
+}
+
 /// The room's loaded tile library: the engine's `apTiles[32]` array of tile
 /// projects, modelled here as the set of parsed DT1 files (in load order). A
 /// `*const TileLib` is stashed in `pRoomEx.apTiles[0]`.

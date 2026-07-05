@@ -58,7 +58,9 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the DRLG tool");
     run_step.dependOn(&run_cmd.step);
 
+    const test_filter = b.option([]const u8, "test-filter", "Only run tests whose name contains this substring");
     const tests = b.addTest(.{
+        .filters = if (test_filter) |f| &.{f} else &.{},
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tests.zig"),
             .target = target,
