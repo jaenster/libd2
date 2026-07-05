@@ -2036,6 +2036,37 @@ pub fn verifyActCollision(
                     std.debug.print("{s}\n", .{line[0..@intCast(@min(gw, 128))]});
                 }
 
+                // Tile-resolution 0x10 footprint (each tile = 5x5 subtiles; a tile is "set"
+                // if any of its subtiles carry 0x10). B=both, G=golden-only, O=ours-only.
+                // Reveals per-group tile placement: same size+wrong tile => seed/count bug.
+                const tw: i32 = @divTrunc(gw + 4, 5);
+                const th: i32 = @divTrunc(gh + 4, 5);
+                std.debug.print("--- 0x10 TILE FOOTPRINT (B=both G=golden-only O=ours-only) {d}x{d} tiles ---\n", .{ tw, th });
+                var ty: i32 = 0;
+                while (ty < th) : (ty += 1) {
+                    var tline: [64]u8 = undefined;
+                    var tx: i32 = 0;
+                    while (tx < tw and tx < 64) : (tx += 1) {
+                        var gset = false;
+                        var oset = false;
+                        var sy: i32 = 0;
+                        while (sy < 5) : (sy += 1) {
+                            const yy2 = ty * 5 + sy;
+                            if (yy2 >= gh) break;
+                            var sx: i32 = 0;
+                            while (sx < 5) : (sx += 1) {
+                                const xx2 = tx * 5 + sx;
+                                if (xx2 >= gw) break;
+                                const ci: usize = @intCast(yy2 * gw + xx2);
+                                if (gc[ci] & 0x10 != 0) gset = true;
+                                if (orm.cells[ci] & 0x10 != 0) oset = true;
+                            }
+                        }
+                        tline[@intCast(tx)] = if (gset and oset) 'B' else if (gset) @as(u8, 'G') else if (oset) 'O' else '.';
+                    }
+                    std.debug.print("{s}\n", .{tline[0..@intCast(@min(tw, 64))]});
+                }
+
                 // Is the 0x10 layer a UNIFORM SHIFT (coordinate/origin bug) or SCATTERED
                 // (RNG placement drift)? Slide ours over golden and find the (dx,dy) that
                 // maximizes 0x10-bit agreement over the overlap. A big jump at one offset =>
