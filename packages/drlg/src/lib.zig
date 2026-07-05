@@ -1663,9 +1663,13 @@ pub fn generateActRoomCollision(
             }
         }
 
-        // Void-fill: any subtile still 0 whose tile-cell got no floor tile is engine void
-        // (Blank.dt1 solid rock). Stamp the solid_fill stand-in (0x05) there — matches the
-        // runtime CollMap, which never leaves an uncovered interior cell walkable.
+        // Void-fill: any subtile still 0 whose tile-cell got no floor tile is engine void —
+        // the always-appended Blank.dt1 (main=30) stamped into uncovered cells. Its sub-index
+        // (hence flags) is tileset-dependent: Arcane Sanctuary (lvl_type 19) is the floating-
+        // platform level whose off-platform gaps use Blank sub=1 = 0x01 (BLOCK_WALK, but
+        // MISSILES PASS across the gaps); every other tileset uses sub=0 = 0x05 (solid rock:
+        // blocks walk AND missiles). Verified byte-exact vs the engine golden (L74 21.5%->100%).
+        const void_flag: u8 = if (tlv.lvl_type == 19) 0x01 else 0x05;
         for (rbs.items, 0..) |rb, i| {
             const gw: usize = @intCast(rb.wtx * SUB);
             const wtxu: usize = @intCast(rb.wtx);
@@ -1673,7 +1677,7 @@ pub fn generateActRoomCollision(
                 if (cell.* != 0) continue;
                 const sx = ci % gw;
                 const sy = ci / gw;
-                if (!floors[i][(sy / SUB) * wtxu + (sx / SUB)]) cell.* = 0x05;
+                if (!floors[i][(sy / SUB) * wtxu + (sx / SUB)]) cell.* = void_flag;
             }
         }
 
