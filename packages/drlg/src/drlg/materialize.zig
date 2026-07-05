@@ -914,19 +914,27 @@ fn checkSubTileOverlap(
 ) bool {
     const pw = pSubstGroup.tBox.nWidth;
     const ph = pSubstGroup.tBox.nHeight;
-    if (ph <= 0) return true;
     const srcX = pSubstGroup.tBox.nPosX;
     const srcY = pSubstGroup.tBox.nPosY;
     var dy: i32 = 0;
     while (dy < ph) : (dy += 1) {
-        if (pw <= 0) { dy += 1; continue; }
         var dx: i32 = 0;
         while (dx < pw) : (dx += 1) {
-            const sub_flags: u32 = @bitCast(DrlgGrid.GetGridFlags(&pSubTxt.pFloorGrid, srcX + dx, srcY + dy));
-            if (sub_flags & 2 == 0) continue;
+            // Trigger: the sub DS1 cell carries floor terrain (floor bit 2) OR — when the
+            // sub has a wall grid — a wall (wall bit 1). The engine gates the room-overlap
+            // check on BOTH; a floor-only check accepts placements the engine rejects when
+            // a sub carries wall cells (e.g. Object.ds1), drifting seed + position.
+            const sub_floor: u32 = @bitCast(DrlgGrid.GetGridFlags(&pSubTxt.pFloorGrid, srcX + dx, srcY + dy));
+            const triggered = (sub_floor & 2) != 0 or
+                (pSubTxt.pWallGrid[0].nWidth != 0 and
+                    (@as(u32, @bitCast(DrlgGrid.GetGridFlags(&pSubTxt.pWallGrid[0], srcX + dx, srcY + dy))) & 1) != 0);
+            if (!triggered) continue;
             // Room cell must have plain floor (bit 1 set) and no terrain bits already stamped.
             const room_flags: u32 = @bitCast(DrlgGrid.GetGridFlags(fg, baseX + dx, baseY + dy));
             if (room_flags & 0x3f0ff00 != 0 or room_flags & 2 == 0) return false;
+            // Room wall-layer check (apWallGrids[*]) omitted: an outdoor floor room has no
+            // populated wall grid at sub-theme time — base-fill + overlay + sub-theme all
+            // write only the floor grid — so those layers are empty and never reject.
         }
     }
     return true;
