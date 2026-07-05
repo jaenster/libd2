@@ -2035,6 +2035,51 @@ pub fn verifyActCollision(
                     }
                     std.debug.print("{s}\n", .{line[0..@intCast(@min(gw, 128))]});
                 }
+
+                // Is the 0x10 layer a UNIFORM SHIFT (coordinate/origin bug) or SCATTERED
+                // (RNG placement drift)? Slide ours over golden and find the (dx,dy) that
+                // maximizes 0x10-bit agreement over the overlap. A big jump at one offset =>
+                // origin bug; flat => independent per-group RNG drift.
+                var base_match: u64 = 0;
+                for (gc, 0..) |cv, i| if ((cv & 0x10) == (orm.cells[i] & 0x10)) {
+                    base_match += 1;
+                };
+                var best_match: u64 = 0;
+                var best_dx: i32 = 0;
+                var best_dy: i32 = 0;
+                var best_ov: u64 = 1;
+                var dy: i32 = -10;
+                while (dy <= 10) : (dy += 1) {
+                    var dx: i32 = -10;
+                    while (dx <= 10) : (dx += 1) {
+                        var m: u64 = 0;
+                        var ov: u64 = 0;
+                        var y2: i32 = 0;
+                        while (y2 < gh) : (y2 += 1) {
+                            var x2: i32 = 0;
+                            while (x2 < gw) : (x2 += 1) {
+                                const sx = x2 - dx;
+                                const sy = y2 - dy;
+                                if (sx < 0 or sx >= gw or sy < 0 or sy >= gh) continue;
+                                ov += 1;
+                                const gv = gc[@intCast(y2 * gw + x2)] & 0x10;
+                                const ovv = orm.cells[@intCast(sy * gw + sx)] & 0x10;
+                                if (gv == ovv) m += 1;
+                            }
+                        }
+                        // Compare match RATE over the overlap so edge shifts aren't penalized.
+                        if (ov != 0 and m * best_ov > best_match * ov) {
+                            best_match = m;
+                            best_ov = ov;
+                            best_dx = dx;
+                            best_dy = dy;
+                        }
+                    }
+                }
+                const cells_n: u64 = gc.len;
+                const brate = if (best_ov == 0) 0.0 else @as(f64, @floatFromInt(best_match)) / @as(f64, @floatFromInt(best_ov)) * 100.0;
+                const zrate = if (cells_n == 0) 0.0 else @as(f64, @floatFromInt(base_match)) / @as(f64, @floatFromInt(cells_n)) * 100.0;
+                std.debug.print("  0x10-shift: no-shift {d:.1}%  best (dx={d},dy={d}) {d:.1}%  (+{d:.1}pp) — big gain => origin bug, flat => RNG drift\n", .{ zrate, best_dx, best_dy, brate, brate - zrate });
             };
         }
     }

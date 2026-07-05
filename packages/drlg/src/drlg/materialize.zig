@@ -1007,9 +1007,12 @@ fn doNotCheckAll(
                         coordBuf[nPosX * 2] = @intCast(nPosX % nMaxX);     // x
                         coordBuf[nPosX * 2 + 1] = @intCast(nPosX / nMaxX); // y
                     }
-                    // Shuffle: nTotalPositions-1 random swaps (each uses two randomNumberSelector calls).
+                    // Shuffle: nTotalPositions random swaps (each uses two randomNumberSelector
+                    // calls). The engine's `do { ... } while (nShuffleRem != 0)` runs exactly
+                    // nTotalPositions iterations (nMaxY starts at nTotalPositions), so `nRem > 0`
+                    // not `> 1` — the final swap consumes seed and matters downstream.
                     var nRem: u32 = nTotalPositions;
-                    while (nRem > 1) : (nRem -= 1) {
+                    while (nRem > 0) : (nRem -= 1) {
                         const a_idx = drlg_rng.randomNumberSelector(&pRoom.sSeed, nTotalPositions);
                         const b_idx = drlg_rng.randomNumberSelector(&pRoom.sSeed, nTotalPositions);
                         const tx = coordBuf[a_idx * 2];
