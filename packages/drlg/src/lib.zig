@@ -1745,6 +1745,10 @@ pub const CollVerifyResult = struct {
 /// Parse a real-engine collision golden (JSONL), regenerate the same acts at the
 /// golden's seed, and byte-compare every room by absolute world subtile origin.
 /// Reports two match rates (exact u16, and masked to static-terrain 0x1F) plus a
+/// Debug: when set, verifyActCollision dumps each of OUR rooms (masked-0x1F cells)
+/// as `OURSROOM level px py w h c,c,...` for offline diff visualization vs the golden.
+pub var dump_ours_rooms: bool = false;
+
 /// per-bit mismatch histogram. `verbose` prints a per-level table + worst rooms.
 /// GATE-SAFE: pure post-generation consumer.
 pub fn verifyActCollision(
@@ -1871,6 +1875,15 @@ pub fn verifyActCollision(
                 if (gop.found_existing) alloc.free(gop.value_ptr.cells);
                 gop.value_ptr.* = .{ .w = r.w, .h = r.h, .cells = cp };
             }
+        }
+    }
+
+    if (dump_ours_rooms) {
+        var it = ours.iterator();
+        while (it.next()) |e| {
+            std.debug.print("OURSROOM {d} {d} {d} {d} {d} ", .{ e.key_ptr.level, e.key_ptr.px, e.key_ptr.py, e.value_ptr.w, e.value_ptr.h });
+            for (e.value_ptr.cells) |c| std.debug.print("{d},", .{c & 0x1F});
+            std.debug.print("\n", .{});
         }
     }
 
