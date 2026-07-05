@@ -146,22 +146,37 @@ const Reader = struct {
         return @bitCast(try self.readU32());
     }
 
+    // The engine loads a DS1 into a zero-padded MPQ buffer (D2FILE_AllocAndLoadD2File)
+    // and reads from it without bounds checks, so any read past the file's true end
+    // yields 0. Some shipped DS1s rely on this: Act1\Outdoors\Trees.ds1 (version 12)
+    // declares 14 substitution groups but its last group's y/w/h fall in the padding —
+    // a strict parser errors on EOF and drops ALL its groups. Mirror the padded buffer:
+    // over-reads return 0 rather than failing.
     fn readU32(self: *Reader) !u32 {
-        if (self.pos + 4 > self.bytes.len) return error.UnexpectedEof;
+        if (self.pos + 4 > self.bytes.len) {
+            var buf = [4]u8{ 0, 0, 0, 0 };
+            const avail = if (self.pos < self.bytes.len) self.bytes.len - self.pos else 0;
+            @memcpy(buf[0..avail], self.bytes[@min(self.pos, self.bytes.len)..][0..avail]);
+            self.pos += 4;
+            return std.mem.readInt(u32, &buf, .little);
+        }
         const v = std.mem.readInt(u32, self.bytes[self.pos..][0..4], .little);
         self.pos += 4;
         return v;
     }
 
     fn skip(self: *Reader, n: usize) !void {
-        if (self.pos + n > self.bytes.len) return error.UnexpectedEof;
-        self.pos += n;
+        self.pos += n; // padded-buffer semantics: advancing past the end is fine (reads zero)
     }
 
-    /// Skip one NUL-terminated string (path entry).
+    /// Skip one NUL-terminated string (path entry). Past the true end, the padded
+    /// buffer is all zeros — i.e. an immediate terminator.
     fn skipCStr(self: *Reader) !void {
         while (true) {
-            if (self.pos >= self.bytes.len) return error.UnexpectedEof;
+            if (self.pos >= self.bytes.len) {
+                self.pos += 1;
+                return;
+            }
             const c = self.bytes[self.pos];
             self.pos += 1;
             if (c == 0) return;
