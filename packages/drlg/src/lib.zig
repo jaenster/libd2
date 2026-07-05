@@ -3081,7 +3081,7 @@ test "lib: collision vs d2probe engine golden (seed 1, Act 1 — maze/outdoor/pr
     // global DT1s (Blank/InvisWal/Warp.dt1) aren't in the baked dt1_blob, so main=30 uses a
     // synthetic solid stand-in and some outdoor 0x10 tiles stay unresolved. Raise this floor
     // as that closes; never regress.
-    try std.testing.expect(r.masked_ok >= 2_186_500);
+    try std.testing.expect(r.masked_ok >= 2_189_500);
 }
 
 test "lib: Ctx round-trips + API type-checks" {
