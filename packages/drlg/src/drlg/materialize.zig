@@ -901,14 +901,17 @@ fn applyAct1WallOverlay(ar: std.mem.Allocator, fg: *OwnedGrid, ov: OutdoorOverla
 //   DRLGOUTDOOR_CheckSubTileOverlap (0x66fcf0), DRLGOUTDOOR_ApplyLvlSubTileData (floor
 //   grid path only) (0x66fad0).
 
-// DRLGOUTDOOR_CheckSubTileOverlap (0x66fcf0): returns true if the sub-tile DS1 group
-// can be placed at (baseX, baseY) without overlapping existing terrain in the room floor
-// grid. Simplified: only floor check (no wall-layer check; sub-theme LvlSub DS1s have
-// no wall layers, so wall grid is always clear).
+// DRLGOUTDOOR_CheckSubTileOverlap (0x66fcf0): returns true if the sub-tile DS1 group can be
+// placed at (baseX, baseY) without overlapping existing terrain. Checks the room FLOOR grid
+// (fg) for stamped floor terrain AND the room WALL grid (wg = apWallGrids[0]) for a prior
+// wall-bearing sub-theme placement. A sub group whose DS1 carries wall layers (empty floor)
+// stamps only wg; a floor-only overlap check would wrongly accept a later overlap and drift
+// the seed + every subsequent placement in the room.
 fn checkSubTileOverlap(
     baseX: i32,
     baseY: i32,
     fg: *s.D2DrlgGridStrc,
+    wg: *s.D2DrlgGridStrc,
     pSubstGroup: *const s.D2DrlgSubstGroupStrc,
     pSubTxt: *dtables.D2LvlSubTxt,
 ) bool {
@@ -916,6 +919,7 @@ fn checkSubTileOverlap(
     const ph = pSubstGroup.tBox.nHeight;
     const srcX = pSubstGroup.tBox.nPosX;
     const srcY = pSubstGroup.tBox.nPosY;
+    const has_wall = pSubTxt.pWallGrid[0].nWidth != 0;
     var dy: i32 = 0;
     while (dy < ph) : (dy += 1) {
         var dx: i32 = 0;
@@ -926,24 +930,31 @@ fn checkSubTileOverlap(
             // a sub carries wall cells (e.g. Object.ds1), drifting seed + position.
             const sub_floor: u32 = @bitCast(DrlgGrid.GetGridFlags(&pSubTxt.pFloorGrid, srcX + dx, srcY + dy));
             const triggered = (sub_floor & 2) != 0 or
-                (pSubTxt.pWallGrid[0].nWidth != 0 and
+                (has_wall and
                     (@as(u32, @bitCast(DrlgGrid.GetGridFlags(&pSubTxt.pWallGrid[0], srcX + dx, srcY + dy))) & 1) != 0);
             if (!triggered) continue;
             // Room cell must have plain floor (bit 1 set) and no terrain bits already stamped.
             const room_flags: u32 = @bitCast(DrlgGrid.GetGridFlags(fg, baseX + dx, baseY + dy));
             if (room_flags & 0x3f0ff00 != 0 or room_flags & 2 == 0) return false;
-            // Room wall-layer check (apWallGrids[*]) omitted: an outdoor floor room has no
-            // populated wall grid at sub-theme time — base-fill + overlay + sub-theme all
-            // write only the floor grid — so those layers are empty and never reject.
+            // Room wall-layer check (apWallGrids[0]): reject if a PRIOR wall-bearing sub-theme
+            // group already occupies this cell. ApplyLvlSubTileData (0x66fad0) stamps a sub's
+            // wall cells (bit 1) into apWallGrids[0]; CheckSubTileOverlap loops apWallGrids
+            // testing (flags & 1). Without this a new group overlapping a prior wall placement
+            // is wrongly accepted, drifting the seed + every later placement.
+            if (@as(u32, @bitCast(DrlgGrid.GetGridFlags(wg, baseX + dx, baseY + dy))) & 1 != 0) return false;
         }
     }
     return true;
 }
 
-// DRLGOUTDOOR_ApplyLvlSubTileData (0x66fad0) — floor grid write only (we skip wall layers
-// and shadow tiles; sub-theme terrain DS1s only carry floor data that affects collision).
+// DRLGOUTDOOR_ApplyLvlSubTileData (0x66fad0) — writes the sub group's floor cells (bit 2) into
+// the room floor grid (fg), and its wall cells (bit 1) into the room wall grid (wg =
+// apWallGrids[0]). The wall stamp is what lets a later group's checkSubTileOverlap reject an
+// overlap with a wall-bearing sub placement (shadow/other DS1 layers are skipped — collision-
+// irrelevant).
 fn applySubTileFloor(
     fg: *s.D2DrlgGridStrc,
+    wg: *s.D2DrlgGridStrc,
     baseX: i32,
     baseY: i32,
     pSubstGroup: *const s.D2DrlgSubstGroupStrc,
@@ -953,6 +964,7 @@ fn applySubTileFloor(
     const ph = pSubstGroup.tBox.nHeight;
     const srcX = pSubstGroup.tBox.nPosX;
     const srcY = pSubstGroup.tBox.nPosY;
+    const has_wall = pSubTxt.pWallGrid[0].nWidth != 0;
     var dy: i32 = 0;
     while (dy < ph) : (dy += 1) {
         var dx: i32 = 0;
@@ -960,6 +972,12 @@ fn applySubTileFloor(
             const flags = DrlgGrid.GetGridFlags(&pSubTxt.pFloorGrid, srcX + dx, srcY + dy);
             if (flags & 2 != 0) {
                 DrlgGrid.AlterGridFlag(fg, baseX + dx, baseY + dy, flags | 0x80, 3);
+            }
+            if (has_wall) {
+                const wall = DrlgGrid.GetGridFlags(&pSubTxt.pWallGrid[0], srcX + dx, srcY + dy);
+                if (wall & 1 != 0) {
+                    DrlgGrid.AlterGridFlag(wg, baseX + dx, baseY + dy, wall, 3);
+                }
             }
         }
     }
@@ -972,6 +990,7 @@ fn applySubTileFloor(
 fn doNotCheckAll(
     pRoom: *s.D2RoomExStrc,
     fg: *s.D2DrlgGridStrc,
+    wg: *s.D2DrlgGridStrc,
     pSubTxt: *dtables.D2LvlSubTxt,
     nSubTypeIndex: i32,
 ) void {
@@ -1027,8 +1046,8 @@ fn doNotCheckAll(
                     while (i < nTotalPositions) : (i += 1) {
                         const bx: i32 = coordBuf[i * 2] + 1;
                         const by: i32 = coordBuf[i * 2 + 1] + 1;
-                        if (checkSubTileOverlap(bx, by, fg, pSubstGroup, pSubTxt)) {
-                            applySubTileFloor(fg, bx, by, pSubstGroup, pSubTxt);
+                        if (checkSubTileOverlap(bx, by, fg, wg, pSubstGroup, pSubTxt)) {
+                            applySubTileFloor(fg, wg, bx, by, pSubstGroup, pSubTxt);
                             break;
                         }
                     }
@@ -1039,8 +1058,8 @@ fn doNotCheckAll(
                 while (nTrialIter < nTrialCount) : (nTrialIter += 1) {
                     const bx: i32 = @intCast(drlg_rng.randomNumberSelector(&pRoom.sSeed, nMaxX) + 1);
                     const by: i32 = @intCast(drlg_rng.randomNumberSelector(&pRoom.sSeed, nMaxY) + 1);
-                    if (checkSubTileOverlap(bx, by, fg, pSubstGroup, pSubTxt)) {
-                        applySubTileFloor(fg, bx, by, pSubstGroup, pSubTxt);
+                    if (checkSubTileOverlap(bx, by, fg, wg, pSubstGroup, pSubTxt)) {
+                        applySubTileFloor(fg, wg, bx, by, pSubstGroup, pSubTxt);
                         break;
                     }
                 }
@@ -1059,6 +1078,7 @@ fn doNotCheckAll(
 fn applySubThemeTerrain(
     pRoom: *s.D2RoomExStrc,
     fg: *s.D2DrlgGridStrc,
+    wg: *s.D2DrlgGridStrc,
     nSubTypeLookupId: i32,
     nSubTypeIndex: i32,
     nSubTypeCount: i32,
@@ -1077,7 +1097,7 @@ fn applySubThemeTerrain(
         const pFile = pRec.pDrlgFile orelse continue;
         if (pFile.nSubstGroups == 0) continue;
         if (pRec.CheckAll == 0) {
-            doNotCheckAll(pRoom, fg, pRec, nSubTypeIndex);
+            doNotCheckAll(pRoom, fg, wg, pRec, nSubTypeIndex);
         }
         // CheckAll (nAct 1 or 2 path) not needed for outdoor terrain subs (all CheckAll=0).
     }
@@ -1136,6 +1156,13 @@ pub fn materializeOutdoorFloorRoom(
     @memset(floor_cells, 0);
     var fg = try buildGrid(ar, gw, gh, floor_cells);
 
+    // Room wall grid (apWallGrids[0]): sub-theme groups whose DS1 carries wall layers stamp
+    // their wall cells here so a later group's checkSubTileOverlap rejects the overlap (as the
+    // engine does). InitGridCells hardcodes nWallLayerCount=1 and allocates this grid.
+    const wall_cells = try ar.alloc(i32, ncells);
+    @memset(wall_cells, 0);
+    var wg = try buildGrid(ar, gw, gh, wall_cells);
+
     // Base fill: 8x8 floor cells = 0x40002 (OverwriteFlag / op 3).
     {
         var yy: i32 = 0;
@@ -1161,9 +1188,9 @@ pub fn materializeOutdoorFloorRoom(
     // room's eRoomExFlags (>>0x10&3 waypoint, >>0xc&0xf shrine).
     try allocRoomTileGrid(pRoom, ar);
     const pDef = dtables.levelDefsGetLine(@enumFromInt(level_id));
-    if (nWaypointCount != 0) applySubThemeTerrain(&room, &fg.grid, pDef.*.SubWaypoint, 0, nWaypointCount);
-    if (nShrineCount != 0) applySubThemeTerrain(&room, &fg.grid, pDef.*.SubShrine, 0, nShrineCount);
-    applySubThemeTerrain(&room, &fg.grid, nSubType, nSubTheme, nSubThemePicked);
+    if (nWaypointCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, pDef.*.SubWaypoint, 0, nWaypointCount);
+    if (nShrineCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, pDef.*.SubShrine, 0, nShrineCount);
+    applySubThemeTerrain(&room, &fg.grid, &wg.grid, nSubType, nSubTheme, nSubThemePicked);
 
     // OR the level-type fill flag into cells with no terrain bits (OrFlag / op 0).
     const nGridFlag = outdoorFillFlag(nLevelType, level_id);
