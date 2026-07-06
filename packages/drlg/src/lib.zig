@@ -1663,21 +1663,25 @@ pub fn generateActRoomCollision(
             }
         }
 
-        // Void-fill: any subtile still 0 whose tile-cell got no floor tile is engine void —
+        // Void-fill: any subtile whose tile-cell got no floor tile is engine void —
         // the always-appended Blank.dt1 (main=30) stamped into uncovered cells. Its sub-index
         // (hence flags) is tileset-dependent: Arcane Sanctuary (lvl_type 19) is the floating-
         // platform level whose off-platform gaps use Blank sub=1 = 0x01 (BLOCK_WALK, but
         // MISSILES PASS across the gaps); every other tileset uses sub=0 = 0x05 (solid rock:
         // blocks walk AND missiles). Verified byte-exact vs the engine golden (L74 21.5%->100%).
+        // OR (not set-when-0): a no-floor cave/dungeon subtile is solid rock even where a wall
+        // tile partially stamped it — the wall DT1 block sets COLLIDE_BLOCK_PLAYER (0x01) but
+        // leaves COLLIDE_WALL (0x04) clear on its interior subtiles, and the engine covers those
+        // same cells with the solid-rock ceiling/Blank tile, so OR completes the 0x05 that the
+        // partial wall stamp otherwise left as a bare 0x01.
         const void_flag: u8 = if (tlv.lvl_type == 19) 0x01 else 0x05;
         for (rbs.items, 0..) |rb, i| {
             const gw: usize = @intCast(rb.wtx * SUB);
             const wtxu: usize = @intCast(rb.wtx);
             for (grids[i], 0..) |*cell, ci| {
-                if (cell.* != 0) continue;
                 const sx = ci % gw;
                 const sy = ci / gw;
-                if (!floors[i][(sy / SUB) * wtxu + (sx / SUB)]) cell.* = void_flag;
+                if (!floors[i][(sy / SUB) * wtxu + (sx / SUB)]) cell.* |= void_flag;
             }
         }
 
