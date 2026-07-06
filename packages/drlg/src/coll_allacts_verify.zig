@@ -47,10 +47,12 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     try std.testing.expect(r.matched_rooms > 0);
     // Lock overall all-acts fidelity; raise as acts close. Never regress.
     // Per-act masked-0x1F: Act1 ~99.8%, Act2 ~99.7%, Act3 ~99.1%, Act4 ~99.9%, Act5 ~99.7%.
-    // Overall 99.71% (outdoor sub-theme WALL layer now materialized: InitGridCells runs the
-    // shared Count/Alloc/InitRoomTiles over the room wall grid too, so wall-bearing sub groups
-    // stamp COLBIT_WALL/PRESET — previously the wall grid was stamped only for overlap-reject).
-    try std.testing.expect(r.masked_ok >= 11_055_000);
+    // Overall 99.76% (outdoor sub-theme WALL layer materialized + the always-loaded InvisWal
+    // global DT1 now appended to every room's tile library — its orient-{1,2,3,4,7} main=49
+    // invisible-wall tiles resolve Act-3 Kurast preset cells that previously fell back to a
+    // garbage type-10 tile). Remaining residual = the ORIENT-0 main=49 invisible-FLOOR tiles
+    // (missing from our baked InvisWal) + Act-2 tomb/Act-1 cave DT1-completeness holes.
+    try std.testing.expect(r.masked_ok >= 11_060_000);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
@@ -87,6 +89,18 @@ test "coll: DUMP ours rooms for diff viz" {
     lib.dump_ours_rooms = true;
     _ = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
     lib.dump_ours_rooms = false;
+}
+
+test "coll: Kurast focus (L79-83 verbose)" {
+    if (true) return; // opt-in: flip to `if (false)` for Kurast-only confusion + histogram
+    const gpa = std.testing.allocator;
+    const golden = decompressGolden(gpa) catch return;
+    defer gpa.free(golden);
+    const kurast = try filterToLevels(gpa, golden, 79, 83);
+    defer gpa.free(kurast);
+    var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+    _ = try lib.verifyActCollision(gpa, &ctx, kurast, .nightmare, true);
 }
 
 test "coll: Act-1 from all-acts golden (seed 1, per-cell floor)" {
