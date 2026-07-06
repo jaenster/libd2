@@ -73,6 +73,27 @@ pub const Unit = struct {
     pub fn isAlive(self: *const Unit) bool {
         return self.life() > 0;
     }
+
+    /// Advance the unit one tick toward (tx,ty) by up to `step` world units, snapping onto
+    /// the target when within a single step. Returns true once arrived. Pure movement
+    /// kinematics — the host does any wall routing (pathfinding) and calls this to walk the
+    /// unit toward the next waypoint.
+    pub fn stepToward(self: *Unit, tx: i32, ty: i32, step: i32) bool {
+        const dx = tx - self.x;
+        const dy = ty - self.y;
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 <= step * step) {
+            self.x = tx;
+            self.y = ty;
+            return true;
+        }
+        const dist = std.math.sqrt(@as(f64, @floatFromInt(dist2)));
+        const fx = @as(f64, @floatFromInt(dx)) / dist;
+        const fy = @as(f64, @floatFromInt(dy)) / dist;
+        self.x += @intFromFloat(@round(fx * @as(f64, @floatFromInt(step))));
+        self.y += @intFromFloat(@round(fy * @as(f64, @floatFromInt(step))));
+        return false;
+    }
 };
 
 test "unit basics" {
@@ -84,4 +105,26 @@ test "unit basics" {
     try testing.expect(u.isAlive());
     u.setLife(0);
     try testing.expect(!u.isAlive());
+}
+
+test "stepToward advances by the step then snaps onto the target" {
+    const testing = std.testing;
+    var u = Unit.init(.monster);
+    u.x = 0;
+    u.y = 0;
+    // Target far to the +X axis: one 10-unit step lands exactly at x=10, not reached.
+    try testing.expect(!u.stepToward(100, 0, 10));
+    try testing.expectEqual(@as(i32, 10), u.x);
+    try testing.expectEqual(@as(i32, 0), u.y);
+    // Diagonal step advances both axes and stays short of the target (not reached).
+    u.x = 0;
+    u.y = 0;
+    try testing.expect(!u.stepToward(100, 100, 10));
+    try testing.expect(u.x > 0 and u.x < 100 and u.y > 0 and u.y < 100);
+    // Within one step of the target -> snap exactly onto it and report reached.
+    u.x = 95;
+    u.y = 0;
+    try testing.expect(u.stepToward(100, 0, 10));
+    try testing.expectEqual(@as(i32, 100), u.x);
+    try testing.expectEqual(@as(i32, 0), u.y);
 }

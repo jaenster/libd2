@@ -22,6 +22,7 @@
 const std = @import("std");
 const rng = @import("rng.zig");
 const unit = @import("unit.zig");
+const combat = @import("combat.zig");
 const txt = @import("txt.zig");
 
 const Seed = rng.Seed;
@@ -174,7 +175,82 @@ pub const Missile = struct {
     }
 };
 
+/// Find a live missile in a host-owned slice by guid (host visibility bookkeeping).
+pub fn find(missiles: []Missile, guid: u32) ?*Missile {
+    for (missiles) |*m| {
+        if (m.guid == guid) return m;
+    }
+    return null;
+}
+
+/// Advance every missile one tick over the host's slice. For each missile, `ctx.target(m)`
+/// returns the unit it collides with (the host owns unit storage AND the target policy — e.g.
+/// "monsters only"); the rolled damage is applied to that victim's life, then the missile
+/// steps + expiry-checks. Retired missiles (killed on collision or out of range) are compacted
+/// out of the FRONT of the slice, preserving order; the surviving count is returned so the
+/// host can shrink its ArrayList. The host keeps the collection; the lib only rewrites the
+/// slice window and mutates victim life (same contract as combat.attackAndApply).
+pub fn stepAll(missiles: []Missile, seed: *Seed, ctx: anytype) usize {
+    var w: usize = 0;
+    for (missiles) |src| {
+        var m = src;
+        var retire = false;
+        if (ctx.target(&m)) |victim| {
+            const dmg = m.rollDamage(seed);
+            combat.applyToLife(victim, dmg);
+            if (m.collide_kill) retire = true;
+        }
+        if (!retire) {
+            m.step();
+            if (m.expired()) retire = true;
+        }
+        if (!retire) {
+            missiles[w] = m;
+            w += 1;
+        }
+    }
+    return w;
+}
+
 const testing = std.testing;
+
+test "find locates a missile by guid" {
+    var arr = [_]Missile{
+        .{ .guid = 10, .id = 1 },
+        .{ .guid = 20, .id = 2 },
+    };
+    try testing.expectEqual(@as(u16, 2), find(&arr, 20).?.id);
+    try testing.expectEqual(@as(?*Missile, null), find(&arr, 99));
+}
+
+test "stepAll damages a hit target, retires the killer, keeps a piercing/flying bolt" {
+    // Two monsters; the ctx reports a hit only for the first missile (collide_kill => retire),
+    // never for the second (which just flies until it expires).
+    var mob = Unit.init(.monster);
+    mob.unit_id = 2;
+    mob.setLife(100);
+
+    const Ctx = struct {
+        victim: *Unit,
+        hit_guid: u32,
+        fn target(self: @This(), m: *const Missile) ?*Unit {
+            return if (m.guid == self.hit_guid) self.victim else null;
+        }
+    };
+
+    var missiles = [_]Missile{
+        .{ .guid = 1, .id = 58, .vel = 5, .range_left = 100, .collide_kill = true, .dmg_min = 7, .dmg_max = 7 },
+        .{ .guid = 2, .id = 58, .vel = 5, .range_left = 10, .collide_kill = true },
+    };
+    var seed = Seed.fromValue(1);
+    const ctx = Ctx{ .victim = &mob, .hit_guid = 1 };
+    const surviving = stepAll(&missiles, &seed, ctx);
+
+    try testing.expectEqual(@as(i32, 93), mob.life()); // took 7 from missile 1
+    try testing.expectEqual(@as(usize, 1), surviving); // missile 1 retired on kill-collision
+    try testing.expectEqual(@as(u32, 2), missiles[0].guid); // survivor compacted to front, stepped
+    try testing.expectEqual(@as(i32, 5), missiles[0].range_left); // 10 - vel 5
+}
 
 test "load missiles by name and id" {
     var m = try Missiles.load(testing.allocator);
