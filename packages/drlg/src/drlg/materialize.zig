@@ -955,6 +955,7 @@ fn checkSubTileOverlap(
 fn applySubTileFloor(
     fg: *s.D2DrlgGridStrc,
     wg: *s.D2DrlgGridStrc,
+    og: *s.D2DrlgGridStrc,
     baseX: i32,
     baseY: i32,
     pSubstGroup: *const s.D2DrlgSubstGroupStrc,
@@ -977,6 +978,11 @@ fn applySubTileFloor(
                 const wall = DrlgGrid.GetGridFlags(&pSubTxt.pWallGrid[0], srcX + dx, srcY + dy);
                 if (wall & 1 != 0) {
                     DrlgGrid.AlterGridFlag(wg, baseX + dx, baseY + dy, wall, 3);
+                    // The wall grid alone lacks the small-int tile-type used by the wall count
+                    // (orient 3/10/11) and processTile's nOtherFlags: mirror ApplyLvlSubTileData
+                    // by stamping the sub's pTileTypeGrid into the room orient grid at the same cell.
+                    const tt = DrlgGrid.GetGridFlags(&pSubTxt.pTileTypeGrid[0], srcX + dx, srcY + dy);
+                    DrlgGrid.AlterGridFlag(og, baseX + dx, baseY + dy, tt, 3);
                 }
             }
         }
@@ -991,6 +997,7 @@ fn doNotCheckAll(
     pRoom: *s.D2RoomExStrc,
     fg: *s.D2DrlgGridStrc,
     wg: *s.D2DrlgGridStrc,
+    og: *s.D2DrlgGridStrc,
     pSubTxt: *dtables.D2LvlSubTxt,
     nSubTypeIndex: i32,
 ) void {
@@ -1047,7 +1054,7 @@ fn doNotCheckAll(
                         const bx: i32 = coordBuf[i * 2] + 1;
                         const by: i32 = coordBuf[i * 2 + 1] + 1;
                         if (checkSubTileOverlap(bx, by, fg, wg, pSubstGroup, pSubTxt)) {
-                            applySubTileFloor(fg, wg, bx, by, pSubstGroup, pSubTxt);
+                            applySubTileFloor(fg, wg, og, bx, by, pSubstGroup, pSubTxt);
                             break;
                         }
                     }
@@ -1059,7 +1066,7 @@ fn doNotCheckAll(
                     const bx: i32 = @intCast(drlg_rng.randomNumberSelector(&pRoom.sSeed, nMaxX) + 1);
                     const by: i32 = @intCast(drlg_rng.randomNumberSelector(&pRoom.sSeed, nMaxY) + 1);
                     if (checkSubTileOverlap(bx, by, fg, wg, pSubstGroup, pSubTxt)) {
-                        applySubTileFloor(fg, wg, bx, by, pSubstGroup, pSubTxt);
+                        applySubTileFloor(fg, wg, og, bx, by, pSubstGroup, pSubTxt);
                         break;
                     }
                 }
@@ -1073,12 +1080,13 @@ fn doNotCheckAll(
 
 // SubTypeWpShrine (1.14d 0x6707a0) — sub-theme terrain pass: iterate the bit-mask of which
 // consecutive LvlSub rows (by Type) to apply, load each DS1 file, and call DoNotCheckAll
-// (or CheckAll, but all outdoor terrain subs have CheckAll=0). Only the floor grid is
-// written; we skip the wall-layer and shadow parts of ApplyLvlSubTileData.
+// (or CheckAll, but all outdoor terrain subs have CheckAll=0). Writes the floor grid (fg) and
+// the wall grid (wg) + its orient grid (og); the shadow part of ApplyLvlSubTileData is skipped.
 fn applySubThemeTerrain(
     pRoom: *s.D2RoomExStrc,
     fg: *s.D2DrlgGridStrc,
     wg: *s.D2DrlgGridStrc,
+    og: *s.D2DrlgGridStrc,
     nSubTypeLookupId: i32,
     nSubTypeIndex: i32,
     nSubTypeCount: i32,
@@ -1097,7 +1105,7 @@ fn applySubThemeTerrain(
         const pFile = pRec.pDrlgFile orelse continue;
         if (pFile.nSubstGroups == 0) continue;
         if (pRec.CheckAll == 0) {
-            doNotCheckAll(pRoom, fg, wg, pRec, nSubTypeIndex);
+            doNotCheckAll(pRoom, fg, wg, og, pRec, nSubTypeIndex);
         }
         // CheckAll (nAct 1 or 2 path) not needed for outdoor terrain subs (all CheckAll=0).
     }
@@ -1163,6 +1171,12 @@ pub fn materializeOutdoorFloorRoom(
     @memset(wall_cells, 0);
     var wg = try buildGrid(ar, gw, gh, wall_cells);
 
+    // Room orient grid for the sub-theme wall cells (the tile-type/orientation the wall
+    // count + InitRoomTiles read as pOrientGrid, stamped from each sub's pTileTypeGrid).
+    const orient_cells = try ar.alloc(i32, ncells);
+    @memset(orient_cells, 0);
+    var og = try buildGrid(ar, gw, gh, orient_cells);
+
     // Base fill: 8x8 floor cells = 0x40002 (OverwriteFlag / op 3).
     {
         var yy: i32 = 0;
@@ -1188,9 +1202,9 @@ pub fn materializeOutdoorFloorRoom(
     // room's eRoomExFlags (>>0x10&3 waypoint, >>0xc&0xf shrine).
     try allocRoomTileGrid(pRoom, ar);
     const pDef = dtables.levelDefsGetLine(@enumFromInt(level_id));
-    if (nWaypointCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, pDef.*.SubWaypoint, 0, nWaypointCount);
-    if (nShrineCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, pDef.*.SubShrine, 0, nShrineCount);
-    applySubThemeTerrain(&room, &fg.grid, &wg.grid, nSubType, nSubTheme, nSubThemePicked);
+    if (nWaypointCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubWaypoint, 0, nWaypointCount);
+    if (nShrineCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubShrine, 0, nShrineCount);
+    applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, nSubType, nSubTheme, nSubThemePicked);
 
     // OR the level-type fill flag into cells with no terrain bits (OrFlag / op 0).
     const nGridFlag = outdoorFillFlag(nLevelType, level_id);
@@ -1216,6 +1230,11 @@ pub fn materializeOutdoorFloorRoom(
 
     // ── Count → alloc → InitRoomTiles (as DRLGROOMEX_InitializeMazeRoom). ──
     countTilesFromGrid(pRoom, &fg.grid, 0, 0, 0);
+    // Sub-theme groups stamp wall cells into the room wall grid; InitGridCells materializes
+    // that grid alongside the floor grid (Count/Alloc/InitRoomTiles over apWallGrids[0]), so
+    // count its walls too (mirrors materializeDs1's wall-grid pass).
+    countWallTilesFromGrid(pRoom, &wg.grid, &og.grid, 0, 0);
+    countTilesFromGrid(pRoom, &wg.grid, 0, 0, 0);
 
     const pTileGrid: [*c]s.D2DrlgTileGridStrc = @ptrCast(room.pRoomTiles);
     pTileGrid.*.nFloorTilesMax += 16; // headroom (a few cells route to base tiles)
@@ -1233,8 +1252,10 @@ pub fn materializeOutdoorFloorRoom(
     g_ctx = &ctx;
 
     InitRoomTiles(pRoom, &fg.grid, null, 0, 0, 0);
+    // Materialize the sub-theme wall grid (orient grid as pOtherGrid), as InitGridCells does.
+    InitRoomTiles(pRoom, &wg.grid, &og.grid, 0, 0, 0);
 
-    // ── Rasterize floor collision (room-local, 8x8 tile footprint). ──
+    // ── Rasterize floor + wall collision (room-local, 8x8 tile footprint). ──
     const cw: usize = @intCast(ws_x);
     const ch: usize = @intCast(ws_y);
     var coll = collision.CollisionGrid{
@@ -1250,6 +1271,14 @@ pub fn materializeOutdoorFloorRoom(
     var fi: usize = 0;
     while (fi < @as(usize, @intCast(pTileGrid.*.nFloors))) : (fi += 1) {
         blitTile(&coll, &pFloor[fi]);
+    }
+    if (pTileGrid.*.pWallTiles) |wp| {
+        const pWall: [*]s.D2DrlgTileDataStrc = @ptrCast(@alignCast(wp));
+        var wi: usize = 0;
+        while (wi < @as(usize, @intCast(pTileGrid.*.nWalls))) : (wi += 1) {
+            if (wi < ctx.companion.len and ctx.companion[wi]) continue;
+            blitTile(&coll, &pWall[wi]);
+        }
     }
 
     return .{
