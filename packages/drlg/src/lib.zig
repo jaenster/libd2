@@ -749,6 +749,26 @@ fn dt1Index() *const dt1blob.Index {
     return &g_dt1_index.?;
 }
 
+/// The DT1s the engine ALWAYS appends to every room's tile library (verified in
+/// 1.14d Game.exe: Blank.dt1, InvisWal.dt1, Warp.dt1). Only InvisWal is present in
+/// our baked blob (Blank/Warp are absent — handled by the solid_fill/blank_fill
+/// stand-ins in tilegen.zig). InvisWal carries the orient-{1,2,3,4,7} main=49
+/// invisible-wall tiles that Act-3 Kurast preset DS1s reference; without them those
+/// wall cells fall back to a garbage type-10 tile and stamp a spurious lattice.
+const GLOBAL_DT1_PATHS = [_][]const u8{
+    "act1/outdoors/blank.dt1",
+    "act2/palace/inviswal.dt1",
+    "act1/barracks/warp.dt1",
+};
+
+fn appendGlobalDts(out_alloc: std.mem.Allocator, idx: *const dt1blob.Index, dts: *std.ArrayListUnmanaged(dt1.Dt1)) void {
+    for (GLOBAL_DT1_PATHS) |p| {
+        const rec = idx.get(p) orelse continue;
+        const d = dt1blob.unpack(out_alloc, rec) catch continue;
+        dts.append(out_alloc, d) catch continue;
+    }
+}
+
 /// Generate one level and rasterize the REAL subtile collision of its preset
 /// DrlgMaps (via DS1 layers + the level's DT1 tile set). World coords are in
 /// subtiles, matching the room rects, so each grid overlays directly. Covers
@@ -788,6 +808,7 @@ pub fn generateLevelCollision(
         const d = dt1blob.unpack(out_alloc, rec) catch continue;
         try dts.append(out_alloc, d);
     }
+    appendGlobalDts(out_alloc, idx, &dts);
     for (dts.items) |*d| try dtlib.add(d);
 
     // Rasterize each unique preset DrlgMap once, positioned at its world offset.
@@ -1303,6 +1324,7 @@ fn materializeLevelColl(
         const d = dt1blob.unpack(out_alloc, rec) catch continue;
         dts.append(out_alloc, d) catch continue;
     }
+    appendGlobalDts(out_alloc, idx, &dts);
 
     // Emit one grid per materialized room, at its level-local subtile offset. The
     // frontend composites them (open wins, uncovered = void) — same pipeline as
@@ -1559,6 +1581,7 @@ pub fn generateActRoomCollision(
             const d = dt1blob.unpack(out_alloc, rec) catch continue;
             dts.append(out_alloc, d) catch continue;
         }
+        appendGlobalDts(out_alloc, idx, &dts);
 
         // ── Faithful per-room CollMap build (AllocRoomCollisionGrid 0x64c900). ──
         // Phase A: materialize every room in the level to its placed FLOOR/WALL/ROOF
@@ -3139,5 +3162,7 @@ test "lib: Ctx round-trips + API type-checks" {
     var ctx = Ctx.init(std.testing.allocator) catch return;
     defer ctx.deinit();
 }
+
+
 
 
