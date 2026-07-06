@@ -46,13 +46,15 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     );
     try std.testing.expect(r.matched_rooms > 0);
     // Lock overall all-acts fidelity; raise as acts close. Never regress.
-    // Per-act masked-0x1F: Act1 ~99.8%, Act2 ~99.7%, Act3 ~99.1%, Act4 ~99.9%, Act5 ~99.7%.
-    // Overall 99.76% (outdoor sub-theme WALL layer materialized + the always-loaded InvisWal
-    // global DT1 now appended to every room's tile library — its orient-{1,2,3,4,7} main=49
-    // invisible-wall tiles resolve Act-3 Kurast preset cells that previously fell back to a
-    // garbage type-10 tile). Remaining residual = the ORIENT-0 main=49 invisible-FLOOR tiles
-    // (missing from our baked InvisWal) + Act-2 tomb/Act-1 cave DT1-completeness holes.
-    try std.testing.expect(r.masked_ok >= 11_060_000);
+    // Per-act masked-0x1F: Act1 ~99.8%, Act2 ~99.7%, Act3 ~99.3%, Act4 ~99.9%, Act5 ~99.7%.
+    // Overall 99.81% — getTileLibraryEntry no longer stamps the arbitrary type-10 fallback
+    // tile's collision for unresolved identities (the engine HALTS on an unresolved tile, it
+    // never falls back). That fallback was OVER-setting WALL/BLOCK on the orient-0 main=49
+    // invisible-FLOOR cells in the Act-3 Kurast presets (serpent.dt1's orient-0 main=49 is
+    // not loaded); dropping it to no-collision (like collision.zig) is +5017 golden cells,
+    // all in Kurast (L081 95.7%->97.2%). Remaining residual = Act-2 tomb/Act-1 cave
+    // DT1-completeness holes + the deeper Kurast preset gap.
+    try std.testing.expect(r.masked_ok >= 11_065_000);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in

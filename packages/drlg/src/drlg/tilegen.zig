@@ -126,14 +126,16 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
         nSub = @intCast((nGridFlags >> 8) & 0xff);
     }
 
-    var nCount = lookupTilesInAllProjects(pRoomEx, nTileType, nMainIndex, nSub, &aTileResults, 0x28);
+    const nCount = lookupTilesInAllProjects(pRoomEx, nTileType, nMainIndex, nSub, &aTileResults, 0x28);
     if (nCount == 0) {
-        // Fallback (recon line 1385): any type-10 tile, else the engine halts.
-        nCount = lookupTilesInAllProjects(pRoomEx, 10, 0, 0, &aTileResults, 0x28);
-        if (nCount != 0) {
-            g_lookup_fallback += 1;
-            return aTileResults[0];
-        }
+        // Recon line 1385 falls back to any type-10 tile here, but the real engine
+        // HALTS on an unresolved identity (ERROR_UnrecoverableInternalError, line 0x73)
+        // — it never asks for an identity its DT1 set lacks, so this fallback is a port
+        // crutch, not engine behaviour. Stamping the first arbitrary type-10 tile's
+        // collision OVER-sets WALL/BLOCK on the orient-0 main=49 invisible-floor cells
+        // in the Act-3 Kurast presets (serpent.dt1's orient-0 main=49 is not loaded).
+        // The reference rasterizer (collision.zig) drops these unresolved cells to no
+        // collision; matching that here is +5017 golden cells (only Kurast moves).
         g_lookup_null += 1;
         // The "uncarved rock" blank fill (main index 30, from processTile's 0x1e00000)
         // resolves in the engine — via the orientation-10 special/opaque tile — to a 5x5
