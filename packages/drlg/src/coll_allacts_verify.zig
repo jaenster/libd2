@@ -46,9 +46,10 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     );
     try std.testing.expect(r.matched_rooms > 0);
     // Lock overall all-acts fidelity; raise as acts close. Never regress.
-    // Per-act masked-0x1F: Act1 ~99.7%, Act2 ~99.7%, Act3 ~99.1%, Act4 ~99.9%, Act5 ~99.0%.
-    // Overall 99.37% (outdoor sub-theme wall-grid overlap check: prior wall-bearing placements).
-    try std.testing.expect(r.masked_ok >= 11_017_000);
+    // Per-act masked-0x1F: Act1 ~99.7%, Act2 ~99.7%, Act3 ~99.1%, Act4 ~99.9%, Act5 ~99.6%.
+    // Overall 99.60% (no-floor cave/dungeon subtiles OR the solid-rock 0x05, completing the
+    // COLLIDE_WALL 0x04 partial wall stamps leave clear — many cave levels now byte-exact).
+    try std.testing.expect(r.masked_ok >= 11_043_000);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
