@@ -19,6 +19,9 @@ pub const combat = @import("combat.zig");
 pub const txt = @import("txt.zig");
 pub const skill = @import("skill.zig");
 pub const missile = @import("missile.zig");
+pub const select = @import("select.zig");
+pub const ai = @import("ai.zig");
+pub const character = @import("character.zig");
 pub const net = @import("net/net.zig");
 
 pub const Seed = rng.Seed;
@@ -32,6 +35,11 @@ pub const resolveAttack = combat.resolveAttack;
 pub const Skills = skill.Skills;
 pub const Missiles = missile.Missiles;
 pub const Missile = missile.Missile;
+pub const AiConfig = ai.AiConfig;
+pub const MonsterAI = ai.MonsterAI;
+pub const AiAction = ai.AiAction;
+pub const CharSave = character.CharSave;
+pub const QuestState = character.QuestState;
 
 test {
     _ = rng;
@@ -41,5 +49,8 @@ test {
     _ = txt;
     _ = skill;
     _ = missile;
+    _ = select;
+    _ = ai;
+    _ = character;
     _ = net;
 }

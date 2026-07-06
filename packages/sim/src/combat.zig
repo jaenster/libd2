@@ -230,3 +230,54 @@ pub fn applyToLife(u: *Unit, damage: i32) void {
     if (hp < 0) hp = 0;
     u.setLife(hp);
 }
+
+/// Resolve an attack and, on a hit, subtract the rolled damage from the defender's life —
+/// the ubiquitous resolveAttack + applyToLife pair (monster swings, the melee arm of a
+/// skill). Returns the AttackResult so the host can emit the resulting S->C packets. Pure:
+/// mutates only the defender's life; the host owns everything else.
+pub fn attackAndApply(attacker: *const Unit, defender: *Unit, seed: *Seed, params: DamageParams) AttackResult {
+    const res = resolveAttack(attacker, defender, seed, params);
+    if (res.hit) applyToLife(defender, res.damage);
+    return res;
+}
+
+test "attackAndApply subtracts rolled damage on a hit, leaves life untouched on a miss" {
+    const testing = std.testing;
+    var attacker = Unit.init(.player);
+    attacker.set(.level, 30);
+    attacker.set(.dexterity, 120);
+    attacker.set(.tohit, 5000);
+    attacker.weapon = .{ .min_damage = 20, .max_damage = 60 };
+    var defender = Unit.init(.monster);
+    defender.set(.level, 1);
+    defender.setLife(1000);
+
+    var seed = Seed.fromValue(0xC0FFEE);
+    const before = defender.life();
+    const res = attackAndApply(&attacker, &defender, &seed, .{});
+    // Post-condition holds regardless of the RNG outcome: on a hit the defender's life
+    // dropped by exactly the rolled damage (clamped at 0); on a miss nothing changed.
+    if (res.hit) {
+        try testing.expect(res.damage > 0);
+        try testing.expectEqual(@max(@as(i32, 0), before - res.damage), defender.life());
+    } else {
+        try testing.expectEqual(before, defender.life());
+    }
+}
+
+test "attackAndApply clamps a lethal blow to zero life, never negative" {
+    const testing = std.testing;
+    var attacker = Unit.init(.player);
+    attacker.set(.level, 30);
+    attacker.set(.dexterity, 120);
+    attacker.set(.tohit, 100000);
+    attacker.weapon = .{ .min_damage = 500, .max_damage = 900 };
+    var defender = Unit.init(.monster);
+    defender.set(.level, 1);
+    defender.setLife(5);
+
+    var seed = Seed.fromValue(0xBADF00D);
+    const res = attackAndApply(&attacker, &defender, &seed, .{});
+    try testing.expect(defender.life() >= 0);
+    if (res.hit) try testing.expectEqual(@as(i32, 0), defender.life());
+}

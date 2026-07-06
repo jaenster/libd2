@@ -141,7 +141,39 @@ pub fn execute(
     }
 }
 
+/// Apply an Outcome: the melee arm subtracts its damage from `target`'s life (pure — mutates
+/// only that unit); the missile arm is RETURNED for the host to assign a guid + append (the
+/// lib never sees a guid allocator or the missile collection). Returns null for `.none` and
+/// the applied melee arm.
+pub fn applyOutcome(out: Outcome, target: ?*Unit) ?missile.Missile {
+    switch (out) {
+        .none => return null,
+        .melee => |res| {
+            if (res.hit) if (target) |t| combat.applyToLife(t, res.damage);
+            return null;
+        },
+        .missile => |m| return m,
+    }
+}
+
 const testing = std.testing;
+
+test "applyOutcome: melee arm subtracts life, missile arm is returned for the host" {
+    var mob = Unit.init(.monster);
+    mob.setLife(50);
+    const hit = Outcome{ .melee = .{ .hit = true, .chance = 95, .ar = 0, .def = 0, .raw_damage = 12, .damage = 12 } };
+    try testing.expectEqual(@as(?missile.Missile, null), applyOutcome(hit, &mob));
+    try testing.expectEqual(@as(i32, 38), mob.life());
+
+    const miss = Outcome{ .melee = .{ .hit = false, .chance = 5, .ar = 0, .def = 0, .raw_damage = 0, .damage = 0 } };
+    try testing.expectEqual(@as(?missile.Missile, null), applyOutcome(miss, &mob));
+    try testing.expectEqual(@as(i32, 38), mob.life()); // unchanged on a miss
+
+    const spawn = Outcome{ .missile = .{ .guid = 0, .id = 58 } };
+    const out = applyOutcome(spawn, null);
+    try testing.expect(out != null);
+    try testing.expectEqual(@as(u16, 58), out.?.id);
+}
 
 test "classify: Attack is melee, Fire Bolt is a missile" {
     var s = try Skills.load(testing.allocator);
