@@ -88,8 +88,12 @@ inline fn tileRarity(t: *const dt1.Tile) i32 {
 /// TILEPROJECT_LookupTilesInAllProjects (Dungeon.cpp:149) -> FINDTILE_Lookup
 /// (FindTiles.cpp:191), collapsed: walk every tile project in load order and
 /// append entries matching (orientation==nTileType, main==nMain, sub==nSub) up
-/// to nMax. Returns the number written. Variant order within an identity does
-/// not affect the collision block (rarity variants share it).
+/// to nMax. Returns the number written. Enumeration order matters for the
+/// rarity pick and the (10,0,0) fallback: the engine walks apTiles slots in
+/// file order (TILEPROJECT_LookupTilesInAllProjects 0x604ae0), but within one
+/// DT1 the FINDTILE hash chains are push-front (AllocHashEntry 0x60cf00 /
+/// AddTileToChain 0x60cea0 over records 0..N-1), so same-identity tiles come
+/// out in REVERSE file order — the last matching record in a file wins index 0.
 fn lookupTilesInAllProjects(
     pRoomEx: [*c]s.D2RoomExStrc,
     nTileType: i32,
@@ -101,7 +105,10 @@ fn lookupTilesInAllProjects(
     const lib = libFromRoom(pRoomEx);
     var n: usize = 0;
     for (lib.dts) |*d| {
-        for (d.tiles) |*t| {
+        var i: usize = d.tiles.len;
+        while (i > 0) {
+            i -= 1;
+            const t = &d.tiles[i];
             if (n >= nMax) return n;
             if (t.orientation == nTileType and t.main == nMain and t.sub == nSub) {
                 results[n] = t;
