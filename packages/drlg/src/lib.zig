@@ -774,6 +774,45 @@ fn appendGlobalDts(out_alloc: std.mem.Allocator, idx: *const dt1blob.Index, dts:
     }
 }
 
+/// Load a LevelType's DT1 set recording, per loaded entry, its LvlTypes File bit
+/// (0..31); the always-appended globals get 0xff. The engine's per-room apTiles is
+/// LvlTypes File[LvlPrest Dt1Mask bits] + the 3 globals, so preset rooms filter by
+/// their preset's mask (roomDts) — identity lookups shared between masked files
+/// (e.g. Act-2 Tomb main=9 in both Duriel.dt1 and Tombsteps.dt1, rarity 0 so the
+/// FIRST match wins) resolve differently per room.
+fn loadLevelDts(
+    out_alloc: std.mem.Allocator,
+    idx: *const dt1blob.Index,
+    files: [][]const u8,
+    dts: *std.ArrayListUnmanaged(dt1.Dt1),
+    bits: *std.ArrayListUnmanaged(u8),
+) void {
+    for (files, 0..) |f, i| {
+        const rec = idx.get(f) orelse continue;
+        const d = dt1blob.unpack(out_alloc, rec) catch continue;
+        dts.append(out_alloc, d) catch continue;
+        bits.append(out_alloc, @intCast(i)) catch {};
+    }
+    appendGlobalDts(out_alloc, idx, dts);
+    while (bits.items.len < dts.items.len) bits.append(out_alloc, 0xff) catch break;
+}
+
+/// The room-scoped DT1 view: entries whose LvlTypes File bit is set in the room
+/// preset's Dt1Mask, plus the globals (InitializePresetRoom's apTiles build).
+fn roomDts(dts: []const dt1.Dt1, bits: []const u8, pmap: *abi.D2DrlgMapStrc, buf: []dt1.Dt1) []const dt1.Dt1 {
+    const pt: [*c]dtables.D2LvlPrestTxt = @ptrCast(@alignCast(pmap.pTxtLevelPrest));
+    if (pt == null) return dts;
+    const mask: u32 = @bitCast(pt.*.Dt1Mask);
+    var n: usize = 0;
+    for (dts, bits) |dv, b| {
+        if (b == 0xff or (b < 32 and (mask >> @intCast(b)) & 1 != 0)) {
+            buf[n] = dv;
+            n += 1;
+        }
+    }
+    return buf[0..n];
+}
+
 /// Generate one level and rasterize the REAL subtile collision of its preset
 /// DrlgMaps (via DS1 layers + the level's DT1 tile set). World coords are in
 /// subtiles, matching the room rects, so each grid overlays directly. Covers
@@ -1332,12 +1371,10 @@ fn materializeLevelColl(
         for (dts.items) |*d| d.deinit();
         dts.deinit(out_alloc);
     }
-    for (files[0..nf]) |f| {
-        const rec = idx.get(f) orelse continue;
-        const d = dt1blob.unpack(out_alloc, rec) catch continue;
-        dts.append(out_alloc, d) catch continue;
-    }
-    appendGlobalDts(out_alloc, idx, &dts);
+    var dts_bits: std.ArrayListUnmanaged(u8) = .empty;
+    defer dts_bits.deinit(out_alloc);
+    loadLevelDts(out_alloc, idx, files[0..nf], &dts, &dts_bits);
+    var room_dts_buf: [35]dt1.Dt1 = undefined;
 
     // Emit one grid per materialized room, at its level-local subtile offset. The
     // frontend composites them (open wins, uncovered = void) — same pipeline as
@@ -1363,7 +1400,7 @@ fn materializeLevelColl(
             const rel = preset.presetDs1Path(pmap) orelse continue;
             var d = preset.unpackDs1(out_alloc, rel) orelse continue;
             defer d.deinit();
-            var mr = materialize.materializeDs1(out_alloc, &d, dts.items, roomWindow(p, pmap)) catch continue;
+            var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap)) catch continue;
             defer mr.deinit(out_alloc);
             try grids.append(out_alloc, .{
                 .x = gx,
@@ -1589,12 +1626,10 @@ pub fn generateActRoomCollision(
             for (dts.items) |*d| d.deinit();
             dts.deinit(out_alloc);
         }
-        for (files[0..nf]) |f| {
-            const rec = idx.get(f) orelse continue;
-            const d = dt1blob.unpack(out_alloc, rec) catch continue;
-            dts.append(out_alloc, d) catch continue;
-        }
-        appendGlobalDts(out_alloc, idx, &dts);
+        var dts_bits: std.ArrayListUnmanaged(u8) = .empty;
+        defer dts_bits.deinit(out_alloc);
+        loadLevelDts(out_alloc, idx, files[0..nf], &dts, &dts_bits);
+        var room_dts_buf: [35]dt1.Dt1 = undefined;
 
         // ── Faithful per-room CollMap build (AllocRoomCollisionGrid 0x64c900). ──
         // Phase A: materialize every room in the level to its placed FLOOR/WALL/ROOF
@@ -1618,7 +1653,7 @@ pub fn generateActRoomCollision(
                 if (roomPMap(p)) |pmap| {
                     var d = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
                     defer d.deinit();
-                    var mr = materialize.materializeDs1(out_alloc, &d, dts.items, roomWindow(p, pmap)) catch continue;
+                    var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap)) catch continue;
                     defer mr.deinit(out_alloc);
                     break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
                 } else if (p.eRoomExFlags.noLos) {
