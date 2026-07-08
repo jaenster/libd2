@@ -128,23 +128,19 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
 
     const nCount = lookupTilesInAllProjects(pRoomEx, nTileType, nMainIndex, nSub, &aTileResults, 0x28);
     if (nCount == 0) {
-        // Recon line 1385 falls back to any type-10 tile here, but the real engine
-        // HALTS on an unresolved identity (ERROR_UnrecoverableInternalError, line 0x73)
-        // — it never asks for an identity its DT1 set lacks, so this fallback is a port
-        // crutch, not engine behaviour. Stamping the first arbitrary type-10 tile's
-        // collision OVER-sets WALL/BLOCK on the orient-0 main=49 invisible-floor cells
-        // in the Act-3 Kurast presets (serpent.dt1's orient-0 main=49 is not loaded).
-        // The reference rasterizer (collision.zig) drops these unresolved cells to no
-        // collision; matching that here is +5017 golden cells (only Kurast moves).
+        // Engine (0x66d820 line 1385): retry as the special orientation-10 (main=0,
+        // sub=0) tile and return the FIRST match — no rarity roll, no seed advance.
+        // Every room library ends with the always-appended warp.dt1, whose last tile
+        // is a zero-collision (10,0,0), so in-engine this fallback essentially never
+        // fails; a double miss is ERROR_UnrecoverableInternalError (line 0x73).
+        const nFallback = lookupTilesInAllProjects(pRoomEx, 10, 0, 0, &aTileResults, 0x28);
+        if (nFallback != 0) {
+            g_lookup_fallback += 1;
+            return aTileResults[0];
+        }
         g_lookup_null += 1;
-        // The "uncarved rock" blank fill (main index 30, from processTile's 0x1e00000)
-        // resolves in the engine — via the orientation-10 special/opaque tile — to a 5x5
-        // block of solid rock (0x05 = block_walk|wall; verified in 1.14d Game.exe). Some
-        // level DT1 sets we load lack that orient-10 art (e.g. Act1/Barracks), so the
-        // fallback yields nothing and whole solid-fill rooms read as walkable. Return the
-        // known solid-rock value for the main=30 fill ONLY. Other unresolved identities are
-        // genuine DT1-completeness gaps (the engine resolves them to a real, usually
-        // walkable tile) — leave those null so we don't over-mark them solid.
+        // blank.dt1 is baked so main=30 resolves normally above; keep the solid/blank
+        // stand-in as a defensive last resort for asset-stripped builds.
         if (nMainIndex == 30) return if (nSub == 1) &blank_fill_tile else &solid_fill_tile;
         return null; // engine: ERROR_UnrecoverableInternalError_Halt(line 0x73)
     }
