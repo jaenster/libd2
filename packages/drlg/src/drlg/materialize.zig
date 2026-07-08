@@ -447,7 +447,7 @@ pub const MaterializeResult = struct {
 /// layer order AllocRoomCollisionGrid stamps (floor, wall, roof); OR is order-free so
 /// order is cosmetic. Wall companions (type-3 second-half tiles) are skipped exactly
 /// as the rasterizer does. Tiles whose art did not resolve are dropped.
-fn collectCollTiles(a: std.mem.Allocator, pTileGrid: [*c]s.D2DrlgTileGridStrc, companion: []const bool, max_tx: i32, max_ty: i32) ![]CollTile {
+fn collectCollTiles(a: std.mem.Allocator, pTileGrid: [*c]s.D2DrlgTileGridStrc, companion: []const bool, max_tx: i32, max_ty: i32, wall_edge: i32) ![]CollTile {
     var list: std.ArrayListUnmanaged(CollTile) = .empty;
     errdefer list.deinit(a);
     const pushArr = struct {
@@ -457,8 +457,15 @@ fn collectCollTiles(a: std.mem.Allocator, pTileGrid: [*c]s.D2DrlgTileGridStrc, c
             while (i < @as(usize, @intCast(n))) : (i += 1) {
                 if (comp) |c| if (i < c.len and c[i]) continue;
                 const td = &p[i];
-                // Drop tiles outside the room's own [0,size) tile rect: those are the
-                // materialize window's +1 kill-edge blend cells, not real engine room tiles.
+                // Drop tiles outside the room's tile rect, EXCEPT the wall array,
+                // whose mtx/mty include the +1 far-edge col/row: a room's +1 WALL
+                // tiles stamp into the abutting neighbor's CollMap via the adjacency
+                // gather (measured against two independent-seed engine goldens).
+                // Floor/shadow +1 tiles are still created (their rarity rolls keep
+                // the room seed stream engine-aligned — dropping them regresses both
+                // goldens) but never contribute collision anywhere: the engine's
+                // steady-state maps carry no floor 0x05 from a neighbor's +1 blank
+                // cells (stamping them over-sets 0x04 by ~1.6k on both seeds).
                 if (td.nPosX < 0 or td.nPosY < 0 or td.nPosX >= mtx or td.nPosY >= mty) continue;
                 const t = tilegen.tileFromEntry(td.pTileLibraryEntry) orelse continue;
                 try l.append(alloc, .{ .nPosX = td.nPosX, .nPosY = td.nPosY, .nFlags = td.nFlags, .tile = t, .is_floor = is_floor });
@@ -466,7 +473,7 @@ fn collectCollTiles(a: std.mem.Allocator, pTileGrid: [*c]s.D2DrlgTileGridStrc, c
         }
     }.go;
     try pushArr(&list, a, pTileGrid.*.pFloorTiles, pTileGrid.*.nFloors, null, true, max_tx, max_ty);
-    try pushArr(&list, a, pTileGrid.*.pWallTiles, pTileGrid.*.nWalls, companion, false, max_tx, max_ty);
+    try pushArr(&list, a, pTileGrid.*.pWallTiles, pTileGrid.*.nWalls, companion, false, max_tx + wall_edge, max_ty + wall_edge);
     try pushArr(&list, a, pTileGrid.*.pRoofTiles, pTileGrid.*.nShadows, null, false, max_tx, max_ty);
     return list.toOwnedSlice(a);
 }
@@ -679,7 +686,7 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     return .{
         .coll = coll,
         .special = ctx.special,
-        .tiles = try collectCollTiles(a, pTileGrid, ctx.companion, win.size_x, win.size_y),
+        .tiles = try collectCollTiles(a, pTileGrid, ctx.companion, win.size_x, win.size_y, if (window != null) 1 else 0),
         .n_floors = pTileGrid.*.nFloors,
         .n_walls = pTileGrid.*.nWalls,
         .n_shadows = pTileGrid.*.nShadows,
@@ -1303,7 +1310,7 @@ pub fn materializeOutdoorFloorRoom(
     return .{
         .coll = coll,
         .special = ctx.special,
-        .tiles = try collectCollTiles(a, pTileGrid, ctx.companion, ws_x, ws_y),
+        .tiles = try collectCollTiles(a, pTileGrid, ctx.companion, ws_x, ws_y, 1),
         .n_floors = pTileGrid.*.nFloors,
         .n_walls = pTileGrid.*.nWalls,
         .n_shadows = pTileGrid.*.nShadows,

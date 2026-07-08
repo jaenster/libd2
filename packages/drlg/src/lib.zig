@@ -1730,13 +1730,14 @@ pub fn generateActRoomCollision(
             const gh: usize = @intCast(R.hty * SUB);
             const wtxu: usize = @intCast(R.wtx);
             for (rbs.items) |A| {
-                // bbox reject: A reaches R only if A's tile rect overlaps R's rect. A room's
-                // real tiles are confined to its own rect (the window's +1 kill-edge artifacts
-                // are filtered out in collectCollTiles), so cross-room contribution happens
-                // only where rooms genuinely overlap — exactly what the engine's adjacency walk
-                // stamps. Non-overlapping rooms (incl. abutting neighbours) contribute nothing.
-                if (A.wpx + A.wtx <= R.wpx or A.wpx >= R.wpx + R.wtx) continue;
-                if (A.wpy + A.hty <= R.wpy or A.wpy >= R.wpy + R.hty) continue;
+                // bbox reject: A reaches R if A's tile rect EXTENDED by the +1 far-edge
+                // col/row (where its wall tiles may live, kept by collectCollTiles)
+                // overlaps R's rect. The engine's adjacency gather stamps a neighbor's
+                // +1 wall tiles into R when their origin lands inside R's rect; R's own
+                // +1 tiles never stamp into R (AreSubtileCoordinatesInsideRoom is
+                // exclusive at the far edge — mirrored by the per-tile clip below).
+                if (A.wpx + A.wtx + 1 <= R.wpx or A.wpx >= R.wpx + R.wtx) continue;
+                if (A.wpy + A.hty + 1 <= R.wpy or A.wpy >= R.wpy + R.hty) continue;
                 for (A.tiles) |ct| {
                     const otx = ct.nPosX + A.wpx;
                     const oty = ct.nPosY + A.wpy;
