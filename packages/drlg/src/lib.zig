@@ -1282,12 +1282,20 @@ pub fn generateActCompositeRaw(
 /// This is the engine's per-room CollMap (a window of the shared level DS1), not
 /// the whole DS1 — materializeDs1 emits a (WorldSize+1)×5 subtile grid for it.
 pub fn roomWindow(p: *abi.D2RoomExStrc, pmap: *abi.D2DrlgMapStrc) materialize.Ds1RoomWindow {
+    // InitializePresetRoom 0x666ac0: FillBlanks goes to floor layer 0; KillEdge
+    // drops the +1 col/row when the room touches the pMap's far edge.
+    const pt: [*c]dtables.D2LvlPrestTxt = @ptrCast(@alignCast(pmap.pTxtLevelPrest));
+    const kill = pt != null and pt.*.KillEdge != 0;
     return .{
         .off_x = p.sCoords.WorldPosition.x - pmap.nRealOffsetX,
         .off_y = p.sCoords.WorldPosition.y - pmap.nRealOffsetY,
         .size_x = p.sCoords.WorldSize.x,
         .size_y = p.sCoords.WorldSize.y,
         .seed = p.sSeed,
+        .fill_blanks = if (pt != null) pt.*.FillBlanks else 0,
+        .kill_x = @intFromBool(kill and p.sCoords.WorldSize.x + p.sCoords.WorldPosition.x == pmap.nSizeX + pmap.nRealOffsetX),
+        .kill_y = @intFromBool(kill and p.sCoords.WorldSize.y + p.sCoords.WorldPosition.y == pmap.nSizeY + pmap.nRealOffsetY),
+        .level_id = if (p.pLevel) |lv| @intFromEnum(lv.eD2LevelId) else 0,
     };
 }
 
@@ -1597,7 +1605,7 @@ pub fn generateActRoomCollision(
         // neighbour's kill-edge tiles (origin just past the neighbour) land on R's shared
         // border. Each tile-origin belongs to exactly one room, so we route tiles through
         // a level tile→room index rather than the O(rooms^2) self+neighbour walk (same set).
-        const RoomBuild = struct { wpx: i32, wpy: i32, wtx: i32, hty: i32, tiles: []materialize.CollTile };
+        const RoomBuild = struct { wpx: i32, wpy: i32, wtx: i32, hty: i32, tiles: []materialize.CollTile, is_ds1: bool };
         var rbs: std.ArrayListUnmanaged(RoomBuild) = .empty;
         defer {
             for (rbs.items) |rb| out_alloc.free(rb.tiles);
@@ -1633,6 +1641,7 @@ pub fn generateActRoomCollision(
                 .wtx = p.sCoords.WorldSize.x,
                 .hty = p.sCoords.WorldSize.y,
                 .tiles = tiles,
+                .is_ds1 = roomPMap(p) != null,
             });
         }
         if (rbs.items.len == 0) continue;
@@ -1702,8 +1711,14 @@ pub fn generateActRoomCollision(
         // leaves COLLIDE_WALL (0x04) clear on its interior subtiles, and the engine covers those
         // same cells with the solid-rock ceiling/Blank tile, so OR completes the 0x05 that the
         // partial wall stamp otherwise left as a bare 0x01.
+        // DS1/pMap rooms are excluded: their fill is the faithful ProcessTile blank
+        // branch inside materializeDs1 (LvlPrest FillBlanks -> floor layer 0 -> real
+        // Blank.dt1 tiles), which the engine applies only to INSIDE cells — the
+        // coarse per-cell OR here over-fills exactly where the engine leaves the
+        // bare wall stamp (golden 0x01 vs ours 0x05).
         const void_flag: u8 = if (tlv.lvl_type == 19) 0x01 else 0x05;
         for (rbs.items, 0..) |rb, i| {
+            if (rb.is_ds1) continue;
             const gw: usize = @intCast(rb.wtx * SUB);
             const wtxu: usize = @intCast(rb.wtx);
             for (grids[i], 0..) |*cell, ci| {
@@ -1896,13 +1911,11 @@ pub fn verifyActCollision(
             for (res.rooms) |r| {
                 const key = Key{ .level = r.level_id, .px = r.px, .py = r.py };
                 const cp = try alloc.dupe(u8, r.cells);
-                // No-floor subtiles carry the synthetic `blank` (0x20) render marker; the
-                // engine's runtime CollMap encodes void as solid rock (block_walk|wall =
-                // 0x05). Promote so the collision compare — and any real pathing consumer —
-                // sees void as blocked, matching the engine.
-                for (cp) |*c| {
-                    if (c.* & 0x20 != 0) c.* = (c.* & ~@as(u8, 0x20)) | 0x05;
-                }
+                // 0x20 (COLBIT blank) is a REAL DT1 collision bit that wall art carries on
+                // ordinary block-walk subtiles (0x21/0x25) — do NOT promote it to solid
+                // rock. Void cells are already faithfully solid: the ProcessTile blank
+                // branch stamps real Blank.dt1 tiles (0x05) for preset rooms and the
+                // outdoor void-fill ORs 0x05 directly.
                 const gop = try ours.getOrPut(alloc, key);
                 if (gop.found_existing) alloc.free(gop.value_ptr.cells);
                 gop.value_ptr.* = .{ .w = r.w, .h = r.h, .cells = cp };
