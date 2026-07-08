@@ -801,12 +801,14 @@ fn loadLevelDts(
     while (bits.items.len < dts.items.len) bits.append(out_alloc, 0xff) catch break;
 }
 
-/// The room-scoped DT1 view: entries whose LvlTypes File bit is set in the room
-/// preset's Dt1Mask, plus the globals (InitializePresetRoom's apTiles build).
-fn roomDts(dts: []const dt1.Dt1, bits: []const u8, pmap: *abi.D2DrlgMapStrc, buf: []dt1.Dt1) []const dt1.Dt1 {
-    const pt: [*c]dtables.D2LvlPrestTxt = @ptrCast(@alignCast(pmap.pTxtLevelPrest));
-    if (pt == null) return dts;
-    const mask: u32 = @bitCast(pt.*.Dt1Mask);
+/// The room-scoped DT1 view: entries whose LvlTypes File bit is set in the
+/// mask, plus the globals. Preset rooms use the LvlPrest Dt1Mask (roomDts);
+/// outdoor rooms use pRoomEx.nDT1Mask, which CreateOutdoorRoomEx seeds with the
+/// per-level-type constant (0x44103/1/4/0x11, Outdoors.zig outdoorRoomStyle)
+/// and RollLevelSubstitutionMask ORs with each accepted LvlSub row's Dt1Mask —
+/// the engine's apTiles is built from exactly that mask, so candidate sets,
+/// rarity sums and variant winners differ per room.
+fn maskDts(dts: []const dt1.Dt1, bits: []const u8, mask: u32, buf: []dt1.Dt1) []const dt1.Dt1 {
     var n: usize = 0;
     for (dts, bits) |dv, b| {
         if (b == 0xff or (b < 32 and (mask >> @intCast(b)) & 1 != 0)) {
@@ -815,6 +817,12 @@ fn roomDts(dts: []const dt1.Dt1, bits: []const u8, pmap: *abi.D2DrlgMapStrc, buf
         }
     }
     return buf[0..n];
+}
+
+fn roomDts(dts: []const dt1.Dt1, bits: []const u8, pmap: *abi.D2DrlgMapStrc, buf: []dt1.Dt1) []const dt1.Dt1 {
+    const pt: [*c]dtables.D2LvlPrestTxt = @ptrCast(@alignCast(pmap.pTxtLevelPrest));
+    if (pt == null) return dts;
+    return maskDts(dts, bits, @bitCast(pt.*.Dt1Mask), buf);
 }
 
 /// Generate one level and rasterize the REAL subtile collision of its preset
@@ -1423,7 +1431,7 @@ fn materializeLevelColl(
                 }
                 break :blk .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
             };
-            var mr = materialize.materializeOutdoorFloorRoom(out_alloc, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type, sub_theme, sub_picked, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
+            var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type, sub_theme, sub_picked, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
             defer mr.deinit(out_alloc);
             try grids.append(out_alloc, .{
                 .x = gx,
@@ -1655,31 +1663,6 @@ pub fn generateActRoomCollision(
 
         var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
         while (pr) |p| : (pr = p.pRoomExNext) {
-            if (lid == 30 and p.sCoords.WorldPosition.x * 5 == 17680 and p.sCoords.WorldPosition.y * 5 == 6560) {
-                if (roomPMap(p)) |pmap| {
-                    const pt: [*c]dtables.D2LvlPrestTxt = @ptrCast(@alignCast(pmap.pTxtLevelPrest));
-                    std.debug.print("DBG30 ds1={s} mask={x} off=({d},{d}) mapsz=({d},{d}) roomsz=({d},{d})\n", .{
-                        preset.presetDs1Path(pmap) orelse "?",
-                        if (pt != null) @as(u32, @bitCast(pt.*.Dt1Mask)) else 0,
-                        p.sCoords.WorldPosition.x - pmap.nRealOffsetX, p.sCoords.WorldPosition.y - pmap.nRealOffsetY,
-                        pmap.nSizeX, pmap.nSizeY, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y,
-                    });
-                    if (preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap).?)) |dd| {
-                        var d2 = dd;
-                        defer d2.deinit();
-                        const ox: usize = @intCast(p.sCoords.WorldPosition.x - pmap.nRealOffsetX);
-                        const oy: usize = @intCast(p.sCoords.WorldPosition.y - pmap.nRealOffsetY);
-                        const dw: usize = @intCast(d2.width);
-                        for ([_][2]usize{ .{ 5, 3 }, .{ 6, 3 }, .{ 8, 3 }, .{ 8, 6 }, .{ 5, 6 } }) |txy| {
-                            const ti = (oy + txy[1]) * dw + (ox + txy[0]);
-                            std.debug.print("DBG30 tile({d},{d}):", .{ txy[0], txy[1] });
-                            for (d2.floor_layers, 0..) |fl, li| std.debug.print(" f{d}={x}", .{ li, fl[ti].raw });
-                            for (d2.wall_layers, 0..) |wl, li| std.debug.print(" w{d}={x} o{d}={d}", .{ li, wl.wall[ti].raw, li, wl.orient[ti].prop1 });
-                            std.debug.print("\n", .{});
-                        }
-                    } else {}
-                }
-            }
             const tiles: []materialize.CollTile = blk: {
                 if (roomPMap(p)) |pmap| {
                     var d = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
@@ -1695,7 +1678,7 @@ pub fn generateActRoomCollision(
                         }
                         break :t .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
                     };
-                    var mr = materialize.materializeOutdoorFloorRoom(out_alloc, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
+                    var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
                     defer mr.deinit(out_alloc);
                     break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
                 } else continue;
