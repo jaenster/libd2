@@ -57,7 +57,7 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     // ORDER into the capture (645 cells / 36 rooms at seed 1). The capture now
     // frees + re-allocs every room's grid after the full level walk, giving the
     // steady-state map the port targets. Measured 11,083,341 (99.959%) at rebase.
-    try std.testing.expect(r.masked_ok >= 11_083_000);
+    try std.testing.expect(r.masked_ok >= 11_083_500);
 }
 
 test "coll: all-acts golden (seed 777, cross-seed regression)" {
@@ -79,9 +79,8 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
     try std.testing.expectEqual(@as(u32, 777), r.seed);
     try std.testing.expect(r.matched_rooms > 0);
     try std.testing.expectEqual(@as(usize, 0), r.dim_mismatch);
-    // Rebuilt (all-rooms-active) golden, measured 11,153,580 (99.961%) at rebase;
-    // see the gate note on the seed-1 test.
-    try std.testing.expect(r.masked_ok >= 11_153_000);
+    // Rebuilt (all-rooms-active) golden; 11,154,056 after the +1 wall-edge gather.
+    try std.testing.expect(r.masked_ok >= 11_154_000);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
