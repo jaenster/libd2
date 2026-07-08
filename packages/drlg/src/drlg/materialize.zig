@@ -363,6 +363,17 @@ pub const Ds1RoomWindow = struct {
     size_x: i32,
     size_y: i32,
     seed: s.D2SeedStrc,
+    /// LvlPrest FillBlanks — the engine threads it to FLOOR LAYER 0 ONLY
+    /// (InitializePresetRoom 0x666ac0): an empty inside floor cell gets a Blank.dt1
+    /// floor tile. Layers 1+ and walls/shadow always run with 0.
+    fill_blanks: i32 = 0,
+    /// LvlPrest KillEdge && the room touches the pMap's far X/Y edge: the engine
+    /// drops the +1 kill-edge column/row from every count/init loop.
+    kill_x: i32 = 0,
+    kill_y: i32 = 0,
+    /// The room's level id — the blank fill is level-aware (Arcane Sanctuary 0x4a
+    /// uses Blank sub=1, everything else sub=0; ProcessTile 0x66e9b0).
+    level_id: i32 = 0,
 };
 
 /// A windowed sub-grid header over the whole-DS1 `cells` (row stride `full_w`):
@@ -508,7 +519,7 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     var drlg = std.mem.zeroes(s.D2DrlgStrc);
     var level = std.mem.zeroes(s.D2DrlgLevelStrc);
     level.pDrlg = &drlg;
-    level.eD2LevelId = @enumFromInt(0);
+    level.eD2LevelId = @enumFromInt(win.level_id);
 
     var room = std.mem.zeroes(s.D2RoomExStrc);
     room.pLevel = &level;
@@ -549,12 +560,13 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
 
     // ── Room tile grid + count → alloc (InitializePresetRoom order). ──
     try allocRoomTileGrid(pRoom, ar);
-    for (floor_grids) |*g| countTilesFromGrid(pRoom, &g.grid, 0, 0, 0);
+    for (floor_grids, 0..) |*g, li|
+        countTilesFromGrid(pRoom, &g.grid, if (li == 0) win.fill_blanks else 0, win.kill_x, win.kill_y);
     for (wall_grids, 0..) |*g, li| {
-        countWallTilesFromGrid(pRoom, &g.grid, &orient_grids[li].grid, 0, 0);
-        countTilesFromGrid(pRoom, &g.grid, 0, 0, 0);
+        countWallTilesFromGrid(pRoom, &g.grid, &orient_grids[li].grid, win.kill_x, win.kill_y);
+        countTilesFromGrid(pRoom, &g.grid, 0, win.kill_x, win.kill_y);
     }
-    countTilesFromGrid(pRoom, &shadow_grid.grid, 0, 0, 0);
+    countTilesFromGrid(pRoom, &shadow_grid.grid, 0, win.kill_x, win.kill_y);
 
     const pTileGrid: [*c]s.D2DrlgTileGridStrc = @ptrCast(room.pRoomTiles);
     // Safety headroom: the count fns are faithful but we route a few special
@@ -574,9 +586,10 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     @memset(ctx.companion, false);
     g_ctx = &ctx;
 
-    for (floor_grids) |*g| InitRoomTiles(pRoom, &g.grid, null, 0, 0, 0);
-    for (wall_grids, 0..) |*g, li| InitRoomTiles(pRoom, &g.grid, &orient_grids[li].grid, 0, 0, 0);
-    InitRoomTiles(pRoom, &shadow_grid.grid, null, 0, 0, 0);
+    for (floor_grids, 0..) |*g, li|
+        InitRoomTiles(pRoom, &g.grid, null, if (li == 0) win.fill_blanks else 0, win.kill_x, win.kill_y);
+    for (wall_grids, 0..) |*g, li| InitRoomTiles(pRoom, &g.grid, &orient_grids[li].grid, 0, win.kill_x, win.kill_y);
+    InitRoomTiles(pRoom, &shadow_grid.grid, null, 0, win.kill_x, win.kill_y);
 
     // ── Rasterize floor + wall tile-data (exclude roof array + companions). ──
     // The engine's per-room CollMap is dwSizeGameX/Y = WorldSize*5 (NO +1): the +1
