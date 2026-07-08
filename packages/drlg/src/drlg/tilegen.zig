@@ -169,10 +169,11 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
         if (nRaritySum & (nRaritySum -% 1) == 0) {
             nRandom = (nRaritySum -% 1) & @as(u32, @bitCast(next.nSeedLow));
         } else {
-            // recon: ((uint64_t)sNewSeed & -1) % nRaritySum  (full 64-bit state).
-            const lo: u64 = @as(u32, @bitCast(next.nSeedLow));
-            const hi: u64 = @as(u32, @bitCast(next.nSeedHigh));
-            nRandom = @intCast(((hi << 32) | lo) % @as(u64, nRaritySum));
+            // 0x66d8f4: XOR EDX,EDX; DIV EBX — the engine mods the 32-bit NEW LOW
+            // WORD only. The recon's "(uint64_t)sNewSeed % nRaritySum" is the same
+            // Ghidra mis-widening as ForAllButDenOfEvil's %15 (do NOT use the
+            // 64-bit state; wrong variant wins for non-power-of-two sums).
+            nRandom = @as(u32, @bitCast(next.nSeedLow)) % nRaritySum;
         }
     }
 
