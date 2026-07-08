@@ -774,16 +774,20 @@ fn appendGlobalDts(out_alloc: std.mem.Allocator, idx: *const dt1blob.Index, dts:
     }
 }
 
-/// Load a LevelType's DT1 set recording, per loaded entry, its LvlTypes File bit
-/// (0..31); the always-appended globals get 0xff. The engine's per-room apTiles is
-/// LvlTypes File[LvlPrest Dt1Mask bits] + the 3 globals, so preset rooms filter by
-/// their preset's mask (roomDts) — identity lookups shared between masked files
-/// (e.g. Act-2 Tomb main=9 in both Duriel.dt1 and Tombsteps.dt1, rarity 0 so the
-/// FIRST match wins) resolve differently per room.
+/// Load a LevelType's DT1 set recording, per loaded entry, its LvlTypes File
+/// COLUMN bit (`File N` -> N-1, from typeFilesCols); the always-appended globals
+/// get 0xff. The engine's per-room apTiles is LvlTypes File[LvlPrest Dt1Mask
+/// bits] + the 3 globals, so preset rooms filter by their preset's mask
+/// (roomDts) — identity lookups shared between masked files (e.g. Act-2 Tomb
+/// main=9 in both Duriel.dt1 and Tombsteps.dt1, rarity 0 so the FIRST match
+/// wins) resolve differently per room. Mask bits address File COLUMNS, not the
+/// compacted list: rows with "0" gaps (Act 1 - Jail File5/File8) shift every
+/// later file, e.g. jail mask 0x6b must include Torture.dt1 (File6, bit 5).
 fn loadLevelDts(
     out_alloc: std.mem.Allocator,
     idx: *const dt1blob.Index,
     files: [][]const u8,
+    cols: []const u8,
     dts: *std.ArrayListUnmanaged(dt1.Dt1),
     bits: *std.ArrayListUnmanaged(u8),
 ) void {
@@ -791,7 +795,7 @@ fn loadLevelDts(
         const rec = idx.get(f) orelse continue;
         const d = dt1blob.unpack(out_alloc, rec) catch continue;
         dts.append(out_alloc, d) catch continue;
-        bits.append(out_alloc, @intCast(i)) catch {};
+        bits.append(out_alloc, cols[i]) catch {};
     }
     appendGlobalDts(out_alloc, idx, dts);
     while (bits.items.len < dts.items.len) bits.append(out_alloc, 0xff) catch break;
@@ -1365,7 +1369,8 @@ fn materializeLevelColl(
 
     // Level DT1 library (LvlTypes File1..32 for this LevelType).
     var files: [32][]const u8 = undefined;
-    const nf = ctx.act.typeFiles(tlv.lvl_type, &files);
+    var file_cols: [32]u8 = undefined;
+    const nf = ctx.act.typeFilesCols(tlv.lvl_type, &files, &file_cols);
     var dts: std.ArrayListUnmanaged(dt1.Dt1) = .empty;
     defer {
         for (dts.items) |*d| d.deinit();
@@ -1373,7 +1378,7 @@ fn materializeLevelColl(
     }
     var dts_bits: std.ArrayListUnmanaged(u8) = .empty;
     defer dts_bits.deinit(out_alloc);
-    loadLevelDts(out_alloc, idx, files[0..nf], &dts, &dts_bits);
+    loadLevelDts(out_alloc, idx, files[0..nf], file_cols[0..nf], &dts, &dts_bits);
     var room_dts_buf: [35]dt1.Dt1 = undefined;
 
     // Emit one grid per materialized room, at its level-local subtile offset. The
@@ -1620,7 +1625,8 @@ pub fn generateActRoomCollision(
 
         // Level DT1 library (LvlTypes File1..32 for this LevelType).
         var files: [32][]const u8 = undefined;
-        const nf = ctx.act.typeFiles(tlv.lvl_type, &files);
+        var file_cols: [32]u8 = undefined;
+        const nf = ctx.act.typeFilesCols(tlv.lvl_type, &files, &file_cols);
         var dts: std.ArrayListUnmanaged(dt1.Dt1) = .empty;
         defer {
             for (dts.items) |*d| d.deinit();
@@ -1628,7 +1634,7 @@ pub fn generateActRoomCollision(
         }
         var dts_bits: std.ArrayListUnmanaged(u8) = .empty;
         defer dts_bits.deinit(out_alloc);
-        loadLevelDts(out_alloc, idx, files[0..nf], &dts, &dts_bits);
+        loadLevelDts(out_alloc, idx, files[0..nf], file_cols[0..nf], &dts, &dts_bits);
         var room_dts_buf: [35]dt1.Dt1 = undefined;
 
         // ── Faithful per-room CollMap build (AllocRoomCollisionGrid 0x64c900). ──
@@ -1649,6 +1655,31 @@ pub fn generateActRoomCollision(
 
         var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
         while (pr) |p| : (pr = p.pRoomExNext) {
+            if (lid == 30 and p.sCoords.WorldPosition.x * 5 == 17680 and p.sCoords.WorldPosition.y * 5 == 6560) {
+                if (roomPMap(p)) |pmap| {
+                    const pt: [*c]dtables.D2LvlPrestTxt = @ptrCast(@alignCast(pmap.pTxtLevelPrest));
+                    std.debug.print("DBG30 ds1={s} mask={x} off=({d},{d}) mapsz=({d},{d}) roomsz=({d},{d})\n", .{
+                        preset.presetDs1Path(pmap) orelse "?",
+                        if (pt != null) @as(u32, @bitCast(pt.*.Dt1Mask)) else 0,
+                        p.sCoords.WorldPosition.x - pmap.nRealOffsetX, p.sCoords.WorldPosition.y - pmap.nRealOffsetY,
+                        pmap.nSizeX, pmap.nSizeY, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y,
+                    });
+                    if (preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap).?)) |dd| {
+                        var d2 = dd;
+                        defer d2.deinit();
+                        const ox: usize = @intCast(p.sCoords.WorldPosition.x - pmap.nRealOffsetX);
+                        const oy: usize = @intCast(p.sCoords.WorldPosition.y - pmap.nRealOffsetY);
+                        const dw: usize = @intCast(d2.width);
+                        for ([_][2]usize{ .{ 5, 3 }, .{ 6, 3 }, .{ 8, 3 }, .{ 8, 6 }, .{ 5, 6 } }) |txy| {
+                            const ti = (oy + txy[1]) * dw + (ox + txy[0]);
+                            std.debug.print("DBG30 tile({d},{d}):", .{ txy[0], txy[1] });
+                            for (d2.floor_layers, 0..) |fl, li| std.debug.print(" f{d}={x}", .{ li, fl[ti].raw });
+                            for (d2.wall_layers, 0..) |wl, li| std.debug.print(" w{d}={x} o{d}={d}", .{ li, wl.wall[ti].raw, li, wl.orient[ti].prop1 });
+                            std.debug.print("\n", .{});
+                        }
+                    } else {}
+                }
+            }
             const tiles: []materialize.CollTile = blk: {
                 if (roomPMap(p)) |pmap| {
                     var d = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
