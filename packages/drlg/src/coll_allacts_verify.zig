@@ -12,10 +12,15 @@ const std = @import("std");
 const lib = @import("lib.zig");
 
 const GOLDEN_GZ = @embedFile("golden/coll_seed1_all.jsonl.gz");
+const GOLDEN_777_GZ = @embedFile("golden/coll_seed777_all.jsonl.gz");
 
 fn decompressGolden(gpa: std.mem.Allocator) ![]u8 {
+    return decompressGz(gpa, GOLDEN_GZ);
+}
+
+fn decompressGz(gpa: std.mem.Allocator, gz: []const u8) ![]u8 {
     const flate = std.compress.flate;
-    var in: std.Io.Reader = .fixed(GOLDEN_GZ);
+    var in: std.Io.Reader = .fixed(gz);
     const window = try gpa.alloc(u8, flate.max_window_len);
     defer gpa.free(window);
     var dec = flate.Decompress.init(&in, .gzip, window);
@@ -55,6 +60,25 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     // all in Kurast (L081 95.7%->97.2%). Remaining residual = Act-2 tomb/Act-1 cave
     // DT1-completeness holes + the deeper Kurast preset gap.
     try std.testing.expect(r.masked_ok >= 11_065_000);
+}
+
+test "coll: all-acts golden (seed 777, cross-seed regression)" {
+    // Second, independent seed captured 2026-07-08 (d2probe --spawn --seedstart=777).
+    // Guards the fidelity chain against seed-1-specific fitting: every mechanism fix
+    // must hold here without ever having been measured against this seed.
+    const gpa = std.testing.allocator;
+    const golden = decompressGz(gpa, GOLDEN_777_GZ) catch return;
+    defer gpa.free(golden);
+
+    var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+
+    const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
+    try std.testing.expectEqual(@as(u32, 777), r.seed);
+    try std.testing.expect(r.matched_rooms > 0);
+    try std.testing.expectEqual(@as(usize, 0), r.dim_mismatch);
+    // First measurement (at the 99.960% seed-1 state): 11,153,487 / 11,157,950.
+    try std.testing.expect(r.masked_ok >= 11_150_000);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
