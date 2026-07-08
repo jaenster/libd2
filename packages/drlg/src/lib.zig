@@ -752,12 +752,17 @@ fn dt1Index() *const dt1blob.Index {
 /// The DT1s the engine ALWAYS appends to every room's tile library (verified in
 /// 1.14d Game.exe: Blank.dt1, InvisWal.dt1, Warp.dt1). Only InvisWal is present in
 /// our baked blob (Blank/Warp are absent — handled by the solid_fill/blank_fill
-/// stand-ins in tilegen.zig). InvisWal carries the orient-{1,2,3,4,7} main=49
-/// invisible-wall tiles that Act-3 Kurast preset DS1s reference; without them those
-/// wall cells fall back to a garbage type-10 tile and stamp a spurious lattice.
+/// stand-ins in tilegen.zig). The engine's InvisWal content is d2data
+/// act1\barracks\inviswal.dt1 (19 tiles, md5 c241ab6a): the orient-{1,2,3,4,7}
+/// main=49 sub=0 invisible walls (empty subtile blocks, collision via nFlags) PLUS
+/// orient-0 main=49 sub=0-13 tiles whose inline 25-byte subtile flags carry the
+/// block-walk 0x01 bits Kurast preset DS1s rely on — proven by matching the
+/// runtime tile-library entries (block pointers + flag bytes) captured from
+/// Game.exe at seed-1 L80. The act2\palace copy is a 5-tile stub without the
+/// orient-0 set; do not bake that one.
 const GLOBAL_DT1_PATHS = [_][]const u8{
     "act1/outdoors/blank.dt1",
-    "act2/palace/inviswal.dt1",
+    "act1/barracks/inviswal.dt1",
     "act1/barracks/warp.dt1",
 };
 
