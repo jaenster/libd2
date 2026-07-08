@@ -181,6 +181,14 @@ pub const Tables = struct {
 
     /// The .dt1 tile-library filenames for a level type (non-"0" slots).
     pub fn typeFiles(self: *const Tables, lvl_type: i64, out: *[32][]const u8) usize {
+        return self.typeFilesCols(lvl_type, out, null);
+    }
+
+    /// Like typeFiles, but also reports each file's LvlTypes File COLUMN index
+    /// (0-based, i.e. `File N` -> N-1). LvlPrest Dt1Mask bits address these
+    /// column indices — rows with "0" gaps (e.g. Act 1 - Jail: File5/File8 = 0)
+    /// make the compacted list position diverge from the mask bit.
+    pub fn typeFilesCols(self: *const Tables, lvl_type: i64, out: *[32][]const u8, cols: ?*[32]u8) usize {
         const t = &self.lvl_types;
         const row = t.findByInt("Id", lvl_type) orelse return 0;
         var n: usize = 0;
@@ -191,6 +199,7 @@ pub const Tables = struct {
             const f = t.str(row, name);
             if (f.len > 0 and !std.mem.eql(u8, f, "0")) {
                 out[n] = f;
+                if (cols) |c| c[n] = @intCast(i - 1);
                 n += 1;
             }
         }
