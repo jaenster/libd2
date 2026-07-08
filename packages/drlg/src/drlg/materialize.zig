@@ -236,9 +236,15 @@ fn processTile(nFlags_in: i32, pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nPar
     if ((nFlags & CELLFLAGS_0x80000000) != CELLFLAGS_NONE) {
         switch (nOtherFlags) {
             CELLFLAGS_0x08, CELLFLAGS_0x08 | CELLFLAGS_0x01 => {
+                // RoomTile.cpp 690-698: levels 0x6f/0x70/0x75 (Act-5 Barricade 1/2 +
+                // Barricade Snow) fall through — their orient-8/9 preset markers are
+                // real tower walls, processed as normal cells. Everywhere else:
                 // Preset::CreatesPresets — preset spawn, no base collision tile.
-                g_ctx.markSpecial(nX, nY);
-                return;
+                const lvl: i32 = @intFromEnum(pRoom.*.pLevel.?.eD2LevelId);
+                if (lvl < 0x6f or (lvl > 0x70 and lvl != 0x75)) {
+                    g_ctx.markSpecial(nX, nY);
+                    return;
+                }
             },
             CELLFLAGS_0x08 | CELLFLAGS_0x02, CELLFLAGS_0x08 | CELLFLAGS_0x02 | CELLFLAGS_0x01 => {
                 if (7 < nMainIndex) return;
