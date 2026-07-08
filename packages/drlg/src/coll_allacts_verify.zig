@@ -50,16 +50,14 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
         .{ r.matched_rooms, r.dim_mismatch, r.golden_only, r.total_cells, r.masked_ok, pct },
     );
     try std.testing.expect(r.matched_rooms > 0);
-    // Lock overall all-acts fidelity; raise as acts close. Never regress.
-    // Per-act masked-0x1F: Act1 ~99.8%, Act2 ~99.7%, Act3 ~99.3%, Act4 ~99.9%, Act5 ~99.7%.
-    // Overall 99.81% — getTileLibraryEntry no longer stamps the arbitrary type-10 fallback
-    // tile's collision for unresolved identities (the engine HALTS on an unresolved tile, it
-    // never falls back). That fallback was OVER-setting WALL/BLOCK on the orient-0 main=49
-    // invisible-FLOOR cells in the Act-3 Kurast presets (serpent.dt1's orient-0 main=49 is
-    // not loaded); dropping it to no-collision (like collision.zig) is +5017 golden cells,
-    // all in Kurast (L081 95.7%->97.2%). Remaining residual = Act-2 tomb/Act-1 cave
-    // DT1-completeness holes + the deeper Kurast preset gap.
-    try std.testing.expect(r.masked_ok >= 11_065_000);
+    // Lock overall all-acts fidelity; raise as mechanisms close. Never regress.
+    // Both goldens are ALL-ROOMS-ACTIVE REBUILT captures (2026-07-08): the engine
+    // builds each room's CollMap once at activation, seeing only the neighbors
+    // active at that moment, so a plain activate+dump walk bakes the activation
+    // ORDER into the capture (645 cells / 36 rooms at seed 1). The capture now
+    // frees + re-allocs every room's grid after the full level walk, giving the
+    // steady-state map the port targets. Measured 11,083,341 (99.959%) at rebase.
+    try std.testing.expect(r.masked_ok >= 11_083_000);
 }
 
 test "coll: all-acts golden (seed 777, cross-seed regression)" {
@@ -74,11 +72,16 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
     defer ctx.deinit();
 
     const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
+    std.debug.print(
+        "[coll all-acts seed 777] rooms matched={d} dim_mismatch={d} | cells={d} masked-0x1F ok={d}\n",
+        .{ r.matched_rooms, r.dim_mismatch, r.total_cells, r.masked_ok },
+    );
     try std.testing.expectEqual(@as(u32, 777), r.seed);
     try std.testing.expect(r.matched_rooms > 0);
     try std.testing.expectEqual(@as(usize, 0), r.dim_mismatch);
-    // First measurement (at the 99.960% seed-1 state): 11,153,487 / 11,157,950.
-    try std.testing.expect(r.masked_ok >= 11_150_000);
+    // Rebuilt (all-rooms-active) golden, measured 11,153,580 (99.961%) at rebase;
+    // see the gate note on the seed-1 test.
+    try std.testing.expect(r.masked_ok >= 11_153_000);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
