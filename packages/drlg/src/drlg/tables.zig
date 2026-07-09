@@ -310,6 +310,27 @@ pub fn lvlWarpGetLine(id: i32) [*c]D2LvlWarpTxt {
     const r = t.src.lvl_warp.findByInt("Id", id) orelse return null;
     return &t.lvl_warp[r];
 }
+/// TXT_LvlWarp_Setup (0x0061f310): linear scan in table order; a row matches when
+/// Id equals AND (wanted=='b' 0x62 || row.Direction=='b' || row.Direction==wanted).
+/// The engine returns the matched row pointer (EAX passthrough — the recon's
+/// `void` is a decompiler artifact) and HALTS (line 0x33a) on a full miss.
+/// Returns a 1-based row index (0 = miss) so callers can stash it in the warp
+/// node's i32 slot the way the engine stashes the row pointer.
+pub fn lvlWarpSetupIndex(nWarpId: i32, nDirection: u8) i32 {
+    const t = g_lvl_tables orelse return 0;
+    for (t.lvl_warp, 0..) |*row, i| {
+        if (row.Id != nWarpId) continue;
+        const d: u8 = @truncate(@as(u32, @bitCast(row.Direction)));
+        if (nDirection == 0x62 or d == 0x62 or d == nDirection) return @intCast(i + 1);
+    }
+    return 0;
+}
+/// LvlWarp row from a lvlWarpSetupIndex 1-based handle.
+pub fn lvlWarpRowAt(idx1: i32) ?*const D2LvlWarpTxt {
+    const t = g_lvl_tables orelse return null;
+    if (idx1 <= 0 or @as(usize, @intCast(idx1)) > t.lvl_warp.len) return null;
+    return &t.lvl_warp[@intCast(idx1 - 1)];
+}
 /// TXT_LevelDefs_GetLine(level)
 pub fn levelDefsGetLine(eLevel: eD2LevelId) [*c]D2LevelDefsTxt {
     const t = g_lvl_tables orelse return null;
@@ -414,7 +435,12 @@ fn buildWarp(gpa: std.mem.Allocator, t: *const txt.Table) ![]D2LvlWarpTxt {
             .OffsetY = i32col(t, i, "OffsetY"),
             .LitVersion = i32col(t, i, "LitVersion"),
             .Tiles = i32col(t, i, "Tiles"),
-            .Direction = i32col(t, i, "Direction"),
+            // Direction is a char column ('b'/'l'/'r'); the engine keeps the raw
+            // byte at +0x2C (TXT_LvlWarp_Setup compares it to 0x62/0x6c/0x72).
+            .Direction = blk: {
+                const dtxt = t.str(i, "Direction");
+                break :blk if (dtxt.len > 0) @as(i32, dtxt[0]) else 0;
+            },
         };
     }
     return out;

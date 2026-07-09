@@ -1332,6 +1332,28 @@ pub fn generateActCompositeRaw(
 /// origin (pMap.nRealOffset), size = room.WorldSize, seed = the room's own sSeed.
 /// This is the engine's per-room CollMap (a window of the shared level DS1), not
 /// the whole DS1 — materializeDs1 emits a (WorldSize+1)×5 subtile grid for it.
+
+/// Build every room's warp NODE chain for one level (the engine does this per
+/// room in DRLGROOMEX_InitNearRoomsAndVisTiles 0x66c370 at room init, before tile
+/// materialization): rooms with vis-slot flags (eRoomExFlags 0xff0) link to the
+/// destination level's rooms; linkNearRoomByDirection hangs a warp node
+/// (allocRoomTile 0x66be10) carrying the LvlWarp row on this room's +0x4C chain.
+/// Level 0x85 (Matron's Den family) is excluded like the engine. Idempotence:
+/// callers run this once per level per generation (nodes are push-front; a rerun
+/// would duplicate them).
+fn linkLevelWarpNodes(pLevel: *abi.D2DrlgLevelStrc) void {
+    var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+    while (pr) |p| : (pr = p.pRoomExNext) {
+        if (@intFromEnum(pLevel.eD2LevelId) == 0x85) return;
+        const flags = p.eRoomExFlags;
+        if (!flags.anyWarp()) continue;
+        var slot: u8 = 0;
+        while (slot < 8) : (slot += 1) {
+            if (flags.warpSlot(@intCast(slot))) DrlgRoom.linkNearRoomsByVis(null, p, slot);
+        }
+    }
+}
+
 pub fn roomWindow(p: *abi.D2RoomExStrc, pmap: *abi.D2DrlgMapStrc) materialize.Ds1RoomWindow {
     // InitializePresetRoom 0x666ac0: FillBlanks goes to floor layer 0; KillEdge
     // drops the +1 col/row when the room touches the pMap's far edge.
@@ -1358,6 +1380,8 @@ pub fn roomWindow(p: *abi.D2RoomExStrc, pmap: *abi.D2DrlgMapStrc) materialize.Ds
         .kill_x = @intFromBool(kill or p.sCoords.WorldSize.x + p.sCoords.WorldPosition.x != pmap.nSizeX + pmap.nRealOffsetX),
         .kill_y = @intFromBool(kill or p.sCoords.WorldSize.y + p.sCoords.WorldPosition.y != pmap.nSizeY + pmap.nRealOffsetY),
         .level_id = if (p.pLevel) |lv| @intFromEnum(lv.eD2LevelId) else 0,
+        .warp_nodes = @ptrCast(@alignCast(p.pTileGrid)),
+        .real_drlg = if (p.pLevel) |lv| lv.pDrlg else null,
     };
 }
 
@@ -1538,7 +1562,10 @@ pub fn generateActCollisionAll(
     defer objtbl.deinit();
     for (ids.items) |lid| {
         const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
-        drlg.InitLevel(pLevel);
+        // On-demand like the engine (LinkNearRoomsByVis inits warp-destination
+        // levels early; a second InitLevel would REGENERATE and corrupt them).
+        if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
+        linkLevelWarpNodes(pLevel);
         if (try materializeLevelColl(out_alloc, ctx, idx, pLevel, lid)) |lc| {
             var lc2 = lc;
             lc2.objects = collectLevelObjectColl(pLevel, &objtbl, out_alloc) catch &.{};
@@ -1638,7 +1665,9 @@ pub fn generateActRoomCollision(
 
     for (ids.items) |lid| {
         const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
-        drlg.InitLevel(pLevel);
+        // On-demand like the engine (see generateActCollisionAll note).
+        if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
+        linkLevelWarpNodes(pLevel);
         const tlv = ctx.act.level(lid) orelse continue;
         const nLevelType: i32 = @intFromEnum(pLevel.nLevelType);
 
