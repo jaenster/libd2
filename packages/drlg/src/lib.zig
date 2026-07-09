@@ -1349,8 +1349,14 @@ pub fn roomWindow(p: *abi.D2RoomExStrc, pmap: *abi.D2DrlgMapStrc) materialize.Ds
         // = evolved; the first advance already diverges).
         .seed = .{ .nSeedLow = p.sSeed.nSeedLow, .nSeedHigh = 0x29a },
         .fill_blanks = if (pt != null) pt.*.FillBlanks else 0,
-        .kill_x = @intFromBool(kill and p.sCoords.WorldSize.x + p.sCoords.WorldPosition.x == pmap.nSizeX + pmap.nRealOffsetX),
-        .kill_y = @intFromBool(kill and p.sCoords.WorldSize.y + p.sCoords.WorldPosition.y == pmap.nSizeY + pmap.nRealOffsetY),
+        // The DS1 array is (nSize+1)^2; rooms tile the nSize area. The +1 ring is
+        // scanned ONLY by the room at the pMap's FAR edge (and LvlPrest KillEdge
+        // suppresses it there too). A room whose edge is interior to the pMap stops
+        // at WorldSize -- the next column/row belongs to the adjacent room's window
+        // (stream-verified vs the engine seqtile oracle: the L28 pit room, interior
+        // to a 10x14 pMap with KillEdge=0, scans 8-wide, not 9).
+        .kill_x = @intFromBool(kill or p.sCoords.WorldSize.x + p.sCoords.WorldPosition.x != pmap.nSizeX + pmap.nRealOffsetX),
+        .kill_y = @intFromBool(kill or p.sCoords.WorldSize.y + p.sCoords.WorldPosition.y != pmap.nSizeY + pmap.nRealOffsetY),
         .level_id = if (p.pLevel) |lv| @intFromEnum(lv.eD2LevelId) else 0,
     };
 }
