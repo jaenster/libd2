@@ -1379,6 +1379,10 @@ pub fn roomWindow(p: *abi.D2RoomExStrc, pmap: *abi.D2DrlgMapStrc) materialize.Ds
         // to a 10x14 pMap with KillEdge=0, scans 8-wide, not 9).
         .kill_x = @intFromBool(kill or p.sCoords.WorldSize.x + p.sCoords.WorldPosition.x != pmap.nSizeX + pmap.nRealOffsetX),
         .kill_y = @intFromBool(kill or p.sCoords.WorldSize.y + p.sCoords.WorldPosition.y != pmap.nSizeY + pmap.nRealOffsetY),
+        // Wall layers >= 1: the engine's literal kill rule -- these grids carry no
+        // border marks, so every room materializes their seam column/row inline.
+        .kill1_x = @intFromBool(kill and p.sCoords.WorldSize.x + p.sCoords.WorldPosition.x == pmap.nSizeX + pmap.nRealOffsetX),
+        .kill1_y = @intFromBool(kill and p.sCoords.WorldSize.y + p.sCoords.WorldPosition.y == pmap.nSizeY + pmap.nRealOffsetY),
         .level_id = if (p.pLevel) |lv| @intFromEnum(lv.eD2LevelId) else 0,
         .warp_nodes = @ptrCast(@alignCast(p.pTileGrid)),
         .real_drlg = if (p.pLevel) |lv| lv.pDrlg else null,

@@ -518,6 +518,19 @@ pub const Ds1RoomWindow = struct {
     /// (per-act warp id overrides, e.g. the true-tomb ids) before the LevelDefs
     /// Warp fallback.
     real_drlg: ?*s.D2DrlgStrc = null,
+    /// Kill flags for WALL LAYERS >= 1, which follow the raw engine rule
+    /// (InitializePresetRoom 0x666ac0: kill only when LvlPrest KillEdge is set AND
+    /// the room touches the pMap far edge on that axis). The primary kill_x/kill_y
+    /// stay on the stricter interior rule for floors/wall-0/shadow, whose seam
+    /// cells the engine border-marks and routes through the UpdateOrAddTile seam
+    /// machinery (no inline materialization). Wall layers >= 1 are NEVER
+    /// border-marked (InitGridsFromDS1File 0x6667d0 marks wall grid [0], the floor
+    /// grids and the shadow grid only), so their interior-seam cells DO
+    /// materialize inline -- stream-proven on the L117 barricade tower room: the
+    /// engine ledger holds 83 lookups incl. 3 layer-1 seam walls at x==8/y==8
+    /// (types 7/14, the snow shrub walls), scanned 9x9 while its floors stay 8x8.
+    kill1_x: i32 = 0,
+    kill1_y: i32 = 0,
 };
 
 /// A windowed sub-grid header over the whole-DS1 `cells` (row stride `full_w`):
@@ -715,8 +728,10 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     for (floor_grids, 0..) |*g, li|
         countTilesFromGrid(pRoom, &g.grid, if (li == 0) win.fill_blanks else 0, win.kill_x, win.kill_y);
     for (wall_grids, 0..) |*g, li| {
-        countWallTilesFromGrid(pRoom, &g.grid, &orient_grids[li].grid, win.kill_x, win.kill_y);
-        countTilesFromGrid(pRoom, &g.grid, 0, win.kill_x, win.kill_y);
+        const kx = if (li == 0) win.kill_x else win.kill1_x;
+        const ky = if (li == 0) win.kill_y else win.kill1_y;
+        countWallTilesFromGrid(pRoom, &g.grid, &orient_grids[li].grid, kx, ky);
+        countTilesFromGrid(pRoom, &g.grid, 0, kx, ky);
     }
     countTilesFromGrid(pRoom, &shadow_grid.grid, 0, win.kill_x, win.kill_y);
 
@@ -740,7 +755,14 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
 
     for (floor_grids, 0..) |*g, li|
         InitRoomTiles(pRoom, &g.grid, null, if (li == 0) win.fill_blanks else 0, win.kill_x, win.kill_y);
-    for (wall_grids, 0..) |*g, li| InitRoomTiles(pRoom, &g.grid, &orient_grids[li].grid, 0, win.kill_x, win.kill_y);
+    for (wall_grids, 0..) |*g, li| InitRoomTiles(
+        pRoom,
+        &g.grid,
+        &orient_grids[li].grid,
+        0,
+        if (li == 0) win.kill_x else win.kill1_x,
+        if (li == 0) win.kill_y else win.kill1_y,
+    );
     InitRoomTiles(pRoom, &shadow_grid.grid, null, 0, win.kill_x, win.kill_y);
 
     // ── Rasterize floor + wall tile-data (exclude roof array + companions). ──
