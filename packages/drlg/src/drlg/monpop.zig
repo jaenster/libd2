@@ -76,6 +76,7 @@ pub const MonStat = struct {
     /// spawnCol selects the collision mask (see spawnColMask). Empty spawnCol -> 0.
     size_x: i32, // MonStats2.SizeX
     spawn_col: i32, // MonStats2.spawnCol (0..3; empty -> 0)
+    damage_regen: i32, // MonStats.DamageRegen — life-regen rate (hpregen = maxhp*DamageRegen/16, <<8)
 };
 
 /// A level's Levels.txt monster fields (resolved to class ids). `mon`/`nmon`/`umon`
@@ -175,6 +176,7 @@ pub const Tables = struct {
                     .base_id = resolve(&name_to_id, &mt, r, "BaseId"),
                     .size_x = s2.size_x,
                     .spawn_col = s2.spawn_col,
+                    .damage_regen = @intCast(mt.int(r, "DamageRegen")),
                 };
                 out_i += 1;
             }

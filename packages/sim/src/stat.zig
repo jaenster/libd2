@@ -62,6 +62,7 @@ pub const Stat = enum(u16) {
     maxcoldresist = 44,
     poisonresist = 45,
     maxpoisonresist = 46,
+    hpregen = 74, // ItemStatCost hpregen — per-frame life-regen delta (engine keeps it <<8)
     item_normaldamage = 111, // flat physical damage add (both min and max)
     item_tohit_percent = 119, // +% attack rating
     _,
