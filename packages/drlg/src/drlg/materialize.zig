@@ -39,6 +39,7 @@
 
 const std = @import("std");
 const s = @import("structs.zig");
+const tables = @import("tables.zig");
 const DrlgGrid = @import("DrlgGrid.zig");
 const DrlgRoom = @import("DrlgRoom.zig");
 const Border = @import("outdoors/Border.zig");
@@ -220,6 +221,72 @@ fn processShadowBlock(pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nFlags: i32) 
     _ = tilegen.createShadowTileData(pRoom, null, nX, nY, @bitCast(nFlags), e);
 }
 
+// The warp-tile system (the engine's trailing per-room floor lookups).
+//
+// DRLGROOMEX_AllocRoomTile 0x66be10 hangs warp NODES off RoomEx+0x4C during the
+// act warp-graph build (our DrlgRoom.allocRoomTile): node+0x10 holds the LvlWarp
+// row TXT_LvlWarp_Setup(warpIds[visSlot], 'b') resolved — we store its 1-based
+// row index in the aliased nShadows slot. ProcessTile's bit31 marker branch
+// (orient 0x0A/0x0B, main<=7) then runs CreateExitWarp (spawns the UNIT_WARP
+// preset unit only — no tiles, no rolls; skipped here) + InitWarpCacheTiles
+// 0x66e360, which is the collision-relevant part ported below.
+
+/// gaWarpTileOffsetX/Y @ 0x6ef554 (live-read, interleaved X,Y dword pairs):
+/// the 4 warp floor tiles tile the 2x2 block whose far corner is the marker.
+const WARP_TILE_OFF_X = [4]i32{ 0, 1, 0, 1 };
+const WARP_TILE_OFF_Y = [4]i32{ 0, 0, 1, 1 };
+
+/// DRLGROOMTILE_SetWarpTileDirection 0x66e160 on a warp node: keep the cached
+/// LvlWarp row if its Direction is 'b' (0x62); otherwise re-run TXT_LvlWarp_Setup
+/// with the direction implied by the marker's orientation (GetWarpDirectionByte
+/// 0x66e150: orient != 0x0B -> 'l' 0x6c, else 'r' 0x72).
+fn setWarpTileDirection(node: [*c]s.D2DrlgTileGridStrc, nOrientFlags: i32) void {
+    const row = tables.lvlWarpRowAt(node.*.nShadows) orelse return;
+    const cur: u8 = @truncate(@as(u32, @bitCast(row.Direction)));
+    if (cur == 0x62) return;
+    const wanted: u8 = if (nOrientFlags != 0x0b) 0x6c else 0x72;
+    if (cur == wanted) return;
+    node.*.nShadows = tables.lvlWarpSetupIndex(row.Id, wanted);
+}
+
+/// DRLGROOMTILE_InitWarpCacheTiles 0x66e360 — collision-relevant core. Finds the
+/// room's warp node whose LvlWarp row Id matches the marker's warp id
+/// (warpIds[(gf>>20)&0x3f]); if the (direction-adjusted) row has LitVersion != 0,
+/// creates 4 floor tiles with synthetic grid words ((sub<<12)|i|4)<<8 at the 2x2
+/// block (nX-1..nX, nY-1..nY), each resolved via the normal rarity roll and
+/// tagged nFlags|=8. The engine's final pass only rewires the node's tile lists
+/// (no collision effect) and is skipped. The +6 floor-slot budget the count pass
+/// reserves for negative orient-10/11 cells covers these appends.
+fn initWarpCacheTiles(pRoom: [*c]s.D2RoomExStrc, nFlags: i32, nX: i32, nY: i32, nOrientFlags: i32) void {
+    const pWarpIds = DrlgRoom.getWarpsIdIfExists(pRoom.*.pLevel.?.pDrlg, pRoom.*.pLevel.?.eD2LevelId);
+    const nDestId = pWarpIds[@intCast((@as(u32, @bitCast(nFlags)) >> 0x14) & 0x3f)];
+
+    var node: [*c]s.D2DrlgTileGridStrc = @ptrCast(@alignCast(pRoom.*.pTileGrid));
+    while (node != null) : (node = @ptrCast(@alignCast(node.*.pAnimTiles))) {
+        const row = tables.lvlWarpRowAt(node.*.nShadows) orelse continue;
+        if (row.Id == nDestId) break;
+    }
+    if (node == null) return;
+
+    setWarpTileDirection(node, nOrientFlags);
+    const row = tables.lvlWarpRowAt(node.*.nShadows) orelse return;
+    if (row.LitVersion == 0) return;
+
+    const nSub: u32 = (@as(u32, @bitCast(nFlags)) >> 8) & 0xff;
+    var i: u32 = 0;
+    while (i < 4) : (i += 1) {
+        const gf: u32 = ((nSub << 0xc) | i | 4) << 8;
+        const e = tilegen.getTileLibraryEntry(pRoom, 0, gf);
+        const pTileGrid: [*c]s.D2DrlgTileGridStrc = @ptrCast(pRoom.*.pRoomTiles);
+        const n = pTileGrid.*.nFloors;
+        const pFloor: [*]s.D2DrlgTileDataStrc = @ptrCast(@alignCast(pTileGrid.*.pFloorTiles.?));
+        pFloor[@intCast(n)].pNext = null;
+        pTileGrid.*.nFloors += 1;
+        tilegen.fillTileData(pRoom, &pFloor[@intCast(n)], nX - 1 + WARP_TILE_OFF_X[i], nY - 1 + WARP_TILE_OFF_Y[i], gf, e);
+        pFloor[@intCast(n)].nFlags |= 8;
+    }
+}
+
 /// RoomTile.cpp:666 (0066e9b0). Faithful, with the artifact-blocked warp/preset/
 /// transition branches replaced by counted skips (see file header).
 fn processTile(nFlags_in: i32, pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nParam: i32, nOtherFlags: i32) void {
@@ -248,8 +315,11 @@ fn processTile(nFlags_in: i32, pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nPar
             },
             CELLFLAGS_0x08 | CELLFLAGS_0x02, CELLFLAGS_0x08 | CELLFLAGS_0x02 | CELLFLAGS_0x01 => {
                 if (7 < nMainIndex) return;
-                // createExitWarp + initWarpCacheTiles (artifact-blocked warp).
+                // createExitWarp spawns the UNIT_WARP preset unit only (no tiles,
+                // no rolls) — skipped. initWarpCacheTiles creates the 4 warp floor
+                // tiles (collision + rolls) — ported.
                 g_ctx.markSpecial(nX, nY);
+                initWarpCacheTiles(pRoom, nFlags, nX, nY, nOtherFlags);
                 return;
             },
             else => {},
@@ -380,6 +450,15 @@ pub const Ds1RoomWindow = struct {
     /// The room's level id — the blank fill is level-aware (Arcane Sanctuary 0x4a
     /// uses Blank sub=1, everything else sub=0; ProcessTile 0x66e9b0).
     level_id: i32 = 0,
+    /// The REAL generation room's warp node chain (RoomEx+0x4C, built by
+    /// DrlgRoom.allocRoomTile during the act warp-graph pass) — threaded into the
+    /// window-local room shell so ProcessTile's warp branch (InitWarpCacheTiles
+    /// 0x66e360) can find the room's warps.
+    warp_nodes: ?*s.D2DrlgTileGridStrc = null,
+    /// The REAL act's D2DrlgStrc — getWarpsIdIfExists consults pDrlg.pWarpsInfo
+    /// (per-act warp id overrides, e.g. the true-tomb ids) before the LevelDefs
+    /// Warp fallback.
+    real_drlg: ?*s.D2DrlgStrc = null,
 };
 
 /// A windowed sub-grid header over the whole-DS1 `cells` (row stride `full_w`):
@@ -531,11 +610,12 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     var tlib = tilegen.TileLib{ .dts = dts };
     var drlg = std.mem.zeroes(s.D2DrlgStrc);
     var level = std.mem.zeroes(s.D2DrlgLevelStrc);
-    level.pDrlg = &drlg;
+    level.pDrlg = win.real_drlg orelse &drlg;
     level.eD2LevelId = @enumFromInt(win.level_id);
 
     var room = std.mem.zeroes(s.D2RoomExStrc);
     room.pLevel = &level;
+    room.pTileGrid = win.warp_nodes;
     room.apTiles[0] = @ptrCast(&tlib);
     room.sSeed = win.seed;
     // WorldPosition stays 0 so stored nPosX/nPosY are window-local (0..size);

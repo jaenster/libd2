@@ -264,13 +264,15 @@ pub fn getWarpsIdIfExists(pDrlg: [*c]s.D2DrlgStrc, eLevel: eD2LevelId) [*c]i32 {
     raiseError(0x1a2);
 }
 
-/// DrlgRoom.cpp:385 (1.14d 0066af50). NOTE: the recon returns the uninitialised
-/// local `nWarpId` (a decompiler artifact); reproduced faithfully.
+/// DrlgRoom.cpp:385 (1.14d 0066af50). The recon's "returns uninitialised local"
+/// was a decompiler artifact for an EAX PASSTHROUGH: TXT_LvlWarp_Setup 0x61f310
+/// leaves the matched LvlWarp ROW pointer in EAX, and this function returns it —
+/// CreateExitWarp 0x66e1c0 consumes it as int32_t* (row[7]/[8] = OffsetX/Y) and
+/// AllocRoomTile 0x66be10 stores it at warp-node+0x10. We return the 1-based
+/// LvlWarp row index (fits the node's i32 slot on 64-bit builds).
 pub fn getWarpsIdIfExistsAndSetup(pLevel: [*c]s.D2DrlgLevelStrc, nIdIndex: u8, nDirection: u8) i32 {
-    const nWarpId: i32 = undefined;
     const pWarpIdArray = getWarpsIdIfExists(pLevel.*.pDrlg, pLevel.*.eD2LevelId);
-    forward.lvlWarpSetup(pWarpIdArray[nIdIndex], nDirection);
-    return nWarpId;
+    return tables.lvlWarpSetupIndex(pWarpIdArray[nIdIndex], nDirection);
 }
 
 
@@ -1057,7 +1059,7 @@ pub fn checkNearRoomsForTownAndSetFlag0x800000(pRoomEx: [*c]s.D2RoomExStrc) void
 pub fn resizeArrayAndAddNewNearRoom(pDrlgRoomEx: [*c]s.D2RoomExStrc, pMemory: ?*s.D2PoolManagerStrc, pRoomExStrc: [*c]s.D2RoomExStrc, pRoom: [*c]s.D2RoomExStrc) void {
     _ = pRoomExStrc;
     pDrlgRoomEx.*.nDrlgRoomsExNearCount += 1;
-    const ppNewNearRooms: [*c]?*s.D2RoomExStrc = @ptrCast(@alignCast(pool.ReAllocServerMemory(pMemory, pDrlgRoomEx.*.ppDrlgRoomsExNear, @intCast(pDrlgRoomEx.*.nDrlgRoomsExNearCount * @as(i32, @sizeOf(?*s.D2RoomExStrc))), ".\\DRLG\\DrlgRoom.cpp", 0x314, 0)));
+    const ppNewNearRooms: [*c]?*s.D2RoomExStrc = @ptrCast(@alignCast(pool.ReAllocServerMemory(pMemory, @ptrCast(pDrlgRoomEx.*.ppDrlgRoomsExNear), @intCast(pDrlgRoomEx.*.nDrlgRoomsExNearCount * @as(i32, @sizeOf(?*s.D2RoomExStrc))), ".\\DRLG\\DrlgRoom.cpp", 0x314, 0)));
     pDrlgRoomEx.*.ppDrlgRoomsExNear = ppNewNearRooms;
     if (ppNewNearRooms == null) {
         raiseError(0x315);
@@ -1065,6 +1067,50 @@ pub fn resizeArrayAndAddNewNearRoom(pDrlgRoomEx: [*c]s.D2RoomExStrc, pMemory: ?*
 
     ppNewNearRooms[@intCast(pDrlgRoomEx.*.nDrlgRoomsExNearCount - 1)] = pRoom;
     ReorderNearRoomList(pDrlgRoomEx.*.nDrlgRoomsExNearCount, @ptrCast(pDrlgRoomEx.*.ppDrlgRoomsExNear));
+}
+
+/// DRLGROOMEX_LinkNearRoomsByVis (Drlg.cpp:1213, 1.14d 0066c2a0): for one of the
+/// room's vis slots, find the destination level's matching return-vis slot (by
+/// occurrence index when the warp id exists) and link via linkNearRoomByDirection
+/// -- which allocRoomTile's the warp NODE onto this room's +0x4C chain. Engine
+/// calls InitLevel(pDstLevel) on demand; our callers pre-generate every level of
+/// the act, so a dest level without rooms just yields no link (harmless).
+pub fn linkNearRoomsByVis(pMemory: ?*s.D2PoolManagerStrc, pRoomEx: [*c]s.D2RoomExStrc, srcVisSlot: u8) void {
+    if (pRoomEx == null or srcVisSlot > 7) return;
+    const pSrcLevel = pRoomEx.*.pLevel.?;
+    const srcLevelId = pSrcLevel.*.eD2LevelId;
+    const pSrcVisArray = getVisArrayFromLevelId(pSrcLevel.*.pDrlg, srcLevelId);
+    const dstLevelId: eD2LevelId = pSrcVisArray[srcVisSlot];
+    const pDstLevel = GetLevelAndAlloc(pSrcLevel.*.pDrlg, dstLevelId);
+    const pDstVisArray = getVisArrayFromLevelId(pSrcLevel.*.pDrlg, dstLevelId);
+    const warpDestLevel = @import("DrlgWarp.zig").getWarpDestinationFromArray(pSrcLevel, srcVisSlot);
+    if (pDstLevel.*.pRoomExFirst == null) InitLevel(pDstLevel);
+
+    if (warpDestLevel != -1) {
+        // Occurrence-match: the Nth src-vis referencing dst pairs with the Nth
+        // dst-vis referencing src.
+        var nSrcOccurCountBeforeSlot: i32 = 0;
+        var i: u32 = 0;
+        while (i < srcVisSlot) : (i += 1) {
+            if (pSrcVisArray[i] == dstLevelId) nSrcOccurCountBeforeSlot += 1;
+        }
+        var nDstOccurrenceIndex: i32 = 0;
+        var nSlot: u32 = 0;
+        while (nSlot < 8) : (nSlot += 1) {
+            if (pDstVisArray[nSlot] == srcLevelId) {
+                if (nSrcOccurCountBeforeSlot == nDstOccurrenceIndex) {
+                    if (linkNearRoomByDirection(@intCast(nSlot), pRoomEx, pMemory, srcVisSlot, warpDestLevel, pDstLevel.*.pRoomExFirst) != 0) return;
+                    break;
+                }
+                nDstOccurrenceIndex += 1;
+            }
+        }
+    }
+    var nSlot: u32 = 0;
+    while (nSlot < 8) : (nSlot += 1) {
+        if (pDstVisArray[nSlot] != srcLevelId) continue;
+        if (linkNearRoomByDirection(@intCast(nSlot), pRoomEx, pMemory, srcVisSlot, warpDestLevel, pDstLevel.*.pRoomExFirst) != 0) return;
+    }
 }
 
 /// DrlgRoom.cpp:1336 (1.14d 0066be10). Alloc 0x18 -> @sizeOf(D2DrlgTileGridStrc)
