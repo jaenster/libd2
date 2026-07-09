@@ -21,6 +21,7 @@ pub const Op = enum(u8) {
     right_skill_on_location = 0x0C, // D2GSPacketClt0x0C (5)
     right_skill_on_entity = 0x0D, // D2GSPacketClt0x0D (9)
     interact_with_entity = 0x13, // D2GSPacketClt0x13_InteractWithEntity (9)
+    pick_up_item = 0x16, // D2GSPacketClt0x16_PickUpItem (13)  <- SCMD_0x16 pick/interact-ext
     select_skill = 0x3C, // D2GSPacketClt0x3C_SetSkill (9)  <- picks the hand's active skill
     chat_message = 0x15, // D2GSPacketClt0x15_ChatMessage (variable)
     _,
@@ -137,6 +138,39 @@ pub const LeftSkillOnEntity = EntityCmd(.left_skill_on_entity);
 pub const RightSkillOnEntity = EntityCmd(.right_skill_on_entity);
 pub const InteractWithEntity = EntityCmd(.interact_with_entity);
 
+/// 0x16 PickUpItem — D2GSPacketClt0x16_PickUpItem. The extended pick/interact command:
+/// `[nCmd u8][eUnitType u32][dwTargetGUID u32][bParam u32]` (13 bytes). Server dispatch is
+/// SCMD_0x16_InteractWithEntityEx @0x54aad0 -> SERVER_InteractOrPick(unit, type, guid,
+/// bParam): for an ITEM target it picks the item up (`bParam` = to-cursor flag), for an
+/// OBJECT it operates it, for an NPC it opens interaction. Self-interaction on a player is
+/// rejected. Distinct from 0x13 InteractWithEntity (9 bytes) which the host uses for warps.
+pub const PickUpItem = struct {
+    pub const OPCODE: u8 = @intFromEnum(Op.pick_up_item);
+    pub const SIZE: usize = 13;
+
+    unit_type: u32 = 0, // eD2UnitType of the target (4 = item)
+    guid: u32 = 0, // dwTargetGUID
+    to_cursor: u32 = 1, // bParam: pick to cursor (1) vs place directly (0)
+
+    pub fn encode(self: PickUpItem, out: []u8) []u8 {
+        std.debug.assert(out.len >= SIZE);
+        out[0] = OPCODE;
+        std.mem.writeInt(u32, out[1..5], self.unit_type, .little);
+        std.mem.writeInt(u32, out[5..9], self.guid, .little);
+        std.mem.writeInt(u32, out[9..13], self.to_cursor, .little);
+        return out[0..SIZE];
+    }
+    pub fn decode(buf: []const u8) DecodeError!PickUpItem {
+        if (buf.len < SIZE) return error.ShortBuffer;
+        if (buf[0] != OPCODE) return error.WrongOpcode;
+        return .{
+            .unit_type = std.mem.readInt(u32, buf[1..5], .little),
+            .guid = std.mem.readInt(u32, buf[5..9], .little),
+            .to_cursor = std.mem.readInt(u32, buf[9..13], .little),
+        };
+    }
+};
+
 /// 0x15 ChatMessage — D2GSPacketClt0x15_ChatMessage. Fixed 4-byte header then the message
 /// string (max 256) followed by the target name string (max 16), each NUL-terminated. An empty
 /// target => broadcast to the game; a non-empty target => whisper. Wire size is variable:
@@ -224,6 +258,15 @@ test "interact 0x13 + attack==left-skill-on-entity 0x06" {
     const wire = atk.encode(&buf);
     try std.testing.expectEqual(@as(u8, 0x06), wire[0]);
     try std.testing.expectEqual(atk, try LeftSkillOnEntity.decode(wire));
+}
+
+test "PickUpItem 0x16 round-trips byte-exact (13 bytes)" {
+    var buf: [16]u8 = undefined;
+    const p = PickUpItem{ .unit_type = 4, .guid = 0xCAFEBABE, .to_cursor = 1 };
+    const wire = p.encode(&buf);
+    try std.testing.expectEqual(@as(usize, 13), wire.len);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x16, 4, 0, 0, 0, 0xBE, 0xBA, 0xFE, 0xCA, 1, 0, 0, 0 }, wire);
+    try std.testing.expectEqual(p, try PickUpItem.decode(wire));
 }
 
 test "SelectSkill 0x3C round-trips with the left-hand bit" {

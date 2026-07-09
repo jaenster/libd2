@@ -597,6 +597,53 @@ pub const PlayerLeave = struct {
     }
 };
 
+/// 0x19 GoldPickup — NET_D2GS_SERVER_Send_0x19_GoldPickup @0x53e9b0: the small-delta gold
+/// pickup notification, `[op u8][amount u8]` (2 bytes). The engine sends this when the
+/// picked amount is < 255; larger amounts reuse the SetAttribute opcodes (0x1D/0x1E/0x1F)
+/// carrying stat 0x0E (gold) with the NEW total — see SetDWordAttr.
+pub const GoldPickup = struct {
+    pub const OPCODE: u8 = 0x19;
+    pub const SIZE: usize = 2;
+
+    amount: u8 = 0,
+
+    pub fn encode(self: GoldPickup, out: []u8) []u8 {
+        std.debug.assert(out.len >= SIZE);
+        out[0] = OPCODE;
+        out[1] = self.amount;
+        return out[0..SIZE];
+    }
+    pub fn decode(buf: []const u8) DecodeError!GoldPickup {
+        if (buf.len < SIZE) return error.ShortBuffer;
+        if (buf[0] != OPCODE) return error.WrongOpcode;
+        return .{ .amount = buf[1] };
+    }
+};
+
+/// 0x1F SetDWordAttr — the 32-bit SetAttribute: `[op u8][attr u8][value u32]` (6 bytes).
+/// Sets a player stat to an absolute NEW value (attr = the Stat id; 0x0E = gold). Siblings
+/// 0x1D/0x1E are the u8/u16 variants; the engine picks by value width (GoldPickup comment).
+pub const SetDWordAttr = struct {
+    pub const OPCODE: u8 = 0x1F;
+    pub const SIZE: usize = 6;
+
+    attr: u8 = 0,
+    value: u32 = 0,
+
+    pub fn encode(self: SetDWordAttr, out: []u8) []u8 {
+        std.debug.assert(out.len >= SIZE);
+        out[0] = OPCODE;
+        out[1] = self.attr;
+        std.mem.writeInt(u32, out[2..6], self.value, .little);
+        return out[0..SIZE];
+    }
+    pub fn decode(buf: []const u8) DecodeError!SetDWordAttr {
+        if (buf.len < SIZE) return error.ShortBuffer;
+        if (buf[0] != OPCODE) return error.WrongOpcode;
+        return .{ .attr = buf[1], .value = std.mem.readInt(u32, buf[2..6], .little) };
+    }
+};
+
 /// 0x18 Life @0x0045D900 / 0x95 PlayerJoin @0x0045DB20 — bit-packed (Fog::BitBuffer, LSB-first).
 /// Local player only (no GUID on the wire). Field order/widths: hp/mp/stamina are u15 each (the
 /// engine keeps them <<8 as 1/256 fixed-point); 0x18 then carries two u7 regen fields; both then
@@ -909,6 +956,21 @@ test "PlayerLeave 0x96 bit-packed move+stamina round-trip, signed deltas (9 byte
     try std.testing.expectEqual(@as(u16, 6000), d.y);
     try std.testing.expectEqual(@as(i8, -3), d.dx);
     try std.testing.expectEqual(@as(i8, 4), d.dy);
+}
+
+test "GoldPickup 0x19 + SetDWordAttr 0x1F round-trip, sizes match the SC table" {
+    var buf: [8]u8 = undefined;
+    const g = GoldPickup{ .amount = 200 };
+    const gw = g.encode(&buf);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x19, 200 }, gw);
+    try std.testing.expectEqual(@as(i16, @intCast(gw.len)), SC_SIZE[0x19]);
+    try std.testing.expectEqual(g, try GoldPickup.decode(gw));
+
+    const s = SetDWordAttr{ .attr = 0x0E, .value = 123456 };
+    const sw = s.encode(&buf);
+    try std.testing.expectEqual(@as(usize, 6), sw.len);
+    try std.testing.expectEqual(@as(i16, @intCast(sw.len)), SC_SIZE[0x1F]);
+    try std.testing.expectEqual(s, try SetDWordAttr.decode(sw));
 }
 
 test "PacketWriter concatenates several packets for one flush" {
