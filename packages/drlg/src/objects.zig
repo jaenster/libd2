@@ -28,12 +28,24 @@ pub const Table = struct {
     coll: []Coll,
     /// light[objectRowIndex] = dynamic-light emitter (radius==0 => none).
     light: []Light,
+    /// operate[objectRowIndex] = OperateFn — the index into the server's
+    /// OBJECTSOPERATEFN dispatch table (@0x732d18, 0x65 entries) InteractWithObject
+    /// (@0x584420) calls on interact. Data-observed families: 1 casket/sarcophagus,
+    /// 2 shrine, 3 urn/basket, 4 chest, 8 door, 14 corpse, 22 well.
+    operate: []i32,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *Table) void {
         self.allocator.free(self.cel);
         self.allocator.free(self.coll);
         self.allocator.free(self.light);
+        self.allocator.free(self.operate);
+    }
+
+    /// OperateFn for an objects.txt row (0 = not operable / id out of range).
+    pub fn operateFn(self: *const Table, id: i32) i32 {
+        if (id < 0 or id >= self.operate.len) return 0;
+        return self.operate[@intCast(id)];
     }
 
     /// Dynamic-light emitter for an objects.txt row, or null if the row emits
@@ -71,10 +83,14 @@ pub fn load(gpa: std.mem.Allocator) !Table {
     const coll = try gpa.alloc(Coll, n);
     errdefer gpa.free(coll);
     const light = try gpa.alloc(Light, n);
+    errdefer gpa.free(light);
+    const operate = try gpa.alloc(i32, n);
+    errdefer gpa.free(operate);
     var i: usize = 0;
     while (i < n) : (i += 1) {
         cel[i] = @intCast(t.int(i, "AutoMap"));
         coll[i] = .{ .has = t.int(i, "HasCollision0") != 0, .sx = @intCast(t.int(i, "SizeX")), .sy = @intCast(t.int(i, "SizeY")) };
+        operate[i] = @intCast(t.int(i, "OperateFn"));
         // Brightest lit mode -> emit diameter; engine radius = (Lit>>1) clamped
         // to 18 subtiles. Color is Red/Green/Blue verbatim.
         var max_lit: i64 = 0;
@@ -90,7 +106,7 @@ pub fn load(gpa: std.mem.Allocator) !Table {
             .radius = radius,
         };
     }
-    return .{ .cel = cel, .coll = coll, .light = light, .allocator = gpa };
+    return .{ .cel = cel, .coll = coll, .light = light, .operate = operate, .allocator = gpa };
 }
 
 const testing = std.testing;

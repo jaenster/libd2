@@ -55,6 +55,10 @@ pub const Tables = struct {
         offset_x: i64,
         offset_y: i64,
         depend: i64, // level this one is positioned relative to
+        /// Area monster level per difficulty [normal, nightmare, hell] — the EXPANSION
+        /// columns MonLvl1Ex/2Ex/3Ex (TXT_Levels_GetMonLvlForDifficulty reads these for
+        /// LoD; classic uses MonLvl1/2/3). Drives mlvl-scaled rolls (chest-tier bucket).
+        monlvl: [3]i64,
     };
 
     pub fn level(self: *const Tables, id: i64) ?Level {
@@ -90,6 +94,7 @@ pub const Tables = struct {
             .offset_x = t.int(row, "OffsetX"),
             .offset_y = t.int(row, "OffsetY"),
             .depend = t.int(row, "Depend"),
+            .monlvl = .{ t.int(row, "MonLvl1Ex"), t.int(row, "MonLvl2Ex"), t.int(row, "MonLvl3Ex") },
         };
     }
 

@@ -597,6 +597,41 @@ pub const PlayerLeave = struct {
     }
 };
 
+/// 0x0E ObjectState — NET_D2GS_SERVER_Send_0x0E @0x53b470 (12 bytes): broadcasts an
+/// object unit's animation-mode/state change (chest opened, door toggled, shrine used).
+/// `[op u8][unitType u8 = 2 OBJECT][guid u32][0x03 u8 const][active u8][animMode u32]`.
+/// `active` = (unitFlags>>1)&1; `anim_mode` = eD2ObjectAnimMode (0 Neutral, 1 Operating,
+/// 2 Opened, 3-7 Special1-5). Sole engine caller chain: OBJECT_SendStateToClient
+/// @0x581a20 <- PacketUpdateForClient @0x581ad0 on UNITFLAG_DOUPDATE.
+pub const ObjectState = struct {
+    pub const OPCODE: u8 = 0x0E;
+    pub const SIZE: usize = 12;
+
+    guid: u32 = 0,
+    active: u8 = 0,
+    anim_mode: u32 = 0,
+
+    pub fn encode(self: ObjectState, out: []u8) []u8 {
+        std.debug.assert(out.len >= SIZE);
+        out[0] = OPCODE;
+        out[1] = 2; // eD2UnitType OBJECT
+        std.mem.writeInt(u32, out[2..6], self.guid, .little);
+        out[6] = 0x03; // engine constant
+        out[7] = self.active;
+        std.mem.writeInt(u32, out[8..12], self.anim_mode, .little);
+        return out[0..SIZE];
+    }
+    pub fn decode(buf: []const u8) DecodeError!ObjectState {
+        if (buf.len < SIZE) return error.ShortBuffer;
+        if (buf[0] != OPCODE) return error.WrongOpcode;
+        return .{
+            .guid = std.mem.readInt(u32, buf[2..6], .little),
+            .active = buf[7],
+            .anim_mode = std.mem.readInt(u32, buf[8..12], .little),
+        };
+    }
+};
+
 /// 0x19 GoldPickup — NET_D2GS_SERVER_Send_0x19_GoldPickup @0x53e9b0: the small-delta gold
 /// pickup notification, `[op u8][amount u8]` (2 bytes). The engine sends this when the
 /// picked amount is < 255; larger amounts reuse the SetAttribute opcodes (0x1D/0x1E/0x1F)
@@ -956,6 +991,15 @@ test "PlayerLeave 0x96 bit-packed move+stamina round-trip, signed deltas (9 byte
     try std.testing.expectEqual(@as(u16, 6000), d.y);
     try std.testing.expectEqual(@as(i8, -3), d.dx);
     try std.testing.expectEqual(@as(i8, 4), d.dy);
+}
+
+test "ObjectState 0x0E round-trips byte-exact (12 bytes, table-sized)" {
+    var buf: [16]u8 = undefined;
+    const p = ObjectState{ .guid = 0x11223344, .active = 1, .anim_mode = 2 };
+    const wire = p.encode(&buf);
+    try std.testing.expectEqual(@as(i16, @intCast(wire.len)), SC_SIZE[0x0E]);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x0E, 2, 0x44, 0x33, 0x22, 0x11, 0x03, 1, 2, 0, 0, 0 }, wire);
+    try std.testing.expectEqual(p, try ObjectState.decode(wire));
 }
 
 test "GoldPickup 0x19 + SetDWordAttr 0x1F round-trip, sizes match the SC table" {
