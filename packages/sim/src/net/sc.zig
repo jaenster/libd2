@@ -597,6 +597,39 @@ pub const PlayerLeave = struct {
     }
 };
 
+/// 0xAB UnitHpPercent — the monster/unit health-bar update. Built by UnitQueuePacket0xAB
+/// @0x571a10 (nArgs: [0]=unitType, [4..8]=guid, [8]=hpPct) -> 7-byte wire
+/// `[op u8][eUnitType u8][dwUnitGUID u32][byHpPct u8]`. `hp_pct` is the 128-scale health
+/// fraction (MONSTER_GetHpPercent128; full = 0x80). The server sends it when the unit's
+/// hp% moves more than 4 (128-scale) from the last value it broadcast (last_sent_hp_pct,
+/// seeded to 0x80 at MONSTER_InitStats) — RegenAndPsnDecreaser @0x5a6920 + the damage path.
+pub const UnitHpPercent = struct {
+    pub const OPCODE: u8 = 0xAB;
+    pub const SIZE: usize = 7;
+
+    unit_type: u8 = 1, // eD2UnitType (1 = monster)
+    guid: u32 = 0,
+    hp_pct: u8 = 0x80, // 128-scale (full life)
+
+    pub fn encode(self: UnitHpPercent, out: []u8) []u8 {
+        std.debug.assert(out.len >= SIZE);
+        out[0] = OPCODE;
+        out[1] = self.unit_type;
+        std.mem.writeInt(u32, out[2..6], self.guid, .little);
+        out[6] = self.hp_pct;
+        return out[0..SIZE];
+    }
+    pub fn decode(buf: []const u8) DecodeError!UnitHpPercent {
+        if (buf.len < SIZE) return error.ShortBuffer;
+        if (buf[0] != OPCODE) return error.WrongOpcode;
+        return .{
+            .unit_type = buf[1],
+            .guid = std.mem.readInt(u32, buf[2..6], .little),
+            .hp_pct = buf[6],
+        };
+    }
+};
+
 /// 0x0E ObjectState — NET_D2GS_SERVER_Send_0x0E @0x53b470 (12 bytes): broadcasts an
 /// object unit's animation-mode/state change (chest opened, door toggled, shrine used).
 /// `[op u8][unitType u8 = 2 OBJECT][guid u32][0x03 u8 const][active u8][animMode u32]`.
@@ -991,6 +1024,15 @@ test "PlayerLeave 0x96 bit-packed move+stamina round-trip, signed deltas (9 byte
     try std.testing.expectEqual(@as(u16, 6000), d.y);
     try std.testing.expectEqual(@as(i8, -3), d.dx);
     try std.testing.expectEqual(@as(i8, 4), d.dy);
+}
+
+test "UnitHpPercent 0xAB round-trips byte-exact (7 bytes, table-sized)" {
+    var buf: [8]u8 = undefined;
+    const p = UnitHpPercent{ .unit_type = 1, .guid = 0x0A0B0C0D, .hp_pct = 96 };
+    const wire = p.encode(&buf);
+    try std.testing.expectEqual(@as(i16, @intCast(wire.len)), SC_SIZE[0xAB]);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xAB, 1, 0x0D, 0x0C, 0x0B, 0x0A, 96 }, wire);
+    try std.testing.expectEqual(p, try UnitHpPercent.decode(wire));
 }
 
 test "ObjectState 0x0E round-trips byte-exact (12 bytes, table-sized)" {
