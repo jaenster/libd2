@@ -365,6 +365,10 @@ fn processTile(nFlags_in: i32, pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nPar
                 const lvl: i32 = @intFromEnum(pRoom.*.pLevel.?.eD2LevelId);
                 if (lvl < 0x6f or (lvl > 0x70 and lvl != 0x75)) {
                     g_ctx.markSpecial(nX, nY);
+                    // Preset::CreatesPresets — the spawn is collision-neutral,
+                    // but tomb shrine markers (object ids 0x5b/0x5c) consume a
+                    // room-seed roll; nSub = (marker type == 9).
+                    tilegen.createsPresetsRoll(pRoom, @bitCast(nFlags), nX, nY, nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x01));
                     return;
                 }
             },
