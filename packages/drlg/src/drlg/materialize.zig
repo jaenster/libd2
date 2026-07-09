@@ -184,7 +184,10 @@ fn allocTileDataArrays(pRoomEx: [*c]s.D2RoomExStrc, a: std.mem.Allocator) !void 
         pTileGrid.*.pFloorTiles = @ptrCast(arr.ptr);
     }
     if (pTileGrid.*.nWallTilesMax != 0) {
-        const n: usize = @intCast(pTileGrid.*.nWallTilesMax);
+        // +8 slack: SetupWarpTile Path B appends LIT stair walls the count pass
+        // never books (the engine writes them past its counted array into the
+        // Fog pool's slab rounding slack; a room has at most a few lit warps).
+        const n: usize = @as(usize, @intCast(pTileGrid.*.nWallTilesMax)) + 8;
         const arr = try a.alloc(s.D2DrlgTileDataStrc, n);
         @memset(std.mem.sliceAsBytes(arr), 0);
         pTileGrid.*.pWallTiles = @ptrCast(arr.ptr);
@@ -208,11 +211,63 @@ fn processWallBlock(pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nFlags: i32, nO
     while (c < @as(usize, @intCast(pTileGrid.*.nWalls))) : (c += 1) {
         if (c < g_ctx.companion.len) g_ctx.companion[c] = true;
     }
-    // ARTIFACT-BLOCKED: the engine now calls setupWarpTile for warp orientations;
-    // it only wires the warp *unit*, the base wall tile above is unaffected.
+    // DRLGROOMTILE_SetupWarpTile 0x66e260 after every type-0x0A/0x0B wall tile
+    // except on level 0x85 (Matron's Den); Path B may add the LIT stair wall.
     if ((nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x02 | CELLFLAGS_0x01) or nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x02)) and pRoom.*.pLevel.?.eD2LevelId != .MatronsDen) {
         g_ctx.warp_setup_skipped += 1;
+        setupWarpTile(pRoom, nX, nY, nFlags, nOtherFlags);
     }
+}
+
+/// DRLGROOMTILE_SetupWarpTile 0x66e260 (disasm-decoded; the recon garbles its
+/// register/stack args). Engine args: (pWarpEntry = the just-created wall tile,
+/// gf, nTileType) on the stack + EDI = pRoomEx; the engine only reads the
+/// tile's nPosX/nPosY back, so we pass the cell's world coords directly. Flow:
+///   1. warp id = warpIds[(gf>>0x14)&0x3f]; find the room's warp node whose
+///      LvlWarp row Id matches (chain root pRoomEx.pTileGrid, next at +4, row
+///      handle at +0x10; the engine HALTS 0x2b1 on a miss).
+///   2. orientation byte (gf>>8) 0 or 4 -> CreateExitWarp 0x66e1c0 first: the
+///      UNIT_WARP preset spawn is collision-neutral, but its FAILURE aborts
+///      SetupWarpTile entirely (no direction set, no Path B): no LvlWarp setup
+///      row for the tile-type direction (0x0A->'l' 0x6c, 0x0B->'r' 0x72), or
+///      the cell sits on the room's far-edge ring (room-relative x ==
+///      WorldSize.x or y == WorldSize.y).
+///   3. SetWarpTileDirection(node, nTileType); the engine then links the base
+///      wall tile into the node's tile list (collision-neutral, skipped).
+///   4. Path B: if the (direction-adjusted) row's LitVersion != 0, re-resolve
+///      gf' = (row.Tiles << 8) | gf with a NORMAL rarity roll and create a
+///      SECOND wall tile at the same cell, nFlags |= 8. (The engine writes it
+///      past the counted wall array into Fog-pool slab slack; our arrays carry
+///      explicit slack — see allocTileDataArrays.)
+fn setupWarpTile(pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nFlags: i32, nOtherFlags: i32) void {
+    const pWarpIds = DrlgRoom.getWarpsIdIfExists(pRoom.*.pLevel.?.pDrlg, pRoom.*.pLevel.?.eD2LevelId);
+    const nWarpIdx: u8 = @intCast((@as(u32, @bitCast(nFlags)) >> 0x14) & 0x3f);
+    const nDestId = pWarpIds[nWarpIdx];
+
+    var node: [*c]s.D2DrlgTileGridStrc = @ptrCast(@alignCast(pRoom.*.pTileGrid));
+    while (node != null) : (node = @ptrCast(@alignCast(node.*.pAnimTiles))) {
+        const row = tables.lvlWarpRowAt(node.*.nShadows) orelse continue;
+        if (row.Id == nDestId) break;
+    }
+    if (node == null) return; // engine: halt 0x2b1 (unreachable in shipped data)
+
+    const nOrientation: u8 = @truncate(@as(u32, @bitCast(nFlags)) >> 8);
+    if (nOrientation == 0 or nOrientation == 4) {
+        const dir: u8 = if (nOtherFlags != 0x0b) 0x6c else 0x72;
+        if (DrlgRoom.getWarpsIdIfExistsAndSetup(pRoom.*.pLevel, nWarpIdx, dir) == 0) return;
+        const rx = nX - pRoom.*.sCoords.WorldPosition.x;
+        const ry = nY - pRoom.*.sCoords.WorldPosition.y;
+        if (rx == pRoom.*.sCoords.WorldSize.x or ry == pRoom.*.sCoords.WorldSize.y) return;
+    }
+
+    setWarpTileDirection(node, nOtherFlags);
+    const row = tables.lvlWarpRowAt(node.*.nShadows) orelse return;
+    if (row.LitVersion == 0) return;
+
+    const gf: u32 = (@as(u32, @bitCast(row.Tiles)) << 8) | @as(u32, @bitCast(nFlags));
+    const e = tilegen.getTileLibraryEntry(pRoom, nOtherFlags, gf);
+    const t = tilegen.createWallTileData(pRoom, null, nX, nY, gf, e, nOtherFlags);
+    t.nFlags |= 8;
 }
 
 /// RoomTile.cpp 730-731 shadow block.
