@@ -1342,7 +1342,12 @@ pub fn roomWindow(p: *abi.D2RoomExStrc, pmap: *abi.D2DrlgMapStrc) materialize.Ds
         .off_y = p.sCoords.WorldPosition.y - pmap.nRealOffsetY,
         .size_x = p.sCoords.WorldSize.x,
         .size_y = p.sCoords.WorldSize.y,
-        .seed = p.sSeed,
+        // The InitGridCells wrapper 0x66ee40 RE-INITIALIZES the room seed as
+        // {nSeedLow, 0x29a} before tile resolution — the generation-evolved HIGH
+        // word is NOT carried. Passing p.sSeed verbatim kept every rarity roll on
+        // a different stream (seqtile oracle: engine room-start hi = 0x29a, ours
+        // = evolved; the first advance already diverges).
+        .seed = .{ .nSeedLow = p.sSeed.nSeedLow, .nSeedHigh = 0x29a },
         .fill_blanks = if (pt != null) pt.*.FillBlanks else 0,
         .kill_x = @intFromBool(kill and p.sCoords.WorldSize.x + p.sCoords.WorldPosition.x == pmap.nSizeX + pmap.nRealOffsetX),
         .kill_y = @intFromBool(kill and p.sCoords.WorldSize.y + p.sCoords.WorldPosition.y == pmap.nSizeY + pmap.nRealOffsetY),
