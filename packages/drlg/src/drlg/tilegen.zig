@@ -233,6 +233,101 @@ pub fn fillTileData(pRoomEx: [*c]s.D2RoomExStrc, pTileData: *s.D2DrlgTileDataStr
     applyGridFlagBits(pTileData, nGridFlags, true);
 }
 
+/// DRLGPRESET_FindPresetTypeIndex 0x66d960 static tables, live-read from
+/// Game.exe .data (header triples @0x6eefc8: {levelId, firstRow, lastRow};
+/// rows of 7 dwords @0x6ef188: {main, orientByte, subFlag, id, unitType,
+/// offX, offY}; unitType 1 = monster, 2 = object).
+const PresetTypeRow = struct { main: u32, orient: u32, sub: u32, id: i32, ut: i32, off_x: i32, off_y: i32 };
+const PRESET_TYPE_HDR = [_][3]i32{
+    .{ 28, 0, 3 },   .{ 29, 0, 3 },   .{ 30, 0, 3 },   .{ 31, 0, 3 },
+    .{ 26, 4, 6 },   .{ 27, 4, 6 },   .{ 32, 5, 9 },   .{ 33, 5, 9 },
+    .{ 34, 10, 11 }, .{ 35, 10, 11 }, .{ 36, 10, 11 }, .{ 37, 10, 12 },
+    .{ 51, 13, 14 }, .{ 52, 15, 18 }, .{ 53, 15, 18 }, .{ 54, 15, 18 },
+    .{ 55, 19, 20 }, .{ 56, 19, 20 }, .{ 57, 19, 20 }, .{ 58, 19, 20 },
+    .{ 59, 19, 20 }, .{ 60, 19, 20 }, .{ 61, 19, 20 }, .{ 66, 19, 20 },
+    .{ 67, 19, 20 }, .{ 68, 19, 20 }, .{ 69, 19, 20 }, .{ 70, 19, 20 },
+    .{ 71, 19, 20 }, .{ 72, 19, 20 }, .{ 62, 21, 22 }, .{ 63, 21, 22 },
+    .{ 64, 21, 22 }, .{ 109, 23, 24 }, .{ 111, 24, 33 }, .{ 112, 24, 33 },
+    .{ 117, 24, 33 },
+};
+const PRESET_TYPE_ROWS = [_]PresetTypeRow{
+    .{ .main = 7, .orient = 0, .sub = 1, .id = 14, .ut = 2, .off_x = 5, .off_y = 0 },
+    .{ .main = 7, .orient = 0, .sub = 0, .id = 13, .ut = 2, .off_x = 0, .off_y = 5 },
+    .{ .main = 5, .orient = 0, .sub = 1, .id = 16, .ut = 2, .off_x = 0, .off_y = 0 },
+    .{ .main = 5, .orient = 0, .sub = 0, .id = 15, .ut = 2, .off_x = 0, .off_y = 0 },
+    .{ .main = 6, .orient = 0, .sub = 1, .id = 27, .ut = 2, .off_x = 5, .off_y = -2 },
+    .{ .main = 4, .orient = 0, .sub = 1, .id = 24, .ut = 2, .off_x = 1, .off_y = 2 },
+    .{ .main = 4, .orient = 0, .sub = 0, .id = 23, .ut = 2, .off_x = 0, .off_y = 0 },
+    .{ .main = 4, .orient = 3, .sub = 1, .id = 25, .ut = 2, .off_x = 1, .off_y = 0 },
+    .{ .main = 1, .orient = 2, .sub = 0, .id = 62, .ut = 2, .off_x = 0, .off_y = 3 },
+    .{ .main = 1, .orient = 2, .sub = 1, .id = 63, .ut = 2, .off_x = 3, .off_y = 0 },
+    .{ .main = 0, .orient = 0, .sub = 1, .id = 16, .ut = 2, .off_x = 0, .off_y = 0 },
+    .{ .main = 0, .orient = 0, .sub = 0, .id = 64, .ut = 2, .off_x = 0, .off_y = 0 },
+    .{ .main = 2, .orient = 0, .sub = 1, .id = 47, .ut = 2, .off_x = 5, .off_y = 0 },
+    .{ .main = 0, .orient = 1, .sub = 1, .id = 291, .ut = 2, .off_x = 2, .off_y = 0 },
+    .{ .main = 0, .orient = 1, .sub = 0, .id = 290, .ut = 2, .off_x = 0, .off_y = 2 },
+    .{ .main = 5, .orient = 0, .sub = 1, .id = 293, .ut = 2, .off_x = 2, .off_y = 0 },
+    .{ .main = 4, .orient = 0, .sub = 0, .id = 292, .ut = 2, .off_x = 0, .off_y = 2 },
+    .{ .main = 0, .orient = 0, .sub = 1, .id = 295, .ut = 2, .off_x = 2, .off_y = 0 },
+    .{ .main = 0, .orient = 0, .sub = 0, .id = 294, .ut = 2, .off_x = 0, .off_y = 2 },
+    .{ .main = 2, .orient = 4, .sub = 1, .id = 92, .ut = 2, .off_x = 1, .off_y = 0 },
+    .{ .main = 2, .orient = 1, .sub = 0, .id = 91, .ut = 2, .off_x = 0, .off_y = 2 },
+    .{ .main = 0, .orient = 1, .sub = 1, .id = 229, .ut = 2, .off_x = 0, .off_y = 0 },
+    .{ .main = 0, .orient = 1, .sub = 0, .id = 230, .ut = 2, .off_x = 0, .off_y = 0 },
+    .{ .main = 3, .orient = 3, .sub = 0, .id = 449, .ut = 2, .off_x = -2, .off_y = 4 },
+    .{ .main = 2, .orient = 1, .sub = 0, .id = 435, .ut = 1, .off_x = 1, .off_y = 2 },
+    .{ .main = 2, .orient = 1, .sub = 1, .id = 435, .ut = 1, .off_x = 2, .off_y = 1 },
+    .{ .main = 2, .orient = 6, .sub = 0, .id = 435, .ut = 1, .off_x = 1, .off_y = 1 },
+    .{ .main = 2, .orient = 2, .sub = 0, .id = 433, .ut = 1, .off_x = 0, .off_y = 1 },
+    .{ .main = 2, .orient = 3, .sub = 1, .id = 432, .ut = 1, .off_x = 1, .off_y = 0 },
+    .{ .main = 26, .orient = 0, .sub = 0, .id = 434, .ut = 1, .off_x = 0, .off_y = 1 },
+    .{ .main = 2, .orient = 4, .sub = 1, .id = 524, .ut = 1, .off_x = 0, .off_y = 0 },
+    .{ .main = 2, .orient = 4, .sub = 0, .id = 525, .ut = 1, .off_x = 0, .off_y = 0 },
+    .{ .main = 29, .orient = 0, .sub = 1, .id = 60, .ut = 2, .off_x = 2, .off_y = 0 },
+    .{ .main = 29, .orient = 0, .sub = 0, .id = 60, .ut = 2, .off_x = 0, .off_y = 2 },
+};
+
+/// DRLGPRESET_FindPresetTypeIndex 0x66d960: header walk in table order, then
+/// rows firstRow..lastRow matching (gf>>0x14&0x3f, gf>>8&0xff, subFlag).
+fn findPresetTypeIndex(nLevelId: i32, nGridFlags: u32, nSub: u32) i32 {
+    for (&PRESET_TYPE_HDR) |*h| {
+        if (h[0] != nLevelId) continue;
+        var i: usize = @intCast(h[1]);
+        while (i <= @as(usize, @intCast(h[2]))) : (i += 1) {
+            const r = &PRESET_TYPE_ROWS[i];
+            if ((nGridFlags >> 0x14) & 0x3f == r.main and (nGridFlags >> 8) & 0xff == r.orient and nSub == r.sub) {
+                return @intCast(i);
+            }
+        }
+    }
+    return -1;
+}
+
+/// Preset::CreatesPresets 0x66d9e0 — the preset-unit spawn itself (monster or
+/// object) is collision-neutral in the tiles-only golden, but for object ids
+/// 0x5b/0x5c (the tomb shrines, rows 19/20) the engine consumes a ROOM SEED
+/// roll (UNIT_GetModuloFromSeed(sSeed, 3); result 0 = 1-in-3 no-spawn). The
+/// port replicates the gates and the roll only. Called for type-8/9 walls
+/// (SetWallTileFlags top) and for the orient-8/9 preset markers (ProcessTile);
+/// nSub = (nTileType == 9).
+pub fn createsPresetsRoll(pRoomEx: [*c]s.D2RoomExStrc, nGridFlags: u32, nWorldX: i32, nWorldY: i32, bSub9: bool) void {
+    const lvl: i32 = @intFromEnum(pRoomEx.*.pLevel.?.eD2LevelId);
+    const idx = findPresetTypeIndex(lvl, nGridFlags, @intFromBool(bSub9));
+    if (idx < 0) return;
+    const row = &PRESET_TYPE_ROWS[@intCast(idx)];
+    var rx = nWorldX - pRoomEx.*.sCoords.WorldPosition.x;
+    var ry = nWorldY - pRoomEx.*.sCoords.WorldPosition.y;
+    Transform.CoordsRoomToWorld(&rx, &ry);
+    rx += row.off_x;
+    ry += row.off_y;
+    if (rx < 0 or ry < 0) return;
+    if (rx >= pRoomEx.*.sCoords.WorldSize.x * 5) return;
+    if (ry >= pRoomEx.*.sCoords.WorldSize.y * 5) return;
+    if (row.ut == 2 and row.id > 0x5a and row.id < 0x5d) {
+        _ = rng.getModuloFromSeed(&pRoomEx.*.sSeed, 3);
+    }
+}
+
 /// DRLGROOMTILE_SetWallTileFlags (Drlg.cpp:1451, 1.14d 0066db20).
 fn setWallTileFlags(pTileData: *s.D2DrlgTileDataStrc, nTileType: i32, nGridFlags: u32) void {
     if (nTileType != 0xd) {
@@ -282,6 +377,11 @@ pub fn createWallTileData(pRoomEx: [*c]s.D2RoomExStrc, ppTileHead: ?*?*s.D2DrlgT
     pTileData.nBlue = 0xff;
     pTileData.nRed = 0xff;
     pTileData.nTileType = nTileType;
+    // Engine SetWallTileFlags 0x66db20 runs CreatesPresets FIRST for type-8/9
+    // walls (barricade towers, tomb shrine walls, ...) — roll semantics only.
+    if (nTileType == 8 or nTileType == 9) {
+        createsPresetsRoll(pRoomEx, nGridFlags, nPosX, nPosY, nTileType == 9);
+    }
     setWallTileFlags(pTileData, nTileType, nGridFlags);
     if (nTileType != 3) return pTileData;
 
