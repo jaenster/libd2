@@ -48,6 +48,10 @@ pub const CharSave = struct {
     vitality: u16 = 20,
     energy: u16 = 20,
     max_hp: u16 = 100,
+    // Sourced from the real .d2s attributes when present (not in the sidecar; the .d2s file
+    // itself is preserved on save, so these round-trip through the engine's own record).
+    max_mana: u16 = 0,
+    gold: u32 = 0,
     quests: QuestState = .{},
     waypoints: u64 = 0,
 };
@@ -99,6 +103,11 @@ pub fn applyToUnit(u: *Unit, cs: CharSave) void {
     u.set(.energy, cs.energy);
     u.set(.maxhp, cs.max_hp);
     u.setLife(cs.max_hp);
+    if (cs.max_mana > 0) {
+        u.set(.maxmana, cs.max_mana);
+        u.set(.mana, cs.max_mana);
+    }
+    if (cs.gold > 0) u.set(.gold, @intCast(@min(cs.gold, std.math.maxInt(i32))));
 }
 
 /// Capture a player Unit's persistable stats into a CharSave with the given quest state (the
