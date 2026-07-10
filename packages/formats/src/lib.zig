@@ -3,6 +3,7 @@
 //! typed records using a caller-supplied `std.mem.Allocator`.
 //!
 //!   ds1  — DS1 level-structure files (room/tile/object layout of a preset area).
+//!   d2s  — D2 character save files (the attributes bit-stream so far).
 //!   dt1  — DT1 tile libraries (per-subtile art + collision flags).
 //!   dc6  — DC6 sprite sheets.   dcc — compressed DCC animations.   cof — COF
 //!          component/animation layer descriptors.
@@ -10,6 +11,7 @@
 //!          container codec + its embedded payload used by the tile pipeline.
 
 pub const ds1 = @import("ds1.zig");
+pub const d2s = @import("d2s.zig");
 pub const dt1 = @import("dt1.zig");
 pub const dcc = @import("dcc.zig");
 pub const dc6 = @import("dc6.zig");
@@ -22,6 +24,7 @@ pub const dt1pix_data = @import("dt1pix_data.zig");
 
 test {
     _ = ds1;
+    _ = d2s;
     _ = dt1;
     _ = dcc;
     _ = dc6;
