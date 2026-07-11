@@ -665,6 +665,29 @@ pub const ObjectState = struct {
     }
 };
 
+/// 0x28 NpcInteract (S->C) — opens the NPC interaction menu client-side after the client
+/// interacts with a town NPC (SERVER_InteractOrPick @0x548b00 UNIT_MONSTER branch ->
+/// NPC_BeginInteractionFromUnit; close is CloseNPCInteract @0x4b3f10). Fixed 103-byte frame
+/// (SC_SIZE[0x28]). The exact field layout is NOT yet reverse-engineered — Ghidra session
+/// 62fbfe69 (npc_interact @0x54B930) token expired — so this is a size-faithful stub: encode()
+/// zero-fills the payload behind the opcode rather than guessing byte offsets. `npc_guid` is
+/// carried on the struct for callers/tests but is not yet written to the wire.
+/// TODO @0x54B930: RE the 103-byte layout (npc unit type + guid offset + menu/window id).
+pub const NpcInteract = struct {
+    pub const OPCODE: u8 = 0x28;
+    pub const SIZE: usize = 103;
+
+    npc_guid: u32 = 0,
+
+    pub fn encode(self: NpcInteract, out: []u8) []u8 {
+        std.debug.assert(out.len >= SIZE);
+        @memset(out[0..SIZE], 0);
+        out[0] = OPCODE;
+        _ = self.npc_guid; // TODO: write at the RE'd offset once the 0x28 layout is known
+        return out[0..SIZE];
+    }
+};
+
 /// 0x19 GoldPickup — NET_D2GS_SERVER_Send_0x19_GoldPickup @0x53e9b0: the small-delta gold
 /// pickup notification, `[op u8][amount u8]` (2 bytes). The engine sends this when the
 /// picked amount is < 255; larger amounts reuse the SetAttribute opcodes (0x1D/0x1E/0x1F)
