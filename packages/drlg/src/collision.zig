@@ -75,6 +75,12 @@ pub const Colmask = struct {
 /// O(1) tile resolution. Does not own the DT1s.
 pub const DtLibrary = struct {
     map: std.AutoHashMapUnmanaged(u64, *const dt1.Tile) = .{},
+    /// Identities (orient,main,sub) whose rarity variants have DIFFERING collision blocks.
+    /// This library keeps only the first variant (first-wins); the engine instead picks a
+    /// seed-weighted variant, so for these identities a first-variant rasterization can't
+    /// match the engine/materialize. Callers mask these tiles from a cross-check (like they
+    /// mask unresolved tiles) — the choice is genuinely variant-dependent, not a bug.
+    ambiguous: std.AutoHashMapUnmanaged(u64, void) = .{},
     allocator: std.mem.Allocator,
 
     fn key(orientation: i32, main: i32, sub: i32) u64 {
@@ -89,21 +95,45 @@ pub const DtLibrary = struct {
 
     pub fn deinit(self: *DtLibrary) void {
         self.map.deinit(self.allocator);
+        self.ambiguous.deinit(self.allocator);
     }
 
-    /// Add every tile in a parsed DT1. First writer for an identity wins — the
-    /// collision block is identical across rarity variants of the same tile.
+    /// Add every tile in a parsed DT1. First writer for an identity wins; if a later rarity
+    /// variant of the same identity carries a DIFFERENT collision block, the identity is
+    /// recorded as `ambiguous` (see the field doc) so cross-checks can mask it.
     pub fn add(self: *DtLibrary, d: *const dt1.Dt1) !void {
         for (d.tiles) |*t| {
-            const gop = try self.map.getOrPut(self.allocator, key(t.orientation, t.main, t.sub));
-            if (!gop.found_existing) gop.value_ptr.* = t;
+            const k = key(t.orientation, t.main, t.sub);
+            const gop = try self.map.getOrPut(self.allocator, k);
+            if (!gop.found_existing) {
+                gop.value_ptr.* = t;
+            } else if (!sameCollision(gop.value_ptr.*, t)) {
+                try self.ambiguous.put(self.allocator, k, {});
+            }
         }
     }
 
     pub fn find(self: *const DtLibrary, orientation: i32, main: i32, sub: i32) ?*const dt1.Tile {
         return self.map.get(key(orientation, main, sub));
     }
+
+    /// True when this identity's rarity variants disagree on collision (see `ambiguous`).
+    pub fn isAmbiguous(self: *const DtLibrary, orientation: i32, main: i32, sub: i32) bool {
+        return self.ambiguous.contains(key(orientation, main, sub));
+    }
 };
+
+/// Do two tiles have byte-identical 5x5 subtile collision blocks?
+fn sameCollision(a: *const dt1.Tile, b: *const dt1.Tile) bool {
+    var y: usize = 0;
+    while (y < SUBTILES_PER_TILE) : (y += 1) {
+        var x: usize = 0;
+        while (x < SUBTILES_PER_TILE) : (x += 1) {
+            if (a.subtile(x, y) != b.subtile(x, y)) return false;
+        }
+    }
+    return true;
+}
 
 pub const CollisionGrid = struct {
     allocator: std.mem.Allocator,
