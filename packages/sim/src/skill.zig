@@ -1010,6 +1010,30 @@ test "end-to-end: a Might aura flows through to a unit's physical combat damage"
     try testing.expect(after >= before + 8);
 }
 
+test "end-to-end: Natural Resistance reduces incoming elemental damage (resist -> resolveElemental)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var isc = try d2data.open(testing.allocator, "ItemStatCost");
+    defer isc.deinit();
+
+    // A fire cast (arbitrary fixture) resolved against a bare unit vs a Natural-Resistance unit.
+    const fire: spell.Cast = .{ .dmg = .{ .etype = .fire, .e_min = 100, .e_max = 100, .hit_shift = 8 }, .skill_level = 1 };
+
+    var bare = Unit.init(.player);
+    var seed1 = Seed.fromValue(5);
+    const hit_bare = resolveElementalVsUnit(fire, &bare, &seed1);
+
+    var resistant = Unit.init(.player);
+    var rbook = SkillBook{};
+    rbook.setByName(&s, "Natural Resistance", 10);
+    applyPassives(&s, &resistant, rbook, &isc); // grants fireresist etc.
+    var seed2 = Seed.fromValue(5);
+    const hit_res = resolveElementalVsUnit(fire, &resistant, &seed2);
+
+    try testing.expect(hit_res.resist > 0); // the passive gave real fire resist
+    try testing.expect(hit_res.applied < hit_bare.applied); // so it took less fire damage
+}
+
 test "end-to-end: a Defiance aura raises a unit's defense (skill_armor_percent -> getDefense)" {
     var s = try Skills.load(testing.allocator);
     defer s.deinit();
