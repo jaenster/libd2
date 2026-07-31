@@ -20,6 +20,7 @@ pub const txt = @import("txt.zig");
 pub const skill = @import("skill.zig");
 pub const spell = @import("spell.zig");
 pub const montable = @import("montable.zig");
+pub const monskill = @import("monskill.zig");
 pub const missile = @import("missile.zig");
 pub const select = @import("select.zig");
 pub const ai = @import("ai.zig");
@@ -74,6 +75,7 @@ test {
     _ = skill;
     _ = spell;
     _ = montable;
+    _ = monskill;
     _ = missile;
     _ = select;
     _ = ai;
