@@ -60,6 +60,9 @@ pub const MissileData = struct {
     /// Pierce — the missile passes THROUGH a unit it hits instead of stopping (works with
     /// CollideKill=0). Distinct from CollideKill (which destroys on first unit hit).
     pierce: bool = false,
+    /// NextDelay — frames a missile must wait before it may hit the SAME unit again (a lingering /
+    /// piercing missile can't machine-gun one target). 0 => no per-unit cooldown.
+    next_delay: i32 = 0,
     /// HitSubMissile1..4 — the "Missile" names this missile spawns AT its impact point when it hits
     /// (Exploding Arrow -> explodingarrowexp2, Immolation Arrow -> immolationfire, Meteor -> ...).
     /// Empty strings for unused slots; the names borrow the Missiles table.
@@ -102,6 +105,7 @@ pub const Missiles = struct {
             .lev_range = t.getInt(i32, row, "LevRange") orelse 0,
             .collide_friend = (t.getInt(i32, row, "CollideFriend") orelse 0) != 0,
             .pierce = (t.getInt(i32, row, "Pierce") orelse 0) != 0,
+            .next_delay = t.getInt(i32, row, "NextDelay") orelse 0,
             .hit_sub = .{
                 t.get(row, "HitSubMissile1"), t.get(row, "HitSubMissile2"),
                 t.get(row, "HitSubMissile3"), t.get(row, "HitSubMissile4"),
@@ -163,6 +167,12 @@ pub const Missile = struct {
     collide_friend: bool = false,
     /// HitSubMissile names this missile spawns on impact (see Missiles.spawnHitSubs). Borrow the table.
     hit_sub: [4][]const u8 = .{ "", "", "", "" },
+    /// Per-unit re-hit cooldown (NextDelay): after hitting `last_hit`, `hit_cd` frames must pass
+    /// before that same unit can be hit again. Prevents a lingering/piercing missile from re-damaging
+    /// one target every tick.
+    next_delay: i32 = 0,
+    hit_cd: i32 = 0,
+    last_hit: u32 = 0xFFFFFFFF,
     dmg_min: i32 = 0,
     dmg_max: i32 = 0,
     /// The missile's damage is derived from the caster at hit time (e.g. a sorc cold bolt whose
@@ -208,6 +218,7 @@ pub const Missile = struct {
             .pierce = data.pierce,
             .collide_friend = data.collide_friend,
             .hit_sub = data.hit_sub,
+            .next_delay = data.next_delay,
             .dmg_min = dmg_min,
             .dmg_max = dmg_max,
         };
@@ -301,17 +312,25 @@ pub fn stepAll(missiles: []Missile, seed: *Seed, ctx: anytype) usize {
         var m = src;
         var retire = false;
         if (ctx.target(&m)) |victim| {
-            if (m.caster_derived and @hasDecl(Ctx, "applyHit")) {
-                ctx.applyHit(&m, victim);
-            } else {
-                combat.applyToLife(victim, m.rollDamage(seed));
+            // NextDelay: skip the SAME unit while its per-unit cooldown is still running (a lingering
+            // missile passing over a target doesn't re-hit it every frame).
+            const on_cooldown = victim.unit_id == m.last_hit and m.hit_cd > 0;
+            if (!on_cooldown) {
+                if (m.caster_derived and @hasDecl(Ctx, "applyHit")) {
+                    ctx.applyHit(&m, victim);
+                } else {
+                    combat.applyToLife(victim, m.rollDamage(seed));
+                }
+                m.last_hit = victim.unit_id;
+                m.hit_cd = m.next_delay;
+                // CollideKill destroys the missile on its first unit hit — UNLESS it pierces, in which
+                // case it deals its damage and travels on through the unit (Pierce).
+                if (m.collide_kill and !m.pierce) retire = true;
             }
-            // CollideKill destroys the missile on its first unit hit — UNLESS it pierces, in which
-            // case it deals its damage and travels on through the unit (Pierce).
-            if (m.collide_kill and !m.pierce) retire = true;
         }
         if (!retire) {
             m.step();
+            if (m.hit_cd > 0) m.hit_cd -= 1; // per-unit re-hit cooldown ticks down each frame
             if (m.expired()) retire = true;
             // Wall line-of-sight: a units+walls missile dies on the blocked cell it steps into,
             // BEFORE it can be tested against a unit on the next tick (MISSILE_CanHitTarget's
@@ -366,6 +385,32 @@ test "stepAll damages a hit target, retires the killer, keeps a piercing/flying 
     try testing.expectEqual(@as(usize, 1), surviving); // missile 1 retired on kill-collision
     try testing.expectEqual(@as(u32, 2), missiles[0].guid); // survivor compacted to front, stepped
     try testing.expectEqual(@as(i32, 5), missiles[0].range_left); // 10 - vel 5
+}
+
+test "NextDelay: a lingering missile hits a unit once, then waits out the cooldown" {
+    var mob = Unit.init(.monster);
+    mob.unit_id = 3;
+    mob.setLife(1000);
+    const Ctx = struct {
+        victim: *Unit,
+        fn target(self: @This(), m: *const Missile) ?*Unit {
+            _ = m;
+            return self.victim; // the unit is always in range (a lingering overlap)
+        }
+    };
+    // A non-killing, non-moving missile over the unit with NextDelay 3: it should hit once, then not
+    // again for 3 frames.
+    var arr = [_]Missile{.{ .guid = 1, .id = 1, .vel = 0, .range_left = 1000, .collide_kill = false, .next_delay = 3, .dmg_min = 10, .dmg_max = 10 }};
+    var seed = Seed.fromValue(1);
+    const ctx = Ctx{ .victim = &mob };
+
+    _ = stepAll(&arr, &seed, ctx); // frame 1: hits (1000 -> 990), cd set to 3
+    try testing.expectEqual(@as(i32, 990), mob.life());
+    _ = stepAll(&arr, &seed, ctx); // frame 2: on cooldown -> no hit
+    _ = stepAll(&arr, &seed, ctx); // frame 3: still cooling
+    try testing.expectEqual(@as(i32, 990), mob.life()); // untouched during cooldown
+    _ = stepAll(&arr, &seed, ctx); // frame 4: cooldown elapsed -> hits again (990 -> 980)
+    try testing.expectEqual(@as(i32, 980), mob.life());
 }
 
 test "a Pierce missile deals its damage but travels on through the unit (not retired)" {
