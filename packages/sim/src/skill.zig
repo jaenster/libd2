@@ -792,6 +792,28 @@ test "resolveMonsterCaster maps MonStats skills to castable selections (AI picks
     try testing.expectEqual(@as(?u16, null), kmc.pickCastable(&s));
 }
 
+test "castElemental is all-class: Amazon/Necromancer/Paladin/Druid elemental skills assemble" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    const cases = .{
+        .{ "Immolation Arrow", spell.Element.fire }, // Amazon
+        .{ "Poison Nova", spell.Element.poison }, // Necromancer
+        .{ "Holy Bolt", spell.Element.magic }, // Paladin
+        .{ "Firestorm", spell.Element.fire }, // Druid
+    };
+    inline for (cases) |c| {
+        const id = s.idByName(c[0]).?;
+        var book = SkillBook{};
+        book.setByName(&s, c[0], 10);
+        const casted = castElemental(&s, book, id, 10, &syn);
+        try testing.expectEqual(c[1], casted.dmg.etype); // element from Skills.txt EType
+        // Real staged element damage from the table (raw 1/256 — the whole value can round to 0 for
+        // a low-HitShift skill like Firestorm at low level, but the fixed-point damage is nonzero).
+        try testing.expect(casted.dmg.max256(10) > 0);
+    }
+}
+
 test "TABLE-DRIVEN: Teleport (Id 54) classifies as teleport with the real Skills.txt mana cost" {
     var s = try Skills.load(testing.allocator);
     defer s.deinit();
