@@ -31,12 +31,13 @@
 //! than every real monster classId is self-consistent. We use the MonStats row count.
 
 const std = @import("std");
+const d2data = @import("d2-data");
 const txt = @import("../txt.zig");
 
-const monpreset_src = @embedFile("../excel/MonPreset.txt");
-const monstats_src = @embedFile("../excel/MonStats.txt");
-const superuniques_src = @embedFile("../excel/SuperUniques.txt");
-const monplace_src = @embedFile("../excel/MonPlace.txt");
+const monpreset_src = d2data.file("MonPreset");
+const monstats_src = d2data.file("MonStats");
+const superuniques_src = d2data.file("SuperUniques");
+const monplace_src = d2data.file("MonPlace");
 const objtable_bin = @embedFile("../excel/PresetObjectTable.bin");
 
 /// sgptDataTable->nTxtMonStatsSize — the MonStats.txt row count. Set on load.

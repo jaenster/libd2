@@ -6,6 +6,7 @@
 //! the reconstructed automap the same way the maphack draws them.
 
 const std = @import("std");
+const d2data = @import("d2-data");
 const txt = @import("txt.zig");
 
 /// One object row's collision footprint: HasCollision0 (mode 0 = the room-init /
@@ -75,7 +76,7 @@ pub const Table = struct {
 };
 
 pub fn load(gpa: std.mem.Allocator) !Table {
-    var t = try txt.Table.parse(gpa, @embedFile("excel/Objects.txt"));
+    var t = try txt.Table.parse(gpa, d2data.file("Objects"));
     defer t.deinit();
     const n = t.rowCount();
     const cel = try gpa.alloc(i32, n);

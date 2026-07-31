@@ -23,7 +23,8 @@ const std = @import("std");
 const rng = @import("rng.zig");
 const unit = @import("unit.zig");
 const combat = @import("combat.zig");
-const txt = @import("txt.zig");
+const spell = @import("spell.zig");
+const d2data = @import("d2-data");
 
 const Seed = rng.Seed;
 const Unit = unit.Unit;
@@ -50,18 +51,22 @@ pub const MissileData = struct {
     max_damage: i32 = 0,
 };
 
-/// Loaded Missiles.txt, indexed by the lowercase "Missile" name (skills reference it
-/// via srvmissile) and by numeric Id.
-pub const Missiles = struct {
-    table: txt.Table,
+/// CollideType bit for walls/collision map (D2 MISSILE_COLLIDE_UNITS=1, WALLS=2; the common
+/// bolt value 3 = units+walls). A missile whose collide_type has this bit dies on a blocked cell.
+pub const COLLIDE_WALLS: i32 = 2;
 
-    pub const EMBEDDED = @embedFile("excel/Missiles.txt");
+/// Loaded Missiles.txt (the REAL 1.14d table from d2-data — ~150 columns, 684 rows), indexed by
+/// the lowercase "Missile" name (skills reference it via srvmissile) and by numeric Id. Columns
+/// are addressed by NAME. Cited columns: Missile, Id, Vel, Range, CollideType, CollideKill,
+/// MinDamage, MaxDamage.
+pub const Missiles = struct {
+    table: d2data.Table,
 
     pub fn load(gpa: std.mem.Allocator) !Missiles {
-        return .{ .table = try txt.Table.parse(gpa, EMBEDDED) };
+        return .{ .table = try d2data.open(gpa, "Missiles") };
     }
     pub fn parse(gpa: std.mem.Allocator, src: []const u8) !Missiles {
-        return .{ .table = try txt.Table.parse(gpa, src) };
+        return .{ .table = try d2data.tsv.parse(gpa, src) };
     }
     pub fn deinit(self: *Missiles) void {
         self.table.deinit();
@@ -69,21 +74,20 @@ pub const Missiles = struct {
 
     fn rowData(self: *const Missiles, row: usize) MissileData {
         const t = &self.table;
-        const ct = t.int(row, "CollideType");
         return .{
-            .id = @intCast(t.int(row, "Id")),
-            .vel = @intCast(t.int(row, "Vel")),
-            .range = @intCast(t.int(row, "Range")),
-            .collide_type = @intCast(ct),
-            .collide_kill = t.int(row, "CollideKill") != 0,
-            .min_damage = @intCast(t.int(row, "MinDamage")),
-            .max_damage = @intCast(t.int(row, "MaxDamage")),
+            .id = @intCast(t.getInt(i32, row, "Id") orelse 0),
+            .vel = t.getInt(i32, row, "Vel") orelse 0,
+            .range = t.getInt(i32, row, "Range") orelse 0,
+            .collide_type = t.getInt(i32, row, "CollideType") orelse 0,
+            .collide_kill = (t.getInt(i32, row, "CollideKill") orelse 0) != 0,
+            .min_damage = t.getInt(i32, row, "MinDamage") orelse 0,
+            .max_damage = t.getInt(i32, row, "MaxDamage") orelse 0,
         };
     }
 
     /// Look up a missile by its Missiles.txt "Missile" name (skill srvmissile ref).
     pub fn byName(self: *const Missiles, name: []const u8) ?MissileData {
-        const row = self.table.findByStr("Missile", name) orelse return null;
+        const row = self.table.findRow("Missile", name) orelse return null;
         return self.rowData(row);
     }
 
@@ -112,6 +116,16 @@ pub const Missile = struct {
     collide_kill: bool = true,
     dmg_min: i32 = 0,
     dmg_max: i32 = 0,
+    /// The missile's damage is derived from the caster at hit time (e.g. a sorc cold bolt whose
+    /// applied damage depends on the VICTIM's resist + the caster's mastery pierce) rather than the
+    /// flat dmg_min/max roll. The host's `applyHit` owns that computation; stepAll skips its own
+    /// rollDamage for these. Set for spells with empty Missiles.txt MinDamage/MaxDamage.
+    caster_derived: bool = false,
+    /// The elemental cast this missile carries — snapshot from the caster's build AT CAST TIME
+    /// (skill.cast folds in the sorc's effective skill level + synergies + mastery pierce). On the
+    /// first monster collision `applyElementalHitVs` resolves it against THAT victim's resist. Set
+    /// (with `caster_derived`) for elemental bolts; null for flat-damage missiles.
+    elem_cast: ?spell.Cast = null,
 
     /// MISSILE_InitMissileUnit @0x4cd0a0 / MISSILE_CreateFromUnitWithOffset @0x4cdc30:
     /// spawn `data` from (sx,sy) with velocity aimed at (tx,ty). A zero-length aim
@@ -168,6 +182,12 @@ pub const Missile = struct {
         return dx * dx + dy * dy <= self.collide_radius * self.collide_radius;
     }
 
+    /// This missile is subject to wall/collision-map collision (CollideType walls bit). When set,
+    /// a step onto a blocked subtile retires the missile so it can never reach a unit behind a wall.
+    pub fn collidesWalls(self: *const Missile) bool {
+        return (self.collide_type & COLLIDE_WALLS) != 0;
+    }
+
     /// On-hit damage roll (Missiles_SrvHitFunc_* pattern): uniform in [min,max].
     pub fn rollDamage(self: *const Missile, seed: *Seed) i32 {
         if (self.dmg_max <= self.dmg_min) return self.dmg_min;
@@ -183,26 +203,58 @@ pub fn find(missiles: []Missile, guid: u32) ?*Missile {
     return null;
 }
 
+/// On-hit elemental resolution for a `caster_derived` missile carrying an `elem_cast`: resolve the
+/// snapshot cast against THIS victim's resist (its resist for the cast's element minus the cast's
+/// Cold-Mastery / -%enemy-resist pierce) and subtract the applied damage from its life. Consumes
+/// one RNG step (the damage roll). A no-op when the missile carries no `elem_cast`. This is the
+/// host's `applyHit` seam moved into d2-sim: the elemental cast + resist math lives here, the host
+/// only owns unit storage + the seed. Mirrors skill.resolveElementalVsUnit + applyElementalHit
+/// (kept inline here to avoid a missile<->skill import cycle).
+pub fn applyElementalHitVs(m: *const Missile, victim: *Unit, seed: *Seed) void {
+    const cast = m.elem_cast orelse return;
+    const raw = cast.roll(seed);
+    const target_resist = spell.ResistProfile.fromUnit(victim, cast.dmg.etype).percent;
+    const applied = spell.applyResist(raw, target_resist - cast.pierce_percent);
+    if (applied > 0) combat.applyToLife(victim, applied);
+}
+
 /// Advance every missile one tick over the host's slice. For each missile, `ctx.target(m)`
 /// returns the unit it collides with (the host owns unit storage AND the target policy — e.g.
-/// "monsters only"); the rolled damage is applied to that victim's life, then the missile
-/// steps + expiry-checks. Retired missiles (killed on collision or out of range) are compacted
-/// out of the FRONT of the slice, preserving order; the surviving count is returned so the
-/// host can shrink its ArrayList. The host keeps the collection; the lib only rewrites the
-/// slice window and mutates victim life (same contract as combat.attackAndApply).
+/// "monsters only"); the damage is applied to that victim's life, then the missile steps +
+/// checks wall collision and expiry. Retired missiles (killed on collision, blocked by a wall, or
+/// out of range) are compacted out of the FRONT of the slice, preserving order; the surviving count
+/// is returned so the host can shrink its ArrayList. The host keeps the collection; the lib only
+/// rewrites the slice window and mutates victim life (same contract as combat.attackAndApply).
+///
+/// Optional `ctx` decls (duck-typed):
+///   `blockedAt(x, y) bool` — wall/collision-map LoS. A CollideType-walls missile that steps onto a
+///     blocked subtile is retired THERE, so it cannot hit a unit behind the wall. Absent => no walls.
+///   `applyHit(*const Missile, *Unit) void` — host-owned on-hit damage for `caster_derived` missiles
+///     (e.g. a cold bolt whose applied damage reads the victim's resist + caster's pierce). When
+///     absent for such a missile, stepAll falls back to the flat rollDamage.
 pub fn stepAll(missiles: []Missile, seed: *Seed, ctx: anytype) usize {
+    const Ctx = @TypeOf(ctx);
     var w: usize = 0;
     for (missiles) |src| {
         var m = src;
         var retire = false;
         if (ctx.target(&m)) |victim| {
-            const dmg = m.rollDamage(seed);
-            combat.applyToLife(victim, dmg);
+            if (m.caster_derived and @hasDecl(Ctx, "applyHit")) {
+                ctx.applyHit(&m, victim);
+            } else {
+                combat.applyToLife(victim, m.rollDamage(seed));
+            }
             if (m.collide_kill) retire = true;
         }
         if (!retire) {
             m.step();
             if (m.expired()) retire = true;
+            // Wall line-of-sight: a units+walls missile dies on the blocked cell it steps into,
+            // BEFORE it can be tested against a unit on the next tick (MISSILE_CanHitTarget's
+            // CheckCollision arm). Off-map / blocked => retire here.
+            if (!retire and m.collidesWalls() and @hasDecl(Ctx, "blockedAt") and ctx.blockedAt(m.x, m.y)) {
+                retire = true;
+            }
         }
         if (!retire) {
             missiles[w] = m;
@@ -252,6 +304,90 @@ test "stepAll damages a hit target, retires the killer, keeps a piercing/flying 
     try testing.expectEqual(@as(i32, 5), missiles[0].range_left); // 10 - vel 5
 }
 
+test "stepAll retires a units+walls bolt on a blocked cell before it hits a unit behind it" {
+    // A CollideType-3 bolt travelling +X toward a monster at x=40, with a wall at x>=20. The bolt
+    // must die on the wall (never reach the monster). ctx reports the unit hit only if the bolt
+    // gets within radius of x=40 (it never should).
+    var mob = Unit.init(.monster);
+    mob.unit_id = 2;
+    mob.x = 40;
+    mob.y = 0;
+    mob.setLife(100);
+
+    const Ctx = struct {
+        victim: *Unit,
+        fn target(self: @This(), m: *const Missile) ?*Unit {
+            return if (m.canHit(self.victim)) self.victim else null;
+        }
+        fn blockedAt(_: @This(), x: i32, _: i32) bool {
+            return x >= 20;
+        }
+    };
+
+    const data = MissileData{ .id = 59, .vel = 12, .range = 50, .collide_type = 3, .collide_kill = true };
+    var missiles = [_]Missile{Missile.create(data, 1, 0, 0, 40, 0, 0, 0)};
+    var seed = Seed.fromValue(1);
+    const ctx = Ctx{ .victim = &mob };
+    var live: usize = 1;
+    var ticks: usize = 0;
+    while (live > 0 and ticks < 100) : (ticks += 1) {
+        live = stepAll(missiles[0..live], &seed, ctx);
+    }
+    try testing.expectEqual(@as(usize, 0), live); // bolt retired
+    try testing.expectEqual(@as(i32, 100), mob.life()); // monster behind the wall took nothing
+}
+
+test "stepAll routes caster_derived damage through ctx.applyHit" {
+    var mob = Unit.init(.monster);
+    mob.unit_id = 2;
+    mob.setLife(100);
+
+    const Ctx = struct {
+        victim: *Unit,
+        fn target(self: @This(), m: *const Missile) ?*Unit {
+            return if (m.guid == 1) self.victim else null;
+        }
+        fn applyHit(_: @This(), _: *const Missile, v: *Unit) void {
+            combat.applyToLife(v, 25); // caster-derived: fixed here, resist-aware in the host
+        }
+    };
+
+    var missiles = [_]Missile{
+        .{ .guid = 1, .id = 59, .vel = 5, .range_left = 100, .collide_kill = true, .caster_derived = true, .dmg_min = 7, .dmg_max = 7 },
+    };
+    var seed = Seed.fromValue(1);
+    const surviving = stepAll(&missiles, &seed, Ctx{ .victim = &mob });
+    try testing.expectEqual(@as(usize, 0), surviving);
+    try testing.expectEqual(@as(i32, 75), mob.life()); // 25 from applyHit, NOT the flat 7 roll
+}
+
+test "applyElementalHitVs resolves the carried cast against the victim's resist (with pierce)" {
+    var syn: [5]spell.Synergy = undefined;
+    // Ice Bolt slvl 20, Cold Mastery 5 => -40% cold resist pierce.
+    const c = spell.iceBolt(spell.ICE_BOLT, 20, 0, 0, 0, 0, 0, 5, &syn);
+    var mob = Unit.init(.monster);
+    mob.set(.coldresist, 75); // 75% - 40% pierce = 35% effective.
+    mob.setLife(10000);
+    var m = Missile{ .id = 59, .caster_derived = true, .elem_cast = c };
+    var seed = Seed.fromValue(0xB01);
+    applyElementalHitVs(&m, &mob, &seed);
+    // Recompute the same roll deterministically and assert the applied 35%-resisted damage landed.
+    var seed2 = Seed.fromValue(0xB01);
+    const raw = c.roll(&seed2);
+    const expect = spell.applyResist(raw, 35);
+    try testing.expect(expect > 0);
+    try testing.expectEqual(@as(i32, 10000) - expect, mob.life());
+}
+
+test "applyElementalHitVs is a no-op for a missile with no elem_cast" {
+    var mob = Unit.init(.monster);
+    mob.setLife(500);
+    var m = Missile{ .id = 58 };
+    var seed = Seed.fromValue(1);
+    applyElementalHitVs(&m, &mob, &seed);
+    try testing.expectEqual(@as(i32, 500), mob.life());
+}
+
 test "load missiles by name and id" {
     var m = try Missiles.load(testing.allocator);
     defer m.deinit();
@@ -262,6 +398,20 @@ test "load missiles by name and id" {
     try testing.expect(fb.collide_kill);
     try testing.expectEqual(@as(u16, 27), m.byId(27).?.id); // magicarrow
     try testing.expectEqual(@as(?MissileData, null), m.byName("nope"));
+}
+
+test "TABLE-DRIVEN: icebolt missile (Id 59) resolves from the REAL Missiles.txt (Vel=12/Range=50/CollideType=3)" {
+    var m = try Missiles.load(testing.allocator);
+    defer m.deinit();
+    // The srvmissile the Ice Bolt skill (Skills.txt Id 39) spawns. Columns cited: Vel/Range/
+    // CollideType/CollideKill, read by NAME from the real 1.14d Missiles.txt row.
+    const ib = m.byName("icebolt").?;
+    try testing.expectEqual(@as(u16, 59), ib.id);
+    try testing.expectEqual(@as(i32, 12), ib.vel); // Vel=12
+    try testing.expectEqual(@as(i32, 50), ib.range); // Range=50
+    try testing.expectEqual(@as(i32, 3), ib.collide_type); // CollideType=3 (units+walls)
+    try testing.expect(ib.collide_kill); // CollideKill=1
+    try testing.expectEqual(@as(u16, 59), m.byId(59).?.id); // and by numeric Id
 }
 
 test "create aims velocity toward the target and budgets range" {

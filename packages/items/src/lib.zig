@@ -25,8 +25,11 @@ pub const dc6 = @import("dc6.zig");
 pub const png = @import("png.zig");
 pub const graphic = @import("graphic.zig");
 pub const render = @import("render.zig");
+pub const wire = @import("d2-core").wire;
 
 pub const Seed = rng.Seed;
+pub const WireItem = wire.Item;
+pub const WireBitReader = @import("d2-core").bitreader.BitReader;
 pub const Tables = tables.Tables;
 pub const TCSet = treasure.TCSet;
 pub const Quality = model.Quality;
@@ -48,4 +51,5 @@ test {
     _ = png;
     _ = graphic;
     _ = render;
+    _ = wire;
 }

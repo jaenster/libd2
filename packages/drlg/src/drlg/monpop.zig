@@ -48,6 +48,7 @@
 //!     count and thus the game-seed stream vs a real capture.
 
 const std = @import("std");
+const d2data = @import("d2-data");
 const rng = @import("rng.zig");
 const s = @import("structs.zig");
 const txt = @import("../txt.zig");
@@ -77,6 +78,38 @@ pub const MonStat = struct {
     size_x: i32, // MonStats2.SizeX
     spawn_col: i32, // MonStats2.spawnCol (0..3; empty -> 0)
     damage_regen: i32, // MonStats.DamageRegen — life-regen rate (hpregen = maxhp*DamageRegen/16, <<8)
+    /// minHP/maxHP per difficulty ([0]=Normal, [1]=Nightmare, [2]=Hell). These are the RAW
+    /// MonStats HP percentages; the final rolled HP scales them by MonLvl.HP[monLevel][diff]
+    /// (see calcScaledHp / MONSTER_CalculateLevelScaledStats 0x6538a0) unless no_ratio.
+    min_hp: [3]i32, // minHP / MinHP(N) / MinHP(H)
+    max_hp: [3]i32, // maxHP / MaxHP(N) / MaxHP(H)
+    /// MonStats.Level / Level(N) / Level(H) — the monster-level index into MonLvl.txt used
+    /// by MONSTER_InitStats (0x573xxx) for a non-champion, non-overridden monster. The area
+    /// MonLvl (Levels.txt MonLvlEx) can override this for expansion champions.
+    level: [3]i32,
+    /// MonStats.noRatio — when set the monster's HP/AC/etc. are the raw MonStats values with
+    /// NO MonLvl.txt multiplier (set on summons: golems, valkyrie, druid pets, sentries).
+    no_ratio: bool,
+    /// Resistances per difficulty [Normal, NM, Hell]: physical(ResDm), magic(ResMa),
+    /// fire(ResFi), lightning(ResLi), cold(ResCo), poison(ResPo). Percent; 100 = immune,
+    /// can be negative. Read straight from MonStats and set as the unit's *resist stats
+    /// (MONSTER_InitStats 0x573xxx SetUnitStat UNITSTAT_*resist). No scaling.
+    resist: [3]MonResist,
+    is_boss: bool, // boss — act-boss / mini-boss flag
+    is_prime_evil: bool, // primeevil — Mephisto/Diablo/Baal
+    is_npc: bool, // npc — town NPC (no combat)
+};
+
+/// Per-difficulty monster resistances, percent (i16: 100 = immune, negatives amplify).
+/// Layout mirrors MonStats.txt ResDm/ResMa/ResFi/ResLi/ResCo/ResPo and the six
+/// UNITSTAT_*resist the engine sets in MONSTER_InitStats.
+pub const MonResist = struct {
+    phys: i16 = 0, // ResDm — physical / damage resist
+    magic: i16 = 0, // ResMa — magic resist
+    fire: i16 = 0, // ResFi
+    light: i16 = 0, // ResLi
+    cold: i16 = 0, // ResCo
+    poison: i16 = 0, // ResPo
 };
 
 /// A level's Levels.txt monster fields (resolved to class ids). `mon`/`nmon`/`umon`
@@ -97,6 +130,14 @@ pub const LevelMon = struct {
     umon: []i32, // unique-monster pool (normal-difficulty unique packs)
 };
 
+/// One MonLvl.txt row: the per-monster-level stat MULTIPLIERS (percent). Indexed by
+/// monster level (dense, index == the row's Level value). Only HP is modeled here (the
+/// other columns AC/TH/DM/XP follow the same D2ApplyPercent(MonLvl.col, MonStats, 100)
+/// scaling — add them when needed). `hp[diff]` is the HP% for Normal/NM/Hell.
+pub const MonLvlRow = struct {
+    hp: [3]i32, // HP / HP(N) / HP(H)
+};
+
 pub const Tables = struct {
     gpa: std.mem.Allocator,
     /// MonStats indexed by class id (the MonStats.txt "Expansion" divider row is
@@ -105,9 +146,12 @@ pub const Tables = struct {
     /// Levels monster data keyed by level id (dense, index == id; gaps are undefined).
     levels: []LevelMon,
     max_level_id: i32,
+    /// MonLvl.txt HP-scale rows indexed by monster level (0..nTxtMonLvlSize-1). The engine
+    /// clamps a monster level above the last row to the last row (MONSTER_CalculateLevelScaledStats).
+    mon_lvl: []MonLvlRow,
 
     pub fn load(gpa: std.mem.Allocator) !Tables {
-        var mt = try txt.Table.parse(gpa, @embedFile("../excel/MonStats.txt"));
+        var mt = try txt.Table.parse(gpa, d2data.file("MonStats"));
         defer mt.deinit();
 
         // First pass: build class-id list skipping the "Expansion" sentinel row, and
@@ -137,7 +181,7 @@ pub const Tables = struct {
         // MonStats2.txt collision fields, keyed by MonStats2.Id (the value a MonStats
         // row's MonStatsEx column points at). Parsed here; the table (and its backing
         // strings, which the map keys borrow) stays alive until the fill loop below runs.
-        var m2t = try txt.Table.parse(gpa, @embedFile("../excel/MonStats2.txt"));
+        var m2t = try txt.Table.parse(gpa, d2data.file("MonStats2"));
         defer m2t.deinit();
         const Stat2 = struct { size_x: i32, spawn_col: i32 };
         var ex_to_stat2 = std.StringHashMapUnmanaged(Stat2){};
@@ -177,13 +221,37 @@ pub const Tables = struct {
                     .size_x = s2.size_x,
                     .spawn_col = s2.spawn_col,
                     .damage_regen = @intCast(mt.int(r, "DamageRegen")),
+                    .min_hp = .{ @intCast(mt.int(r, "minHP")), @intCast(mt.int(r, "MinHP(N)")), @intCast(mt.int(r, "MinHP(H)")) },
+                    .max_hp = .{ @intCast(mt.int(r, "maxHP")), @intCast(mt.int(r, "MaxHP(N)")), @intCast(mt.int(r, "MaxHP(H)")) },
+                    .level = .{ @intCast(mt.int(r, "Level")), @intCast(mt.int(r, "Level(N)")), @intCast(mt.int(r, "Level(H)")) },
+                    .no_ratio = mt.int(r, "noRatio") != 0,
+                    .resist = .{
+                        .{
+                            .phys = @intCast(mt.int(r, "ResDm")),   .magic = @intCast(mt.int(r, "ResMa")),
+                            .fire = @intCast(mt.int(r, "ResFi")),   .light = @intCast(mt.int(r, "ResLi")),
+                            .cold = @intCast(mt.int(r, "ResCo")),   .poison = @intCast(mt.int(r, "ResPo")),
+                        },
+                        .{
+                            .phys = @intCast(mt.int(r, "ResDm(N)")), .magic = @intCast(mt.int(r, "ResMa(N)")),
+                            .fire = @intCast(mt.int(r, "ResFi(N)")), .light = @intCast(mt.int(r, "ResLi(N)")),
+                            .cold = @intCast(mt.int(r, "ResCo(N)")), .poison = @intCast(mt.int(r, "ResPo(N)")),
+                        },
+                        .{
+                            .phys = @intCast(mt.int(r, "ResDm(H)")), .magic = @intCast(mt.int(r, "ResMa(H)")),
+                            .fire = @intCast(mt.int(r, "ResFi(H)")), .light = @intCast(mt.int(r, "ResLi(H)")),
+                            .cold = @intCast(mt.int(r, "ResCo(H)")), .poison = @intCast(mt.int(r, "ResPo(H)")),
+                        },
+                    },
+                    .is_boss = mt.int(r, "boss") != 0,
+                    .is_prime_evil = mt.int(r, "primeevil") != 0,
+                    .is_npc = mt.int(r, "npc") != 0,
                 };
                 out_i += 1;
             }
         }
 
         // Levels.txt monster fields.
-        var lt = try txt.Table.parse(gpa, @embedFile("../excel/Levels.txt"));
+        var lt = try txt.Table.parse(gpa, d2data.file("Levels"));
         defer lt.deinit();
         var max_id: i32 = 0;
         {
@@ -263,7 +331,24 @@ pub const Tables = struct {
             }
         }
 
-        return .{ .gpa = gpa, .mon_stats = mon_stats, .levels = levels, .max_level_id = max_id };
+        // MonLvl.txt HP-scale rows (dense, index == Level). The engine's pTxtMonLvl is
+        // indexed directly by monster level; keep the same 0-based dense layout.
+        var mlt = try txt.Table.parse(gpa, d2data.file("MonLvl"));
+        defer mlt.deinit();
+        const mon_lvl = try gpa.alloc(MonLvlRow, mlt.rowCount());
+        errdefer gpa.free(mon_lvl);
+        {
+            var r: usize = 0;
+            while (r < mlt.rowCount()) : (r += 1) {
+                mon_lvl[r] = .{ .hp = .{
+                    @intCast(mlt.int(r, "HP")),
+                    @intCast(mlt.int(r, "HP(N)")),
+                    @intCast(mlt.int(r, "HP(H)")),
+                } };
+            }
+        }
+
+        return .{ .gpa = gpa, .mon_stats = mon_stats, .levels = levels, .max_level_id = max_id, .mon_lvl = mon_lvl };
     }
 
     pub fn deinit(self: *Tables) void {
@@ -274,6 +359,7 @@ pub const Tables = struct {
         }
         self.gpa.free(self.levels);
         self.gpa.free(self.mon_stats);
+        self.gpa.free(self.mon_lvl);
     }
 
     pub fn stat(self: *const Tables, class_id: i32) ?*const MonStat {
@@ -284,6 +370,71 @@ pub const Tables = struct {
     pub fn levelMon(self: *const Tables, level_id: i32) ?*const LevelMon {
         if (level_id < 0 or level_id >= self.levels.len) return null;
         return &self.levels[@intCast(level_id)];
+    }
+
+    /// MonLvl.txt row for a monster level, clamped to the last row for levels beyond the
+    /// table (mirrors MONSTER_CalculateLevelScaledStats' nClampedLevel). Null only if the
+    /// table is empty or mon_level is negative.
+    pub fn monLvlRow(self: *const Tables, mon_level: i32) ?*const MonLvlRow {
+        if (self.mon_lvl.len == 0 or mon_level < 0) return null;
+        var idx = mon_level;
+        const last: i32 = @intCast(self.mon_lvl.len - 1);
+        if (idx > last) idx = last;
+        return &self.mon_lvl[@intCast(idx)];
+    }
+
+    /// D2ApplyPercent(value, percent, 100) for the ranges the HP path uses: value*percent/100
+    /// (0x653xxx D2ApplyPercent; the 64-bit overflow branch is unreachable for HP-sized inputs).
+    inline fn applyPercent(value: i64, percent: i64) i32 {
+        return @intCast(@divTrunc(value * percent, 100));
+    }
+
+    /// Faithful HP min/max for a monster (MONSTER_CalculateLevelScaledStats 0x6538a0, HP bit).
+    /// diff: 0=Normal,1=NM,2=Hell. mon_level indexes MonLvl.txt (the AREA MonLvl the caller
+    /// resolved from Levels.txt MonLvlEx, or MonStats.Level(diff) for the base non-champion
+    /// case — see monLevelDefault). With no_ratio set the raw MonStats HP is used (summons);
+    /// otherwise each bound = MonLvl.HP[mon_level][diff] * MonStats.(min|max)HP(diff) / 100.
+    /// The final unit HP the engine stores is a uniform roll in [min,max] scaled by the
+    /// /players multiplier then <<8 — that roll needs the unit seed (see calcRolledHp).
+    pub fn scaledHp(self: *const Tables, class_id: i32, mon_level: i32, diff: u2) ?[2]i32 {
+        const ms = self.stat(class_id) orelse return null;
+        const d: usize = diff;
+        if (ms.no_ratio) return .{ ms.min_hp[d], ms.max_hp[d] };
+        const row = self.monLvlRow(mon_level) orelse return null;
+        return .{ applyPercent(row.hp[d], ms.min_hp[d]), applyPercent(row.hp[d], ms.max_hp[d]) };
+    }
+
+    /// The default monster level for a class when the caller has no area override: the
+    /// MonStats Level column for the difficulty (MONSTER_InitStats reads MonStats.Level(diff)
+    /// for a non-champion, non-expansion-overridden monster). Callers with the room's area
+    /// MonLvl (Levels.txt MonLvlEx via World.monLvl) should pass THAT instead for champions.
+    pub fn monLevelDefault(self: *const Tables, class_id: i32, diff: u2) i32 {
+        const ms = self.stat(class_id) orelse return 1;
+        return ms.level[diff];
+    }
+
+    /// Deterministic final HP a monster would roll: uniform pick in [min,max] off `seed`
+    /// then the /players scaling, capped 0x7FFFFF (MONSTER_InitStats 0x573xxx). This is the
+    /// non-<<8 hitpoint value. `player_mult` is monLevelData.nPlayerMultiplyer (100 = 1 player,
+    /// i.e. no extra); pass 100 for the single-player base. Returns null for unknown class.
+    pub fn calcRolledHp(self: *const Tables, class_id: i32, mon_level: i32, diff: u2, seed: *s.D2SeedStrc, player_mult: i32) ?i32 {
+        const mm = self.scaledHp(class_id, mon_level, diff) orelse return null;
+        const hp_min = mm[0];
+        const hp_max = mm[1];
+        const span: u32 = @intCast(@max(1, hp_max - hp_min + 1));
+        const rolled = @as(i32, @intCast(randSel(seed, span))) + hp_min;
+        const scaled = applyPercent(rolled, player_mult);
+        var total = rolled + scaled;
+        if (total > 0x7fffff) total = 0x7fffff;
+        return total;
+    }
+
+    /// MonStats resistances for a class at a difficulty (Normal/NM/Hell). Percent, 100 =
+    /// immune, negatives amplify — the six UNITSTAT_*resist the engine sets straight from
+    /// MonStats in MONSTER_InitStats (no scaling). Null for unknown class.
+    pub fn resist(self: *const Tables, class_id: i32, diff: u2) ?MonResist {
+        const ms = self.stat(class_id) orelse return null;
+        return ms.resist[diff];
     }
 };
 
@@ -926,6 +1077,87 @@ test "findRandomPosition: a blocked first candidate forces a retry to a free cel
     try testing.expect(p2.x != p1.x or p2.y != p1.y);
     // More than one attempt was consumed (seed is past the single-attempt state).
     try testing.expect(s1.nSeedLow != after5.nSeedLow or s1.nSeedHigh != after5.nSeedHigh);
+}
+
+test "scaledHp: MonLvl-scaled formula + no_ratio raw path" {
+    var t = try Tables.load(testing.allocator);
+    defer t.deinit();
+
+    // MonLvl table loaded (D2 1.14d ships 111 rows: levels 0..110).
+    try testing.expect(t.mon_lvl.len >= 100);
+    // Level 0 is the identity row (all 1%); clamping past the end returns the last row.
+    try testing.expectEqual(@as(i32, 1), t.monLvlRow(0).?.hp[0]);
+    const beyond = t.monLvlRow(9999).?;
+    try testing.expectEqual(t.mon_lvl[t.mon_lvl.len - 1].hp[2], beyond.hp[2]);
+
+    // skeleton1 (class 0): HP = MonLvl.HP[level][diff] * MonStats.(min|max)HP(diff) / 100.
+    const sk = t.stat(0).?;
+    const lvl_h = sk.level[2]; // Level(H)
+    const row = t.monLvlRow(lvl_h).?;
+    const exp_min: i32 = @intCast(@divTrunc(@as(i64, row.hp[2]) * sk.min_hp[2], 100));
+    const exp_max: i32 = @intCast(@divTrunc(@as(i64, row.hp[2]) * sk.max_hp[2], 100));
+    const got = t.scaledHp(0, lvl_h, 2).?;
+    try testing.expectEqual(exp_min, got[0]);
+    try testing.expectEqual(exp_max, got[1]);
+    try testing.expect(got[0] <= got[1]);
+
+    // A no_ratio summon (its HP is the raw MonStats value, NO MonLvl multiplier). Find one.
+    var found_noratio = false;
+    for (t.mon_stats, 0..) |ms, cid| {
+        if (!ms.no_ratio) continue;
+        const raw = t.scaledHp(@intCast(cid), 50, 1).?;
+        try testing.expectEqual(ms.min_hp[1], raw[0]);
+        try testing.expectEqual(ms.max_hp[1], raw[1]);
+        found_noratio = true;
+        break;
+    }
+    try testing.expect(found_noratio);
+
+    // calcRolledHp is deterministic for a fixed seed and in [scaledMin, capped].
+    var seed = s.D2SeedStrc{ .nSeedLow = 0xABCDE, .nSeedHigh = 0x29a };
+    var seed2 = seed;
+    const hp1 = t.calcRolledHp(0, lvl_h, 2, &seed, 100).?;
+    const hp2 = t.calcRolledHp(0, lvl_h, 2, &seed2, 100).?;
+    try testing.expectEqual(hp1, hp2);
+    try testing.expect(hp1 >= got[0]); // roll >= scaled min (player_mult only adds)
+}
+
+test "resist: Mephisto Hell resists match MonStats row" {
+    var t = try Tables.load(testing.allocator);
+    defer t.deinit();
+
+    // Resolve mephisto's class id by name via a fresh MonStats parse (same Expansion-row
+    // skipping the loader uses), then check its Hell resists against the known txt values.
+    var mt = try txt.Table.parse(testing.allocator, d2data.file("MonStats"));
+    defer mt.deinit();
+    var meph_id: i32 = -1;
+    {
+        var cid: i32 = 0;
+        var r: usize = 0;
+        while (r < mt.rowCount()) : (r += 1) {
+            const nm = mt.str(r, "Id");
+            if (std.mem.eql(u8, nm, "Expansion")) continue;
+            if (std.mem.eql(u8, nm, "mephisto")) {
+                meph_id = cid;
+                break;
+            }
+            cid += 1;
+        }
+    }
+    try testing.expect(meph_id >= 0);
+
+    // MonStats.txt mephisto Hell: ResDm=20 ResMa=50 ResFi=75 ResLi=75 ResCo=75 ResPo=75.
+    const h = t.resist(meph_id, 2).?;
+    try testing.expectEqual(@as(i16, 20), h.phys);
+    try testing.expectEqual(@as(i16, 50), h.magic);
+    try testing.expectEqual(@as(i16, 75), h.fire);
+    try testing.expectEqual(@as(i16, 75), h.light);
+    try testing.expectEqual(@as(i16, 75), h.cold);
+    try testing.expectEqual(@as(i16, 75), h.poison);
+
+    // Mephisto is a boss (act boss) but NOT no_ratio (summons carry that flag, not bosses).
+    try testing.expect(t.stat(meph_id).?.is_boss);
+    try testing.expect(!t.stat(meph_id).?.no_ratio);
 }
 
 test "resolveSpawnMonsterCode: fixed codes + passthrough" {

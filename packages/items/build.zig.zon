@@ -4,7 +4,12 @@
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xd49b61219a959b96,
 
-    .dependencies = .{},
+    // The shared Stat/Item model foundation (seed-RNG, ISC, wire item decoder)
+    // lives in d2-core; items re-exports those so its public API is unchanged.
+    .dependencies = .{
+        .d2_core = .{ .path = "../core" },
+        .d2_data = .{ .path = "../data" },
+    },
 
     .paths = .{"."},
 }

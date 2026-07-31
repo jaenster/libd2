@@ -11,6 +11,9 @@ const std = @import("std");
 const unit = @import("unit.zig");
 const Unit = unit.Unit;
 const Stat = @import("stat.zig").Stat;
+const spell = @import("spell.zig");
+const skill = @import("skill.zig");
+const derive = @import("derive.zig");
 
 /// Number of quest-completion flags modelled: 3 difficulties x 32 slots. D2's real quest
 /// record is a per-act bitfield; this flat index is enough for a completion framework.
@@ -130,6 +133,55 @@ fn statU16(u: *const Unit, s: Stat) u16 {
     return @intCast(@max(0, @min(0xFFFF, u.get(s))));
 }
 
+/// A cold-tree sorceress build: the class/level/attributes + hard-point cold-skill levels that
+/// drive its elemental cast damage and derived life/mana. The defaults are the stock clientless
+/// Hell-Mephisto farmer: a level-85 maxed-cold sorc — every hard point in the cold tree (Ice Bolt
+/// as the left-click bolt maxed, its four in-tree synergies Ice Blast / Glacial Spike / Blizzard /
+/// Frozen Orb maxed, and Cold Mastery maxed to pierce Mephisto's 75% cold resist): 20*5 + 20 = 120
+/// pts, the near-endgame allocation a clvl~85 sorc has after quest skill points. Vitality-heavy for
+/// Hell survivability. `iceBoltCast` builds this sorc's Ice Bolt Cast; `derived` its life/mana.
+pub const SorcColdBuild = struct {
+    class: derive.Class = .sorceress,
+    level: i32 = 85,
+    strength: i32 = 30,
+    dexterity: i32 = 30,
+    vitality: i32 = 300,
+    energy: i32 = 55, // sorc energy_start 35 + 20 spent; the rest goes to vit/str-for-gear
+    ice_bolt: i32 = 20,
+    frost_nova: i32 = 1,
+    ice_blast: i32 = 20,
+    glacial_spike: i32 = 20,
+    blizzard: i32 = 20,
+    frozen_orb: i32 = 20,
+    cold_mastery: i32 = 20,
+
+    /// Build the sim Ice Bolt Cast for this sorc (effective skill level + synergy hard levels +
+    /// cold-mastery-as-pierce). Ice Bolt's element damage (EType/EMin.../HitShift) is read from the
+    /// loaded Skills.txt (Id 39) via `skills` — TABLE-DRIVEN, not hardcoded. `syn` is caller storage
+    /// the returned Cast borrows. Falls back to the verified `spell.ICE_BOLT` reference if the row
+    /// is somehow absent from the table (it never is in the real 1.14d data).
+    pub fn iceBoltCast(self: SorcColdBuild, skills: *const skill.Skills, syn: *[5]spell.Synergy) spell.Cast {
+        const dmg = if (skills.byId(spell.ICE_BOLT_ID)) |sd| sd.dmg else spell.ICE_BOLT;
+        return spell.iceBolt(
+            dmg,
+            self.ice_bolt,
+            self.frost_nova,
+            self.ice_blast,
+            self.glacial_spike,
+            self.blizzard,
+            self.frozen_orb,
+            self.cold_mastery,
+            syn,
+        );
+    }
+
+    /// Faithful derived life/mana from CharStats.txt for this build's class/level + spent
+    /// vitality/energy (derive.derive).
+    pub fn derived(self: SorcColdBuild) derive.Derived {
+        return derive.derive(self.class, self.level, self.vitality, self.energy);
+    }
+};
+
 const testing = std.testing;
 
 test "quest bitfield set/clear/count" {
@@ -190,6 +242,29 @@ test "applyToUnit / fromUnit map the persisted stats onto a Unit and back" {
     try testing.expectEqual(@as(u16, 77), back.strength);
     try testing.expectEqual(@as(u16, 500), back.max_hp);
     try testing.expect(back.quests.isDone(3));
+}
+
+test "SorcColdBuild: Ice Bolt cast carries maxed synergies + cold-mastery pierce; derived life/mana" {
+    const b = SorcColdBuild{};
+    var skills = try skill.Skills.load(testing.allocator);
+    defer skills.deinit();
+    var syn: [5]spell.Synergy = undefined;
+    const c = b.iceBoltCast(&skills, &syn);
+    try testing.expectEqual(spell.Element.cold, c.dmg.etype);
+    // Table-driven: the Ice Bolt row read from the real Skills.txt (Id 39) matches the verified ref.
+    try testing.expectEqual(spell.ICE_BOLT.e_min, c.dmg.e_min);
+    try testing.expectEqual(spell.ICE_BOLT.hit_shift, c.dmg.hit_shift);
+    try testing.expectEqual(@as(i32, 20), c.skill_level); // Ice Bolt maxed
+    // 4 maxed synergies (Ice Blast/Glacial Spike/Blizzard/Frozen Orb) + Frost Nova 1, each 15%/lvl.
+    var syn_total: i32 = 0;
+    for (c.synergies) |s| syn_total += s.skill_level;
+    try testing.expectEqual(@as(i32, 81), syn_total); // 20*4 + 1
+    try testing.expectEqual(spell.coldMasteryPierce(20), c.pierce_percent);
+    // Life/mana match the direct derive for the same class/level/attributes.
+    const d = b.derived();
+    const dd = derive.derive(.sorceress, 85, 300, 55);
+    try testing.expectEqual(dd.max_life, d.max_life);
+    try testing.expectEqual(dd.max_mana, d.max_mana);
 }
 
 test "fromUnit clamps level to [1,99] and class to <=6" {

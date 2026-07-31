@@ -4,6 +4,8 @@ const std = @import("std");
 const testing = std.testing;
 const sim = @import("lib.zig");
 const combat = sim.combat;
+const montable = sim.montable;
+const spell = sim.spell;
 
 test {
     // Pull in module-local tests (rng, stat, unit).
@@ -113,6 +115,127 @@ test "applyToLife floors at zero" {
     combat.applyToLife(&d, 5000);
     try testing.expectEqual(@as(i32, 0), d.life());
     try testing.expect(!d.isAlive());
+}
+
+test "chanceToHit: known AR/DEF/levels -> exact percent (attacker level in numerator)" {
+    // Attacker AR=2000, defender DEF=1000, alvl=40, dlvl=30 (from DAMAGE_RollAttackHit).
+    //   pct    = 2000*100/(1000+2000) = 200000/3000 = 66
+    //   chance = 66 * 2*40 / (40+30) = 66*80/70 = 5280/70 = 75
+    try testing.expectEqual(@as(i32, 75), combat.chanceToHit(2000, 1000, 40, 30));
+    // Higher ATTACKER level must RAISE the chance (confirms the numerator is attacker level):
+    const lo = combat.chanceToHit(2000, 1000, 20, 30);
+    const hi = combat.chanceToHit(2000, 1000, 60, 30);
+    try testing.expect(hi > lo);
+}
+
+test "blockChance: (dex-15)*(toblock+BlockFactor)/(2*clvl), capped at 75" {
+    // toblock stat 0, BlockFactor 20, dex 115, clvl 20:
+    //   (115-15)*(0+20)/(2*20) = 100*20/40 = 2000/40 = 50.
+    try testing.expectEqual(@as(i32, 50), combat.blockChance(0, combat.BLOCK_FACTOR, 115, 20));
+    // High dex + low level saturates the 75 cap: (215-15)*20/(2*10) = 200*20/20 = 200 -> 75.
+    try testing.expectEqual(@as(i32, 75), combat.blockChance(0, combat.BLOCK_FACTOR, 215, 10));
+    // clvl floors at 1: (35-15)*20/(2*1) = 20*20/2 = 200 -> 75.
+    try testing.expectEqual(@as(i32, 75), combat.blockChance(0, combat.BLOCK_FACTOR, 35, 0));
+}
+
+test "unified model: a blocked hit lands but deals zero damage" {
+    // Attacker guaranteed to hit; defender is a player with max block -> forced block.
+    var atk = sim.Unit.init(.monster);
+    atk.set(.level, 1);
+    atk.set(.tohit, 1_000_000);
+    atk.weapon = .{ .min_damage = 50, .max_damage = 90 };
+    var def = sim.Unit.init(.player);
+    def.set(.level, 5);
+    def.set(.dexterity, 400); // huge dex -> block caps at 75
+    def.set(.toblock, 200);
+    def.setLife(500);
+
+    // Scan seeds until we observe a block; assert blocked => hit but zero damage.
+    var found = false;
+    var v: u32 = 1;
+    while (v < 400 and !found) : (v += 1) {
+        var s = sim.Seed.fromValue(v);
+        const r = combat.resolveAttack(&atk, &def, &s, .{ .defender_block_factor = combat.BLOCK_FACTOR });
+        if (r.blocked) {
+            try testing.expect(r.hit);
+            try testing.expectEqual(@as(i32, 0), r.damage);
+            found = true;
+        }
+    }
+    try testing.expect(found);
+}
+
+test "unified model: elemental rider is resisted separately from physical" {
+    var atk = sim.Unit.init(.player);
+    atk.set(.level, 30);
+    atk.set(.dexterity, 200);
+    atk.set(.tohit, 1_000_000); // always hits
+    atk.weapon = .{ .min_damage = 10, .max_damage = 10 }; // fixed 10 physical
+    var def = sim.Unit.init(.monster);
+    def.set(.level, 1);
+    def.set(.fireresist, 50); // 50% fire resist -> half the fire rider
+    def.setLife(1000);
+
+    var s = sim.Seed.fromValue(0xF12E);
+    // 20 fixed fire damage rider; monster has no physical resist so physical applies in full.
+    const r = combat.resolveAttack(&atk, &def, &s, .{ .elem_element = .fire, .elem_min = 20, .elem_max = 20 });
+    try testing.expect(r.hit);
+    try testing.expectEqual(spell.Element.fire, r.elem_element);
+    try testing.expectEqual(@as(i32, 10), r.elem_damage); // 20 * (100-50)/100 = 10
+    // total = physical(10) + resisted fire(10) = 20.
+    try testing.expectEqual(@as(i32, 20), r.damage);
+}
+
+test "unified model: monster physical resist is UNCAPPED (unlike the player 50 cap)" {
+    // Player defender: damageresist clamps to 50.
+    var pl = sim.Unit.init(.player);
+    pl.set(.damageresist, 90);
+    try testing.expectEqual(@as(i32, 50 << 8), combat.applyPhysicalFor(100 << 8, &pl)); // 50%
+    // Monster defender: same 90% is applied uncapped -> only 10% gets through.
+    var mob = sim.Unit.init(.monster);
+    mob.set(.damageresist, 90);
+    try testing.expectEqual(@as(i32, 10 << 8), combat.applyPhysicalFor(100 << 8, &mob));
+    // Monster physical-immune (>=100) takes zero.
+    mob.set(.damageresist, 100);
+    try testing.expectEqual(@as(i32, 0), combat.applyPhysicalFor(100 << 8, &mob));
+}
+
+test "montable: MonLvl-scaled monster AC + AR feed a monster->player attack" {
+    var t = try montable.Tables.load(testing.allocator);
+    defer t.deinit();
+
+    // Fallen (class 19) at monster level 30, Normal. AC = MonLvl.AC[30] * MonStats.AC / 100.
+    const mc = t.combat(19).?;
+    const row = t.lvlRow(30).?;
+    const sc = t.scaled(19, 30, .normal).?;
+    try testing.expectEqual(@divTrunc(row.ac[0] * mc.ac[0], 100), sc.armor_class);
+    try testing.expectEqual(@divTrunc(row.th[0] * mc.a1_th[0], 100), sc.attack_rating_a1);
+
+    // Drive a monster->player swing with the scaled A1 through the unified model.
+    var player = sim.Unit.init(.player);
+    player.set(.level, 30);
+    player.set(.armorclass, 200);
+    player.setLife(400);
+    const atk = combat.MonsterAttack{
+        .attack_rating = sc.attack_rating_a1,
+        .min_damage = @max(1, sc.a1_min),
+        .max_damage = @max(2, sc.a1_max),
+        .monster_level = 30,
+    };
+    var s = sim.Seed.fromValue(0xB0B);
+    const before = player.life();
+    const r = combat.resolveMonsterAttack(atk, &player, &s, combat.BLOCK_FACTOR);
+    try testing.expect(r.chance >= 5 and r.chance <= 95);
+    try testing.expectEqual(sc.attack_rating_a1, r.ar);
+    // Determinism + damage sanity: same seed reproduces; life drops by the applied damage.
+    var s2 = sim.Seed.fromValue(0xB0B);
+    const r2 = combat.resolveMonsterAttack(atk, &player, &s2, combat.BLOCK_FACTOR);
+    try testing.expectEqual(r.hit, r2.hit);
+    try testing.expectEqual(r.damage, r2.damage);
+    if (r.hit and !r.blocked) {
+        combat.applyToLife(&player, r.damage);
+        try testing.expectEqual(@max(@as(i32, 0), before - r.damage), player.life());
+    }
 }
 
 test "miss deals no damage" {
