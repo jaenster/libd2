@@ -32,6 +32,7 @@
 
 const std = @import("std");
 const d2data = @import("d2-data");
+const ctsv = @import("ctsv.zig");
 
 /// The CharStats.txt row fields this derivation reads (per class).
 pub const CharStats = struct {
@@ -82,68 +83,29 @@ pub const CHAR_STATS = buildCharStats();
 fn buildCharStats() [CLASS_NAME.len]CharStats {
     @setEvalBranchQuota(200000);
     const txt = d2data.file("CharStats");
-    var lines = std.mem.splitScalar(u8, txt, '\n');
-    const header = std.mem.trimEnd(u8, lines.first(), "\r");
+    const hdr = ctsv.header(txt);
 
     var out: [CLASS_NAME.len]CharStats = undefined;
     for (CLASS_NAME, 0..) |name, i| {
-        const row = findRow(txt, name) orelse @compileError("CharStats.txt: no row for class " ++ name);
+        const row = ctsv.findRow(txt, name) orelse @compileError("CharStats.txt: no row for class " ++ name);
         out[i] = .{
-            .str_start = cell(header, row, "str"),
-            .dex_start = cell(header, row, "dex"),
-            .energy_start = cell(header, row, "int"),
-            .vit_start = cell(header, row, "vit"),
-            .stamina_start = cell(header, row, "stamina"),
-            .hpadd = cell(header, row, "hpadd"),
-            .life_per_level = cell(header, row, "LifePerLevel"),
-            .stamina_per_level = cell(header, row, "StaminaPerLevel"),
-            .mana_per_level = cell(header, row, "ManaPerLevel"),
-            .life_per_vitality = cell(header, row, "LifePerVitality"),
-            .stamina_per_vitality = cell(header, row, "StaminaPerVitality"),
-            .mana_per_magic = cell(header, row, "ManaPerMagic"),
-            .stat_per_level = cell(header, row, "StatPerLevel"),
-            .block_factor = cell(header, row, "BlockFactor"),
+            .str_start = ctsv.cellInt(hdr, row, "str"),
+            .dex_start = ctsv.cellInt(hdr, row, "dex"),
+            .energy_start = ctsv.cellInt(hdr, row, "int"),
+            .vit_start = ctsv.cellInt(hdr, row, "vit"),
+            .stamina_start = ctsv.cellInt(hdr, row, "stamina"),
+            .hpadd = ctsv.cellInt(hdr, row, "hpadd"),
+            .life_per_level = ctsv.cellInt(hdr, row, "LifePerLevel"),
+            .stamina_per_level = ctsv.cellInt(hdr, row, "StaminaPerLevel"),
+            .mana_per_level = ctsv.cellInt(hdr, row, "ManaPerLevel"),
+            .life_per_vitality = ctsv.cellInt(hdr, row, "LifePerVitality"),
+            .stamina_per_vitality = ctsv.cellInt(hdr, row, "StaminaPerVitality"),
+            .mana_per_magic = ctsv.cellInt(hdr, row, "ManaPerMagic"),
+            .stat_per_level = ctsv.cellInt(hdr, row, "StatPerLevel"),
+            .block_factor = ctsv.cellInt(hdr, row, "BlockFactor"),
         };
     }
     return out;
-}
-
-/// The data line whose first (`class`) column equals `name` (comptime; skips the header + the
-/// "Expansion" divider automatically since neither matches a class name).
-fn findRow(comptime txt: []const u8, comptime name: []const u8) ?[]const u8 {
-    var lines = std.mem.splitScalar(u8, txt, '\n');
-    _ = lines.first(); // header
-    while (lines.next()) |raw| {
-        const line = std.mem.trimEnd(u8, raw, "\r");
-        if (line.len == 0) continue;
-        const first = line[0 .. std.mem.indexOfScalar(u8, line, '\t') orelse line.len];
-        if (std.mem.eql(u8, first, name)) return line;
-    }
-    return null;
-}
-
-/// The integer value of column `col` (by header name) in tab-separated `row` (comptime).
-fn cell(comptime header: []const u8, comptime row: []const u8, comptime col: []const u8) i32 {
-    const idx = columnIndex(header, col) orelse @compileError("CharStats.txt: no column " ++ col);
-    var fields = std.mem.splitScalar(u8, row, '\t');
-    var i: usize = 0;
-    while (fields.next()) |f| : (i += 1) {
-        if (i == idx) {
-            const s = std.mem.trim(u8, f, " \r");
-            if (s.len == 0) return 0;
-            return std.fmt.parseInt(i32, s, 10) catch @compileError("CharStats.txt: non-integer " ++ col ++ " = '" ++ f ++ "'");
-        }
-    }
-    return 0;
-}
-
-fn columnIndex(comptime header: []const u8, comptime col: []const u8) ?usize {
-    var fields = std.mem.splitScalar(u8, header, '\t');
-    var i: usize = 0;
-    while (fields.next()) |f| : (i += 1) {
-        if (std.mem.eql(u8, std.mem.trim(u8, f, " \r"), col)) return i;
-    }
-    return null;
 }
 
 pub fn charStats(class: Class) CharStats {

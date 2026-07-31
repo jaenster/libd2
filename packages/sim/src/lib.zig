@@ -25,6 +25,7 @@ pub const select = @import("select.zig");
 pub const ai = @import("ai.zig");
 pub const character = @import("character.zig");
 pub const derive = @import("derive.zig");
+pub const difficulty = @import("difficulty.zig");
 pub const net = @import("net/net.zig");
 
 pub const Seed = rng.Seed;
@@ -61,6 +62,7 @@ pub const ResistProfile = spell.ResistProfile;
 pub const applyResist = spell.applyResist;
 pub const deriveLifeMana = derive.derive;
 pub const CharStats = derive.CharStats;
+pub const resistPenalty = difficulty.resistPenalty;
 
 test {
     _ = rng;
@@ -76,5 +78,6 @@ test {
     _ = ai;
     _ = character;
     _ = derive;
+    _ = difficulty;
     _ = net;
 }
