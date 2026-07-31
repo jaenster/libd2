@@ -52,6 +52,8 @@ pub const SkillData = struct {
     srvmissile: []const u8 = "",
     mana: i32 = 0,
     manashift: i32 = 0,
+    /// lvlmana — mana cost added per skill level above 1 (can be negative: Teleport gets cheaper).
+    lvlmana: i32 = 0,
     /// The skill's Skills.txt elemental-damage row (EType/EMin.../HitShift), for the
     /// staged per-level progression in spell.zig. `.etype == .none` when the skill has no
     /// elemental damage columns filled in.
@@ -83,10 +85,19 @@ pub const SkillData = struct {
         return .other;
     }
 
-    /// The per-cast mana cost read from the Skills.txt `mana` column (whole mana; the fixed-point
-    /// `manashift`/`lvlmana` scaling is not modelled — Teleport's cost is effectively flat 24).
+    /// The flat base mana column (whole). Prefer `manaCostAt` for the real per-level cost.
     pub fn manaCost(self: SkillData) i32 {
         return self.mana;
+    }
+
+    /// FAITHFUL per-level mana cost (SKILLS_CalculateManaCost @0x6c... 1.14d):
+    ///   ((mana + lvlmana*(level-1)) << manashift) >> 8
+    /// e.g. Fire Bolt ~2 (flat), Teleport 24 at slvl1 dropping to 15 at slvl10 (lvlmana -1),
+    /// Blizzard 23 -> 32, Frozen Orb 25 -> 29. manashift is the fixed-point scale.
+    pub fn manaCostAt(self: SkillData, level: i32) i32 {
+        const base: i64 = self.mana + self.lvlmana * (@max(1, level) - 1);
+        const shift: u6 = @intCast(self.manashift & 0x1f);
+        return @intCast((base * (@as(i64, 1) << shift)) >> 8);
     }
 };
 
@@ -127,6 +138,7 @@ pub const Skills = struct {
             .srvmissile = t.get(row, "srvmissile"),
             .mana = t.getInt(i32, row, "mana") orelse 0,
             .manashift = t.getInt(i32, row, "manashift") orelse 0,
+            .lvlmana = t.getInt(i32, row, "lvlmana") orelse 0,
             .dmg = .{
                 .etype = spell.Element.parse(t.get(row, "EType")),
                 .e_min = t.getInt(i32, row, "EMin") orelse 0,
@@ -992,6 +1004,22 @@ test "auraValue: aura skills grant their stat, valued by the calc VM (Might/Defi
 
     // A non-aura skill returns an empty stat.
     try testing.expectEqualStrings("", s.auraValue(s.idByName("Ice Bolt").?, 1).stat);
+}
+
+test "manaCostAt is the faithful per-level mana cost (SKILLS_CalculateManaCost)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    const fb = s.byId(s.idByName("Fire Bolt").?).?;
+    try testing.expectEqual(@as(i32, 2), fb.manaCostAt(1)); // (5<<7)>>8 = 2
+    try testing.expectEqual(@as(i32, 2), fb.manaCostAt(10)); // lvlmana 0 -> flat
+
+    const tp = s.byId(s.idByName("Teleport").?).?;
+    try testing.expectEqual(@as(i32, 24), tp.manaCostAt(1)); // 24 at slvl1
+    try testing.expectEqual(@as(i32, 15), tp.manaCostAt(10)); // lvlmana -1 -> cheaper with level
+
+    const bl = s.byId(s.idByName("Blizzard").?).?;
+    try testing.expectEqual(@as(i32, 23), bl.manaCostAt(1));
+    try testing.expectEqual(@as(i32, 32), bl.manaCostAt(10)); // 23 + 1*9
 }
 
 test "castElemental is all-class: Amazon/Necromancer/Paladin/Druid elemental skills assemble" {
