@@ -635,10 +635,19 @@ pub fn statIdByName(isc: *const d2data.Table, name: []const u8) ?u16 {
 pub fn applyPassives(skills: *const Skills, u: *Unit, book: SkillBook, isc: *const d2data.Table) void {
     for (book.levels, 0..) |lvl, id| {
         if (lvl <= 0) continue;
-        const pv = skills.passiveValue(@intCast(id), lvl);
-        if (pv.stat.len == 0) continue;
-        const sid = statIdByName(isc, pv.stat) orelse continue;
-        u.stats.add(@enumFromInt(sid), pv.value);
+        const row = skills.rowById(@intCast(id)) orelse continue;
+        // Every passivestatN slot (Natural Resistance grants 4 resists across slots 1..4; a mastery
+        // just uses slot 1). Each is valued by its own passivecalcN via the calc VM.
+        inline for (1..6) |slot| {
+            const stat_col = std.fmt.comptimePrint("passivestat{d}", .{slot});
+            const calc_col = std.fmt.comptimePrint("passivecalc{d}", .{slot});
+            const stat = skills.table.get(row, stat_col);
+            if (stat.len != 0) {
+                if (statIdByName(isc, stat)) |sid| {
+                    u.stats.add(@enumFromInt(sid), skills.evalCalc(.{}, 0, @intCast(id), lvl, calc_col));
+                }
+            }
+        }
     }
 }
 
@@ -941,6 +950,14 @@ test "applyPassives folds a caster's passive skills onto its unit stats (end to 
 
     const mrb = statIdByName(&isc, "manarecoverybonus").?;
     try testing.expectEqual(@as(i32, 90), u.stats.get(@enumFromInt(mrb)));
+    // Natural Resistance grants ALL 4 resists (passivestat1..4), not just the first slot.
+    var nat = Unit.init(.player);
+    var nbook = SkillBook{};
+    nbook.setByName(&s, "Natural Resistance", 10);
+    applyPassives(&s, &nat, nbook, &isc);
+    inline for (.{ "fireresist", "lightresist", "coldresist", "poisonresist" }) |rname| {
+        try testing.expect(nat.stats.get(@enumFromInt(statIdByName(&isc, rname).?)) > 0);
+    }
     // Cold Mastery pierce also lands when the sorc has it.
     book.setByName(&s, "Cold Mastery", 5); // passive_cold_pierce = ln12 = 20 + 5*5 = 45
     var ucm = Unit.init(.player);
