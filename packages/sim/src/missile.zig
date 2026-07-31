@@ -49,6 +49,17 @@ pub const MissileData = struct {
     /// Explicit damage (MinDamage/MaxDamage); 0/0 => damage is caster-derived at cast.
     min_damage: i32 = 0,
     max_damage: i32 = 0,
+    /// MaxVel / Accel — a missile ramps its speed by `accel` subtiles/tick each tick toward `max_vel`
+    /// (e.g. Guided Arrow, Charged Bolt). `accel == 0` => constant velocity.
+    max_vel: i32 = 0,
+    accel: i32 = 0,
+    /// LevRange — extra Range added per skill level above 1 (per-level reach growth).
+    lev_range: i32 = 0,
+    /// CollideFriend — the missile may collide with allied units (auras / helpful missiles).
+    collide_friend: bool = false,
+    /// Pierce — the missile passes THROUGH a unit it hits instead of stopping (works with
+    /// CollideKill=0). Distinct from CollideKill (which destroys on first unit hit).
+    pierce: bool = false,
 };
 
 /// CollideType bit for walls/collision map (D2 MISSILE_COLLIDE_UNITS=1, WALLS=2; the common
@@ -82,6 +93,11 @@ pub const Missiles = struct {
             .collide_kill = (t.getInt(i32, row, "CollideKill") orelse 0) != 0,
             .min_damage = t.getInt(i32, row, "MinDamage") orelse 0,
             .max_damage = t.getInt(i32, row, "MaxDamage") orelse 0,
+            .max_vel = t.getInt(i32, row, "MaxVel") orelse 0,
+            .accel = t.getInt(i32, row, "Accel") orelse 0,
+            .lev_range = t.getInt(i32, row, "LevRange") orelse 0,
+            .collide_friend = (t.getInt(i32, row, "CollideFriend") orelse 0) != 0,
+            .pierce = (t.getInt(i32, row, "Pierce") orelse 0) != 0,
         };
     }
 
@@ -110,10 +126,16 @@ pub const Missile = struct {
     vx: i32 = 0,
     vy: i32 = 0,
     vel: i32 = 0,
+    /// Speed ramp: `vel` climbs by `accel` each tick toward `max_vel` (0 => constant velocity).
+    max_vel: i32 = 0,
+    accel: i32 = 0,
     range_left: i32 = 0,
     collide_radius: i32 = MIN_COLLIDE,
     collide_type: i32 = 0,
     collide_kill: bool = true,
+    /// Passes through a unit it hits (Pierce) rather than stopping; can hit allies (CollideFriend).
+    pierce: bool = false,
+    collide_friend: bool = false,
     dmg_min: i32 = 0,
     dmg_max: i32 = 0,
     /// The missile's damage is derived from the caster at hit time (e.g. a sorc cold bolt whose
@@ -150,17 +172,29 @@ pub const Missile = struct {
             .vx = vx,
             .vy = vy,
             .vel = vel,
+            .max_vel = data.max_vel,
+            .accel = data.accel,
             .range_left = @max(1, data.range) * RANGE_SCALE,
             .collide_radius = @max(MIN_COLLIDE, vel),
             .collide_type = data.collide_type,
             .collide_kill = data.collide_kill,
+            .pierce = data.pierce,
+            .collide_friend = data.collide_friend,
             .dmg_min = dmg_min,
             .dmg_max = dmg_max,
         };
     }
 
-    /// Advance one tick: translate by velocity and spend the distance budget.
+    /// Advance one tick: ramp speed (Accel toward MaxVel), translate by velocity, spend the budget.
+    /// MISSILE_UpdateMissile @0x4ce6f0: velocity accelerates each frame; the direction is preserved
+    /// by scaling the (vx,vy) components to the new magnitude.
     pub fn step(self: *Missile) void {
+        if (self.accel != 0 and self.max_vel > self.vel and self.vel > 0) {
+            const nv = @min(self.vel + self.accel, self.max_vel);
+            self.vx = @divTrunc(self.vx * nv, self.vel);
+            self.vy = @divTrunc(self.vy * nv, self.vel);
+            self.vel = nv;
+        }
         self.x += self.vx;
         self.y += self.vy;
         self.range_left -= self.vel;
@@ -406,6 +440,28 @@ test "load missiles by name and id" {
     try testing.expect(fb.collide_kill);
     try testing.expectEqual(@as(u16, 27), m.byId(27).?.id); // magicarrow
     try testing.expectEqual(@as(?MissileData, null), m.byName("nope"));
+}
+
+test "missile delivery fields (MaxVel/Accel/Pierce) load + the speed ramp works" {
+    var m = try Missiles.load(testing.allocator);
+    defer m.deinit();
+    // Blessed Hammer accelerates: Vel=18, MaxVel=30, Accel=250 (clamped to MaxVel in one tick).
+    const bh = m.byName("blessedhammer").?;
+    try testing.expectEqual(@as(i32, 18), bh.vel);
+    try testing.expectEqual(@as(i32, 30), bh.max_vel);
+    try testing.expectEqual(@as(i32, 250), bh.accel);
+
+    // Ramp physics: a bolt with vel 5, accel 3, max 11 aimed +X speeds 5 -> 8 -> 11 -> 11.
+    const data = MissileData{ .id = 1, .vel = 5, .range = 1000, .accel = 3, .max_vel = 11 };
+    var b = Missile.create(data, 9, 0, 0, 100, 0, 0, 0);
+    try testing.expectEqual(@as(i32, 5), b.vel);
+    b.step();
+    try testing.expectEqual(@as(i32, 8), b.vel);
+    try testing.expectEqual(@as(i32, 8), b.vx); // aimed +X, so vx tracks vel
+    b.step();
+    try testing.expectEqual(@as(i32, 11), b.vel);
+    b.step();
+    try testing.expectEqual(@as(i32, 11), b.vel); // capped at MaxVel
 }
 
 test "TABLE-DRIVEN: icebolt missile (Id 59) resolves from the REAL Missiles.txt (Vel=12/Range=50/CollideType=3)" {
