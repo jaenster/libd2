@@ -247,6 +247,58 @@ pub fn buildElementalCast(
     return result;
 }
 
+/// Upper bound on Skills.txt Ids (1.14d has ~356 skills); the SkillBook indexes by Id.
+pub const MAX_SKILLS = 512;
+
+/// A caster's hard-point skill allocation, indexed by Skills.txt Id — the `ctx` a table-driven
+/// cast reads synergy + skill levels from. This is the sim's minimal "skill sheet"; the host fills
+/// it from a .d2s (or a build), by NAME so no Ids are hardcoded.
+pub const SkillBook = struct {
+    levels: [MAX_SKILLS]i16 = [_]i16{0} ** MAX_SKILLS,
+
+    pub fn set(self: *SkillBook, id: u16, level: i16) void {
+        if (id < MAX_SKILLS) self.levels[id] = level;
+    }
+    /// Set a skill's level by its Skills.txt name (no-op if the skill isn't in the table).
+    pub fn setByName(self: *SkillBook, skills: *const Skills, name: []const u8, level: i16) void {
+        if (skills.idByName(name)) |id| self.set(id, level);
+    }
+    pub fn get(self: SkillBook, id: u16) i32 {
+        return if (id < MAX_SKILLS) self.levels[id] else 0;
+    }
+    /// ctx interface for `buildElementalCast` (the `skills` arg is unused — levels are keyed by Id).
+    pub fn skillLevel(self: SkillBook, skills: *const Skills, id: u16) i32 {
+        _ = skills;
+        return self.get(id);
+    }
+};
+
+/// The Sorceress element-mastery skill for an element (its Skills.txt name + how it applies): cold
+/// masteries PIERCE resist, fire/lightning masteries ADD +% damage. Poison/magic/none => no mastery.
+fn sorcMastery(element: spell.Element) ?struct { name: []const u8, kind: MasteryKind } {
+    return switch (element) {
+        .cold => .{ .name = "Cold Mastery", .kind = .pierce },
+        .fire => .{ .name = "Fire Mastery", .kind = .damage },
+        .lightning => .{ .name = "Lightning Mastery", .kind = .damage },
+        else => null,
+    };
+}
+
+/// FULLY TABLE-DRIVEN elemental cast for ANY sorceress elemental skill: the element row, the
+/// synergies (EDmgSymPerCalc) and the caster's matching mastery are all read from Skills.txt — no
+/// per-skill code. `book` supplies the caster's hard-point levels; `effective_level` is the skill's
+/// level after +skills; `syn_out` is caller storage the Cast borrows.
+pub fn castElemental(skills: *const Skills, book: SkillBook, skill_id: u16, effective_level: i32, syn_out: []spell.Synergy) spell.Cast {
+    const sd = skills.byId(skill_id) orelse return .{ .dmg = .{}, .skill_level = effective_level };
+    var mastery_id: ?u16 = null;
+    var kind: MasteryKind = .none;
+    if (sorcMastery(sd.dmg.etype)) |m| {
+        mastery_id = skills.idByName(m.name);
+        kind = m.kind;
+    }
+    return buildElementalCast(skills, skill_id, effective_level, book, mastery_id, kind, syn_out);
+}
+
 /// Where a cast is aimed. `unit` is the target unit for entity-targeted casts (melee
 /// needs it; a missile aims at its position). `x`/`y` is the cast location (used when
 /// there is no target unit, e.g. LeftSkillOnLocation).
@@ -575,6 +627,41 @@ test "TABLE-DRIVEN generalizes: Glacial Spike (Id 55) + Fire Bolt (Id 36) base d
     try testing.expectEqual(@as(i32, 12), fb.dmg.e_max);
     try testing.expectEqual(@as(i32, 3), fb.dmg.minAt(1));
     try testing.expectEqual(@as(i32, 6), fb.dmg.maxAt(1));
+}
+
+test "castElemental: any elemental skill assembles from tables (element + synergies + right mastery)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+
+    // A sample allocation, set BY NAME (no skill Ids anywhere).
+    var book = SkillBook{};
+    book.setByName(&s, "Fire Ball", 10);
+    book.setByName(&s, "Meteor", 5);
+    book.setByName(&s, "Fire Mastery", 8);
+    book.setByName(&s, "Ice Bolt", 20);
+    book.setByName(&s, "Ice Blast", 20);
+    book.setByName(&s, "Frozen Orb", 20);
+    book.setByName(&s, "Cold Mastery", 5);
+
+    var syn1: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    var syn2: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+
+    // Fire Bolt (fire): Fire Mastery ADDS +% damage (mastery_percent, no pierce); synergies are
+    // Fire Ball + Meteor straight from EDmgSymPerCalc.
+    const fb = s.idByName("Fire Bolt").?;
+    const fc = castElemental(&s, book, fb, 10, &syn1);
+    try testing.expectEqual(spell.Element.fire, fc.dmg.etype);
+    try testing.expectEqual(@as(usize, 2), fc.synergies.len);
+    try testing.expectEqual(s.masteryLinear(s.idByName("Fire Mastery").?, 8), fc.mastery_percent); // 30+7*7=79
+    try testing.expectEqual(@as(i32, 0), fc.pierce_percent);
+
+    // Glacial Spike (cold): Cold Mastery PIERCES (pierce_percent, no +damage); 3 synergies.
+    const gs = s.idByName("Glacial Spike").?;
+    const gc = castElemental(&s, book, gs, 20, &syn2);
+    try testing.expectEqual(spell.Element.cold, gc.dmg.etype);
+    try testing.expectEqual(@as(usize, 3), gc.synergies.len);
+    try testing.expectEqual(s.masteryLinear(s.idByName("Cold Mastery").?, 5), gc.pierce_percent); // 20+5*4=40
+    try testing.expectEqual(@as(i32, 0), gc.mastery_percent);
 }
 
 test "execute: melee skill resolves through the combat core" {
