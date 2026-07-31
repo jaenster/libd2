@@ -40,12 +40,12 @@ pub fn applyPercent(v: i32, p: i32, d: i32) i32 {
 // Attack rating & defense (inputs to the to-hit roll)
 // ---------------------------------------------------------------------------
 
-/// GetDefense @006223f0: base armorclass(31) + dexterity/4, then scaled by
-/// item_armor_percent(16). skill_armor_percent(171)/armor_override_percent(182)
-/// are out of scope this pass.
+/// GetDefense (Units.cpp:2304): base armorclass(31) + dexterity/4, then scaled by
+/// skill_armor_percent(171) + item_armor_percent(16) summed (so Defiance / Iron Skin actually raise
+/// defense). The Holy Shield state bonus (a skill.calc read) is still out of scope.
 pub fn getDefense(u: *const Unit) i32 {
     var def = u.get(.armorclass) + @divTrunc(u.get(.dexterity), 4);
-    def += applyPercent(def, u.get(.item_armor_percent), 100);
+    def += applyPercent(def, u.get(.item_armor_percent) + u.get(.skill_armor_percent), 100);
     return def;
 }
 
