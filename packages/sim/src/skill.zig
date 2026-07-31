@@ -437,6 +437,9 @@ pub const Outcome = union(enum) {
     melee: combat.AttackResult,
     /// A spawned missile to add to the game (assign it a guid first).
     missile: missile.Missile,
+    /// A resolved direct-elemental hit (Nova/Static/Chain Lightning/...): apply `.applied` to the
+    /// target's life. Carries the already-resisted result (see ElementalHit).
+    elemental: ElementalHit,
 };
 
 /// SKILL_ExecuteClientDoFunc (slice): run skill `skill_id` cast by `caster` at
@@ -526,6 +529,30 @@ pub fn applyOutcome(out: Outcome, target: ?*Unit) ?missile.Missile {
             return null;
         },
         .missile => |m| return m,
+        .elemental => |hit| {
+            if (target) |t| applyElementalHit(hit, t);
+            return null;
+        },
+    }
+}
+
+/// A monster acts: pick the first damaging skill from its `mc` assignments and produce the Outcome —
+/// a direct-elemental hit resolved against `target` (Chain Lightning / Nova), or an elemental missile
+/// aimed at it (VampireFireball). Returns `.none` when the monster has no castable damaging skill
+/// (the host then falls back to a melee attack). The monster's skill levels come from `mc.book`, so
+/// its damage scales table-faithfully — the same path players use.
+pub fn monsterCast(skills: *const Skills, missiles: *const missile.Missiles, caster: *const Unit, mc: MonsterCaster, target: *const Unit, seed: *Seed) Outcome {
+    const id = mc.pickCastable(skills) orelse return .none;
+    const sd = skills.byId(id) orelse return .none;
+    const level = mc.book.get(id);
+    switch (sd.kind()) {
+        .direct => return .{ .elemental = castDirectElemental(skills, mc.book, id, level, target, seed) },
+        .missile => {
+            var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+            const c = castElemental(skills, mc.book, id, level, &syn);
+            return cast(skills, missiles, caster, id, .{ .unit = target }, c);
+        },
+        else => return .none,
     }
 }
 
@@ -853,6 +880,38 @@ test "resolveMonsterCaster maps MonStats skills to castable selections (AI picks
     const nk = monskill.forMonster(&mt, "skeleton1", &buf);
     const kmc = resolveMonsterCaster(&s, buf[0..nk]);
     try testing.expectEqual(@as(?u16, null), kmc.pickCastable(&s));
+}
+
+test "monsterCast produces a damaging outcome (direct hit + elemental missile)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var m = try missile.Missiles.load(testing.allocator);
+    defer m.deinit();
+    var mt = try d2data.open(testing.allocator, "MonStats");
+    defer mt.deinit();
+    var buf: [monskill.MAX_SKILLS]monskill.MonSkill = undefined;
+
+    var caster = Unit.init(.monster);
+    caster.unit_id = 5;
+    var seed = Seed.fromValue(7);
+
+    // Will-o-Wisp -> Chain Lightning is a DIRECT elemental hit resolved vs the target.
+    const nw = monskill.forMonster(&mt, "willowisp1", &buf);
+    const wmc = resolveMonsterCaster(&s, buf[0..nw]);
+    var tgt = Unit.init(.player);
+    tgt.setLife(5000);
+    const out = monsterCast(&s, &m, &caster, wmc, &tgt, &seed);
+    try testing.expect(out == .elemental);
+    try testing.expectEqual(spell.Element.lightning, out.elemental.element);
+    _ = applyOutcome(out, &tgt); // host applies it -> the monster hurt the player
+    try testing.expect(tgt.life() <= 5000);
+
+    // Vampire -> VampireFireball is an elemental MISSILE aimed at the target.
+    const nv = monskill.forMonster(&mt, "vampire1", &buf);
+    const vmc = resolveMonsterCaster(&s, buf[0..nv]);
+    const vout = monsterCast(&s, &m, &caster, vmc, &tgt, &seed);
+    try testing.expect(vout == .missile);
+    try testing.expect(vout.missile.caster_derived); // carries the monster's elemental cast
 }
 
 test "applyPassives folds a caster's passive skills onto its unit stats (end to end)" {
