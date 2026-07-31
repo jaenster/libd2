@@ -681,6 +681,15 @@ pub fn applyPassives(skills: *const Skills, u: *Unit, book: SkillBook, isc: *con
     }
 }
 
+/// Apply a CURSE to an enemy. A Necromancer curse is an aura whose aurastat1 is a NEGATIVE debuff on
+/// the target: Amplify Damage -> damageresist -par5 (foe takes MORE physical dmg), Weaken -> -damage%,
+/// Lower Resist -> -element-resist, Decrepify -> -velocity. Same table mechanism as applyAuraTo, cast
+/// on a foe. The curse STATE + its duration are the host's concern; this applies the stat effect that
+/// combat then consumes (e.g. a negative damageresist amplifies physical damage in applyPhysicalFor).
+pub fn applyCurseTo(skills: *const Skills, target: *Unit, curse_id: u16, level: i32, isc: *const d2data.Table) void {
+    applyAuraTo(skills, target, curse_id, level, isc);
+}
+
 /// Grant an AURA's stat to a single unit (an ally the host decided is in range): evaluate the aura's
 /// granted stat (auraValue) and ADD it to `u`'s StatList by ItemStatCost id. The range / who-is-in-
 /// range decision is the host's (game-loop territory); this is the pure per-unit apply — a Paladin's
@@ -1115,6 +1124,22 @@ test "end-to-end: Natural Resistance reduces incoming elemental damage (resist -
 
     try testing.expect(hit_res.resist > 0); // the passive gave real fire resist
     try testing.expect(hit_res.applied < hit_bare.applied); // so it took less fire damage
+}
+
+test "end-to-end: Amplify Damage curse makes an enemy take more physical damage" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var isc = try d2data.open(testing.allocator, "ItemStatCost");
+    defer isc.deinit();
+
+    var foe = Unit.init(.monster);
+    const base = combat.applyDamageComponent(100, .none, &foe).applied; // physical, no curse
+
+    applyCurseTo(&s, &foe, s.idByName("Amplify Damage").?, 1, &isc);
+    const dr = statIdByName(&isc, "damageresist").?;
+    try testing.expect(foe.stats.get(@enumFromInt(dr)) < 0); // curse gave NEGATIVE physical resist
+    const cursed = combat.applyDamageComponent(100, .none, &foe).applied;
+    try testing.expect(cursed > base); // so the enemy takes MORE physical damage
 }
 
 test "end-to-end: a Defiance aura raises a unit's defense (skill_armor_percent -> getDefense)" {
