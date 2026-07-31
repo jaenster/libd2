@@ -26,6 +26,7 @@ pub const ai = @import("ai.zig");
 pub const character = @import("character.zig");
 pub const derive = @import("derive.zig");
 pub const difficulty = @import("difficulty.zig");
+pub const calc = @import("calc.zig");
 pub const net = @import("net/net.zig");
 
 pub const Seed = rng.Seed;
@@ -79,5 +80,6 @@ test {
     _ = character;
     _ = derive;
     _ = difficulty;
+    _ = calc;
     _ = net;
 }
