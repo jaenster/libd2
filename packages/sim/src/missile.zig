@@ -362,9 +362,17 @@ test "stepAll routes caster_derived damage through ctx.applyHit" {
 }
 
 test "applyElementalHitVs resolves the carried cast against the victim's resist (with pierce)" {
-    var syn: [5]spell.Synergy = undefined;
-    // Ice Bolt slvl 20, Cold Mastery 5 => -40% cold resist pierce.
-    const c = spell.iceBolt(spell.ICE_BOLT, 20, 0, 0, 0, 0, 0, 5, &syn);
+    // A cold cast (sample element row; this test exercises the MISSILE hit-resolution path, not the
+    // table read — see skill.zig for the table-driven cast assembly). Cold Mastery 5 => -40% pierce.
+    const cold: spell.ElementalDamage = .{
+        .etype = .cold,
+        .e_min = 6,
+        .e_max = 10,
+        .e_min_lev = .{ 2, 4, 6, 8, 10 },
+        .e_max_lev = .{ 3, 5, 7, 9, 11 },
+        .hit_shift = 7,
+    };
+    const c = spell.Cast{ .dmg = cold, .skill_level = 20, .pierce_percent = 40 };
     var mob = Unit.init(.monster);
     mob.set(.coldresist, 75); // 75% - 40% pierce = 35% effective.
     mob.setLife(10000);

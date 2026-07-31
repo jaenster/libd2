@@ -247,19 +247,13 @@ pub fn applyResist(damage: i32, resist: i32) i32 {
     return @intCast(@divTrunc(prod, 100));
 }
 
-// ---------------------------------------------------------------------------
-// Ice Bolt — the single-target vertical slice (Skills.txt Id 39).
-// ---------------------------------------------------------------------------
+const testing = std.testing;
 
-/// Skills.txt numeric Id for Ice Bolt — the row `iceBolt`'s element damage is now read from.
-pub const ICE_BOLT_ID: u16 = 39;
-
-/// Ice Bolt's Skills.txt element row (1.14d), kept as the VERIFIED reference the table read is
-/// checked against (Skills.txt Id 39: EType=cold EMin=6 EMax=10 EMinLev1..5=2,4,6,8,10
-/// EMaxLev1..5=3,5,7,9,11 HitShift=7). The live cast path reads these same numbers straight from
-/// the loaded Skills.txt row instead of this literal (see `iceBolt`), so this stays only as the
-/// parity anchor for tests — the code no longer hardcodes Ice Bolt's damage.
-pub const ICE_BOLT: ElementalDamage = .{
+// Test fixture: a sample cold-element staged row (the shape of a 1.14d cold spell) used ONLY to
+// exercise the pure staged/synergy/mastery math below. The live cast path reads every one of these
+// numbers off Skills.txt — see skill.zig `buildElementalCast` + its table-parity tests, and
+// character.zig — so nothing here feeds production; it is a unit-test input, not game data.
+const TEST_COLD: ElementalDamage = .{
     .etype = .cold,
     .e_min = 6,
     .e_max = 10,
@@ -268,93 +262,38 @@ pub const ICE_BOLT: ElementalDamage = .{
     .hit_shift = 7,
 };
 
-/// Ice Bolt (Id 39) synergies (Skills.txt synergy calc, 1.14d — GameData.js:248):
-///   Frost Nova(44) 15%, Ice Blast(45) 15%, Glacial Spike(55) 15%, Blizzard(59) 15%,
-///   Frozen Orb(64) 15%. Each per level of the referenced skill.
-pub const ICE_BOLT_SYNERGY_PERMILLE: i32 = 150; // 15% per level
-
-/// Cold Mastery (Id 58) resist-pierce as a percentage of enemy cold resist, given its hard level.
-/// passive_cold_pierce (ItemStatCost 335): Param1=20 base, Param2=5 per level after the first, so
-/// slvl 1 => 20, slvl L>=1 => 20 + 5*(L-1). slvl 0 => 0. (Skills.txt Cold Mastery aurastat; the
-/// engine reduces the target's cold resist by this before applying damage.)
-pub fn coldMasteryPierce(mastery_level: i32) i32 {
-    if (mastery_level <= 0) return 0;
-    return 20 + 5 * (mastery_level - 1);
+/// Build a Cast over TEST_COLD with an explicit synergy list + resist-pierce (test helper).
+fn coldCast(skill_level: i32, synergies: []const Synergy, pierce: i32) Cast {
+    return .{ .dmg = TEST_COLD, .skill_level = skill_level, .synergies = synergies, .pierce_percent = pierce };
 }
 
-/// Build an Ice Bolt cast for a caster at effective `skill_level`, with the caster's hard-point
-/// levels in each synergy skill and its Cold-Mastery level (converted to a resist-pierce, since
-/// Cold Mastery pierces resist rather than adding damage). `dmg` is Ice Bolt's element row read
-/// from the loaded Skills.txt (Id 39) — the damage is now TABLE-DRIVEN, not hardcoded. `syn_out`
-/// is caller-owned storage for the 5 synergy entries (avoids allocation; the returned Cast
-/// borrows it). The verified reference for `dmg` is `ICE_BOLT` (asserted in tests).
-pub fn iceBolt(
-    dmg: ElementalDamage,
-    skill_level: i32,
-    frost_nova_lvl: i32,
-    ice_blast_lvl: i32,
-    glacial_spike_lvl: i32,
-    blizzard_lvl: i32,
-    frozen_orb_lvl: i32,
-    cold_mastery_level: i32,
-    syn_out: *[5]Synergy,
-) Cast {
-    const p = ICE_BOLT_SYNERGY_PERMILLE;
-    syn_out.* = .{
-        .{ .permille = p, .skill_level = frost_nova_lvl },
-        .{ .permille = p, .skill_level = ice_blast_lvl },
-        .{ .permille = p, .skill_level = glacial_spike_lvl },
-        .{ .permille = p, .skill_level = blizzard_lvl },
-        .{ .permille = p, .skill_level = frozen_orb_lvl },
-    };
-    return .{
-        .dmg = dmg,
-        .skill_level = skill_level,
-        .synergies = syn_out,
-        .pierce_percent = coldMasteryPierce(cold_mastery_level),
-    };
-}
-
-const testing = std.testing;
-
-test "Ice Bolt base staged damage matches the in-game tooltip (HitShift=7 => >>1)" {
+test "staged element damage progression (HitShift=7 => >>1)" {
     // clvl 1: staged min = EMin=6 (no per-level add) << 7 = 768; >>8 => 3. max = 10<<7>>8 => 5.
-    try testing.expectEqual(@as(i32, 3), ICE_BOLT.minAt(1));
-    try testing.expectEqual(@as(i32, 5), ICE_BOLT.maxAt(1));
+    try testing.expectEqual(@as(i32, 3), TEST_COLD.minAt(1));
+    try testing.expectEqual(@as(i32, 5), TEST_COLD.maxAt(1));
     // clvl 2: min = (6 + EMinLev1*(2-1)) = 6+2 = 8 => >>1 = 4. max = (10+3) = 13 => >>1 = 6.
-    try testing.expectEqual(@as(i32, 4), ICE_BOLT.minAt(2));
-    try testing.expectEqual(@as(i32, 6), ICE_BOLT.maxAt(2));
+    try testing.expectEqual(@as(i32, 4), TEST_COLD.minAt(2));
+    try testing.expectEqual(@as(i32, 6), TEST_COLD.maxAt(2));
     // clvl 9 crosses the first breakpoint (l>8 uses EMinLev2): min base folds to
     //   6 + EMinLev1*(8-1) + EMinLev2*(9-8) = 6 + 2*7 + 4*1 = 24 => >>1 = 12.
-    try testing.expectEqual(@as(i32, 12), ICE_BOLT.minAt(9));
+    try testing.expectEqual(@as(i32, 12), TEST_COLD.minAt(9));
 }
 
-test "Ice Bolt staged damage + synergy scaling (integer-exact)" {
-    var syn: [5]Synergy = undefined;
+test "synergy scaling is integer-exact and pierce never touches damage" {
     // clvl 10 base: min = 6 + 2*7 (lvls 2..8) + 4*2 (lvls 9..10) = 6+14+8 = 28 << 7 >> 8 = 14.
-    // (matches the reconstructed SKILLS_GetValueByLevelBreakpoints worked example: slvl10 min=28.)
-    const c0 = iceBolt(ICE_BOLT, 10, 0, 0, 0, 0, 0, 0, &syn);
+    const c0 = coldCast(10, &.{}, 0);
     try testing.expectEqual(@as(i32, 14), c0.damage().min);
 
-    // Add 20 hard levels of one synergy (Blizzard) at 15% each => +300% => ×4.00.
-    const c1 = iceBolt(ICE_BOLT, 10, 0, 0, 0, 20, 0, 0, &syn);
+    // Add 20 levels of one synergy at 15% (permille 150) each => +300% => ×4.00.
+    const c1 = coldCast(10, &.{.{ .permille = 150, .skill_level = 20 }}, 0);
     // syn_permille = 1000 + 20*150 = 4000 => ×4. 14*4000/1000 = 56.
     try testing.expectEqual(@as(i32, 56), c1.damage().min);
 
-    // Cold Mastery is NOT damage: it must not change the rolled damage bounds at all.
-    const c2 = iceBolt(ICE_BOLT, 10, 0, 0, 0, 20, 0, 20, &syn);
+    // A resist-pierce (Cold Mastery) is carried on the cast but must NOT change damage bounds.
+    const c2 = coldCast(10, &.{.{ .permille = 150, .skill_level = 20 }}, 40);
     try testing.expectEqual(@as(i32, 56), c2.damage().min);
-}
-
-test "Cold Mastery is a resist-pierce, not a damage bonus" {
-    // passive_cold_pierce: slvl1 => 20, slvl5 => 20 + 5*4 = 40, slvl0 => 0.
-    try testing.expectEqual(@as(i32, 0), coldMasteryPierce(0));
-    try testing.expectEqual(@as(i32, 20), coldMasteryPierce(1));
-    try testing.expectEqual(@as(i32, 40), coldMasteryPierce(5));
-    var syn: [5]Synergy = undefined;
-    const c = iceBolt(ICE_BOLT, 10, 0, 0, 0, 0, 0, 5, &syn);
-    try testing.expectEqual(@as(i32, 40), c.pierce_percent); // carried onto the cast, not damage
-    try testing.expectEqual(@as(i32, 0), c.mastery_percent);
+    try testing.expectEqual(@as(i32, 40), c2.pierce_percent);
+    try testing.expectEqual(@as(i32, 0), c2.mastery_percent);
 }
 
 test "Fire/Lightning mastery ARE a +% damage bonus (mastery_percent path)" {
@@ -384,14 +323,18 @@ test "ResistProfile reads the element-specific resist off a unit" {
 }
 
 test "Cast.seal makes the cast self-contained (identical damage, no borrowed synergy slice)" {
+    const five = [5]Synergy{
+        .{ .permille = 150, .skill_level = 1 },  .{ .permille = 150, .skill_level = 20 },
+        .{ .permille = 150, .skill_level = 20 }, .{ .permille = 150, .skill_level = 20 },
+        .{ .permille = 150, .skill_level = 20 },
+    };
     const sealed = blk: {
-        var syn: [5]Synergy = undefined; // goes out of scope at the block's end
-        const c = iceBolt(ICE_BOLT, 20, 1, 20, 20, 20, 20, 20, &syn);
+        const syn = five; // a copy that goes out of scope at the block's end
+        const c = coldCast(20, &syn, 40);
         break :blk c.seal();
     };
     // Rebuild the same cast with a live slice to compare — sealed must match it exactly.
-    var syn2: [5]Synergy = undefined;
-    const live = iceBolt(ICE_BOLT, 20, 1, 20, 20, 20, 20, 20, &syn2);
+    const live = coldCast(20, &five, 40);
     try testing.expectEqual(live.damage().min, sealed.damage().min);
     try testing.expectEqual(live.damage().max, sealed.damage().max);
     try testing.expectEqual(@as(usize, 0), sealed.synergies.len); // slice cleared
@@ -400,8 +343,7 @@ test "Cast.seal makes the cast self-contained (identical damage, no borrowed syn
 }
 
 test "Cast.roll stays within [min,max] and is deterministic for a seed" {
-    var syn: [5]Synergy = undefined;
-    const c = iceBolt(ICE_BOLT, 20, 0, 0, 0, 20, 0, 0, &syn);
+    const c = coldCast(20, &.{.{ .permille = 150, .skill_level = 20 }}, 0);
     const d = c.damage();
     var s1 = Seed.fromValue(0xCEB01);
     var s2 = Seed.fromValue(0xCEB01);
