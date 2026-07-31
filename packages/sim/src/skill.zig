@@ -57,16 +57,29 @@ pub const SkillData = struct {
     dmg: spell.ElementalDamage = .{},
     /// ELen — the effect duration column (cold-length etc.); carried for completeness.
     e_len: i32 = 0,
+    /// Structural classification columns (Skills.txt): `aura`=1, a non-empty `passivestate`, and a
+    /// non-empty `summon` mark aura / passive / summon skills respectively.
+    is_aura: bool = false,
+    is_passive: bool = false,
+    is_summon: bool = false,
     /// mana at level 1 minus manashift/lvlmana scaling reduced to the base per-cast cost. For
     /// Teleport this is the flat `mana` column (24); D2's per-level mana scaling barely moves it.
     /// Exposed so the host can gate a cast on the caster's mana pool.
     /// (mana/manashift already carried above.)
 
+    /// Classify a skill into a behaviour CATEGORY from its Skills.txt columns (faithful structural
+    /// classification — covers every skill, even ones whose exact srvdofunc isn't individually
+    /// modelled yet). Priority mirrors how the engine gates behaviour: aura > passive > summon >
+    /// missile > teleport > melee-attack > direct-elemental > other.
     pub fn kind(self: SkillData) Kind {
+        if (self.is_aura) return .aura;
+        if (self.is_passive) return .passive;
+        if (self.is_summon) return .summon;
         if (self.srvdofunc == @intFromEnum(DoFunc.teleport)) return .teleport;
         if (self.srvmissile.len != 0) return .missile;
         if (self.srvdofunc == @intFromEnum(DoFunc.attack)) return .melee;
-        return .unknown;
+        if (self.dmg.etype != .none) return .direct; // direct elemental (Nova / Static Field / ...)
+        return .other;
     }
 
     /// The per-cast mana cost read from the Skills.txt `mana` column (whole mana; the fixed-point
@@ -76,7 +89,9 @@ pub const SkillData = struct {
     }
 };
 
-pub const Kind = enum { melee, missile, unknown, teleport };
+/// Behaviour category a skill classifies into (see SkillData.kind). `direct` = a direct elemental
+/// hit with no missile (Nova/Static Field); `other` = an unmodelled/utility do-function.
+pub const Kind = enum { melee, missile, teleport, direct, aura, passive, summon, other, unknown };
 
 /// Loaded Skills.txt (the REAL 1.14d table from d2-data — ~256 columns, 357 rows),
 /// indexed by numeric Id. Columns are addressed by NAME, never by index.
@@ -125,6 +140,9 @@ pub const Skills = struct {
                 .hit_shift = t.getInt(i32, row, "HitShift") orelse 0,
             },
             .e_len = t.getInt(i32, row, "ELen") orelse 0,
+            .is_aura = (t.getInt(i32, row, "aura") orelse 0) != 0,
+            .is_passive = t.get(row, "passivestate").len != 0,
+            .is_summon = t.get(row, "summon").len != 0,
         };
     }
 
@@ -405,7 +423,10 @@ pub fn execute(
         // produces no combat/missile Outcome. The host detects `.teleport` via kind() and applies
         // the jump itself (dest-passable + range + mana gate); nothing to resolve here.
         .teleport => return .none,
-        .unknown => return .none,
+        // Categories the classifier recognises but whose behaviour isn't resolved here yet:
+        // direct-elemental area hits (Nova/Static), auras, passives, summons, and utility do-funcs.
+        // They classify correctly (kind()) so the host/AI can branch; resolution is future work.
+        .direct, .aura, .passive, .summon, .other, .unknown => return .none,
     }
 }
 
@@ -602,6 +623,35 @@ test "classify: Attack is melee, Fire Bolt is a missile" {
     try testing.expectEqual(Kind.missile, s.byId(36).?.kind()); // Fire Bolt
     try testing.expectEqualStrings("firebolt", s.byId(36).?.srvmissile);
     try testing.expectEqual(@as(?SkillData, null), s.byId(9999));
+}
+
+test "classify: every category resolves from the real Skills.txt columns" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    const byName = struct {
+        fn k(sk: *const Skills, name: []const u8) Kind {
+            return sk.byId(sk.idByName(name).?).?.kind();
+        }
+    }.k;
+    try testing.expectEqual(Kind.melee, byName(&s, "Attack"));
+    try testing.expectEqual(Kind.missile, byName(&s, "Ice Bolt")); // srvmissile
+    try testing.expectEqual(Kind.teleport, byName(&s, "Teleport")); // srvdofunc 27
+    try testing.expectEqual(Kind.aura, byName(&s, "Might")); // aura=1
+    try testing.expectEqual(Kind.passive, byName(&s, "Warmth")); // passivestate
+    try testing.expectEqual(Kind.summon, byName(&s, "Raise Skeleton")); // summon
+    try testing.expectEqual(Kind.direct, byName(&s, "Frost Nova")); // EType, no missile
+    try testing.expectEqual(Kind.direct, byName(&s, "Static Field"));
+    try testing.expectEqual(Kind.other, byName(&s, "Battle Orders")); // utility buff
+    // Every non-divider skill must classify without crashing (no unreachable category).
+    var count: usize = 0;
+    for (0..s.table.rowCount()) |r| {
+        const id = s.table.getInt(i32, r, "Id") orelse continue;
+        if (s.byId(@intCast(id))) |sd| {
+            _ = sd.kind();
+            count += 1;
+        }
+    }
+    try testing.expect(count > 300); // the whole catalog classified
 }
 
 test "TABLE-DRIVEN: Teleport (Id 54) classifies as teleport with the real Skills.txt mana cost" {
