@@ -94,6 +94,13 @@ pub const SkillData = struct {
 /// hit with no missile (Nova/Static Field); `other` = an unmodelled/utility do-function.
 pub const Kind = enum { melee, missile, teleport, direct, aura, passive, summon, other, unknown };
 
+/// An aura's granted stat: the ItemStatCost stat NAME (borrows the Skills table) + its value at a
+/// given aura level. `.stat == ""` means the skill is not an aura.
+pub const AuraStat = struct {
+    stat: []const u8 = "",
+    value: i32 = 0,
+};
+
 /// Loaded Skills.txt (the REAL 1.14d table from d2-data — ~256 columns, 357 rows),
 /// indexed by numeric Id. Columns are addressed by NAME, never by index.
 pub const Skills = struct {
@@ -225,6 +232,17 @@ pub const Skills = struct {
     pub fn masteryValue(self: *const Skills, skill_id: u16, level: i32) i32 {
         if (level <= 0) return 0;
         return self.evalCalc(.{}, 0, skill_id, level, "passivecalc1");
+    }
+
+    /// The stat an aura skill grants to units in range + its value at `level`, table-driven from
+    /// Skills.txt: `aurastat1` (the ItemStatCost stat NAME) valued by `aurastatcalc1` via the calc
+    /// VM. E.g. Might's damagepercent = ln34 = Param3 + lvl*Param4 => +50% at slvl1. An empty
+    /// `aurastat1` (not an aura) => `.stat == ""`, value 0.
+    pub fn auraValue(self: *const Skills, skill_id: u16, level: i32) AuraStat {
+        const row = self.rowById(skill_id) orelse return .{};
+        const stat = self.table.get(row, "aurastat1");
+        if (stat.len == 0) return .{};
+        return .{ .stat = stat, .value = self.evalCalc(.{}, 0, skill_id, level, "aurastatcalc1") };
     }
 
     /// Evaluate one of a skill's calc-string columns (by header name) through the calc VM, resolving
@@ -790,6 +808,24 @@ test "resolveMonsterCaster maps MonStats skills to castable selections (AI picks
     const nk = monskill.forMonster(&mt, "skeleton1", &buf);
     const kmc = resolveMonsterCaster(&s, buf[0..nk]);
     try testing.expectEqual(@as(?u16, null), kmc.pickCastable(&s));
+}
+
+test "auraValue: aura skills grant their stat, valued by the calc VM (Might/Defiance/Blessed Aim)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    // Might: aurastat1=damagepercent, aurastatcalc1=ln34 = Param3 + lvl*Param4 = 40 + lvl*10.
+    const might = s.idByName("Might").?;
+    const a1 = s.auraValue(might, 1);
+    try testing.expectEqualStrings("damagepercent", a1.stat);
+    try testing.expectEqual(@as(i32, 50), a1.value); // 40 + 1*10
+    try testing.expectEqual(@as(i32, 90), s.auraValue(might, 5).value); // 40 + 5*10
+
+    // Defiance grants defensive armor%; Blessed Aim grants to-hit% — both ln34, same shape.
+    try testing.expectEqualStrings("skill_armor_percent", s.auraValue(s.idByName("Defiance").?, 1).stat);
+    try testing.expectEqualStrings("item_tohit_percent", s.auraValue(s.idByName("Blessed Aim").?, 1).stat);
+
+    // A non-aura skill returns an empty stat.
+    try testing.expectEqualStrings("", s.auraValue(s.idByName("Ice Bolt").?, 1).stat);
 }
 
 test "castElemental is all-class: Amazon/Necromancer/Paladin/Druid elemental skills assemble" {
