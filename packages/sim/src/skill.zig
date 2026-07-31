@@ -25,6 +25,7 @@ const unit = @import("unit.zig");
 const combat = @import("combat.zig");
 const missile = @import("missile.zig");
 const spell = @import("spell.zig");
+const calc = @import("calc.zig");
 const d2data = @import("d2-data");
 
 const Seed = rng.Seed;
@@ -167,12 +168,12 @@ pub const Skills = struct {
 
     pub fn synergyInfo(self: *const Skills, skill_id: u16) SynergyInfo {
         const row = self.rowById(skill_id) orelse return .{};
-        const calc = self.table.get(row, "EDmgSymPerCalc");
-        if (calc.len == 0) return .{};
+        const expr = self.table.get(row, "EDmgSymPerCalc");
+        if (expr.len == 0) return .{};
 
         var info: SynergyInfo = .{};
         // Pull each skill('Name'...) reference and resolve it to a skill Id.
-        var rest = calc;
+        var rest = expr;
         while (std.mem.indexOf(u8, rest, "skill('")) |at| {
             const after = rest[at + "skill('".len ..];
             const end = std.mem.indexOfScalar(u8, after, '\'') orelse break;
@@ -186,8 +187,8 @@ pub const Skills = struct {
             rest = after[end + 1 ..];
         }
         // The `parN` multiplier (the per-level %): read ParamN off this same row.
-        if (std.mem.indexOf(u8, calc, "par")) |pi| {
-            const digits = calc[pi + 3 ..];
+        if (std.mem.indexOf(u8, expr, "par")) |pi| {
+            const digits = expr[pi + 3 ..];
             var j: usize = 0;
             while (j < digits.len and std.ascii.isDigit(digits[j])) : (j += 1) {}
             if (j > 0) {
@@ -198,12 +199,56 @@ pub const Skills = struct {
         return info;
     }
 
-    /// A linear passive value `Param1 + Param2*(level-1)` for `level >= 1`, else 0 — the 1.14d
-    /// `lnAB` passive/mastery calc (Cold Mastery pierce Id 65 Param1=20/Param2=5; Fire Mastery Id 61
-    /// Param1=30/Param2=7; etc.). Read straight from the skill's Param columns, never hardcoded.
-    pub fn masteryLinear(self: *const Skills, skill_id: u16, level: i32) i32 {
+    /// A skill's passive/mastery value at `level`, evaluated FAITHFULLY through the calc VM from its
+    /// Skills.txt `passivecalc1` column — e.g. Cold Mastery pierce / Fire Mastery +dmg are `ln12` =
+    /// Param1 + level*Param2 (Cold Mastery 20/5 => 25 at slvl1, 45 at slvl5). No formula is hardcoded;
+    /// whatever calc the row carries is what runs. `level <= 0` => 0 (skill not learned).
+    pub fn masteryValue(self: *const Skills, skill_id: u16, level: i32) i32 {
         if (level <= 0) return 0;
-        return self.param(skill_id, 1) + self.param(skill_id, 2) * (level - 1);
+        return self.evalCalc(.{}, 0, skill_id, level, "passivecalc1");
+    }
+
+    /// Evaluate one of a skill's calc-string columns (by header name) through the calc VM, resolving
+    /// `skill('Name'.code)` synergy refs against `book` (the caster's skill levels) and `ulvl` against
+    /// `char_level`. `level` is the bare `lvl` (the casting skill's effective level). Errors => 0.
+    pub fn evalCalc(self: *const Skills, book: SkillBook, char_level: i32, skill_id: u16, level: i32, column: []const u8) i32 {
+        const row = self.rowById(skill_id) orelse return 0;
+        const expr = self.table.get(row, column);
+        if (expr.len == 0) return 0;
+        const ev = calc.Evaluator(CalcCtx){ .ctx = .{ .skills = self, .book = book, .char_level = char_level } };
+        return ev.eval(expr, skill_id, level) catch 0;
+    }
+};
+
+/// Bridges the calc VM (calc.zig) to the real Skills table + a caster's SkillBook: params come from
+/// Skills.txt, skill levels from the book, name resolution from the table. Damage/aura codes
+/// (edmn/edmx/...) are not wired yet -> 0 (the parser handles them, the model fills them in later).
+pub const CalcCtx = struct {
+    skills: *const Skills,
+    book: SkillBook,
+    char_level: i32 = 0,
+
+    pub fn param(self: CalcCtx, skill_id: u16, n: u8) i32 {
+        return self.skills.param(skill_id, @intCast(n));
+    }
+    pub fn level(self: CalcCtx, skill_id: u16) i32 {
+        return self.book.get(skill_id);
+    }
+    pub fn baseLevel(self: CalcCtx, skill_id: u16) i32 {
+        return self.book.get(skill_id);
+    }
+    pub fn charLevel(self: CalcCtx) i32 {
+        return self.char_level;
+    }
+    pub fn idByName(self: CalcCtx, name: []const u8) ?u16 {
+        return self.skills.idByName(name);
+    }
+    pub fn keyword(self: CalcCtx, skill_id: u16, lvl: i32, code: []const u8) ?i32 {
+        _ = self;
+        _ = skill_id;
+        _ = lvl;
+        _ = code;
+        return null;
     }
 };
 
@@ -237,7 +282,7 @@ pub fn buildElementalCast(
     }
     var result: spell.Cast = .{ .dmg = sd.dmg, .skill_level = effective_level, .synergies = syn_out[0..n] };
     if (mastery_id) |mid| {
-        const value = skills.masteryLinear(mid, ctx.skillLevel(skills, mid));
+        const value = skills.masteryValue(mid, ctx.skillLevel(skills, mid));
         switch (mastery_kind) {
             .pierce => result.pierce_percent = value,
             .damage => result.mastery_percent = value,
@@ -507,15 +552,15 @@ test "resolveElemental: Cold Mastery pierces the target's cold resist" {
     var skills = try Skills.load(testing.allocator);
     defer skills.deinit();
     var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
-    // slvl 5 Cold Mastery => -40% enemy cold resist (20 + 5*4, read from Skills.txt).
+    // slvl 5 Cold Mastery => -45% enemy cold resist (ln12 = 20 + 5*5, read from Skills.txt).
     const ic = testIceBolt(&skills, 20, 5, &syn);
     var mob = Unit.init(.monster);
-    mob.set(.coldresist, 50); // 50% - 40% pierce = 10% effective resist.
+    mob.set(.coldresist, 50); // 50% - 45% pierce = 5% effective resist.
     mob.setLife(1000);
     var seed = Seed.fromValue(11);
     const hit = resolveElementalVsUnit(ic, &mob, &seed);
-    try testing.expectEqual(@as(i32, 10), hit.resist); // pierced 50 -> 10
-    try testing.expectEqual(@divTrunc(hit.raw * 90, 100), hit.applied);
+    try testing.expectEqual(@as(i32, 5), hit.resist); // pierced 50 -> 5
+    try testing.expectEqual(@divTrunc(hit.raw * 95, 100), hit.applied);
 }
 
 test "resolveElemental: cold-immune target takes zero" {
@@ -599,9 +644,9 @@ test "TABLE-DRIVEN: Ice Bolt (Id 39) element damage read from the REAL Skills.tx
     // Cold Mastery pierce is Param1+Param2*(lvl-1) off its own row (Id 65, not 58=Energy Shield).
     const cm = s.idByName("Cold Mastery").?;
     try testing.expectEqual(@as(u16, 65), cm);
-    try testing.expectEqual(@as(i32, 0), s.masteryLinear(cm, 0));
-    try testing.expectEqual(@as(i32, 20), s.masteryLinear(cm, 1));
-    try testing.expectEqual(@as(i32, 40), s.masteryLinear(cm, 5)); // 20 + 5*4
+    try testing.expectEqual(@as(i32, 0), s.masteryValue(cm, 0)); // not learned
+    try testing.expectEqual(@as(i32, 25), s.masteryValue(cm, 1)); // ln12 = 20 + 1*5
+    try testing.expectEqual(@as(i32, 45), s.masteryValue(cm, 5)); // ln12 = 20 + 5*5
 }
 
 test "TABLE-DRIVEN generalizes: Glacial Spike (Id 55) + Fire Bolt (Id 36) base damage from the real table" {
@@ -652,7 +697,7 @@ test "castElemental: any elemental skill assembles from tables (element + synerg
     const fc = castElemental(&s, book, fb, 10, &syn1);
     try testing.expectEqual(spell.Element.fire, fc.dmg.etype);
     try testing.expectEqual(@as(usize, 2), fc.synergies.len);
-    try testing.expectEqual(s.masteryLinear(s.idByName("Fire Mastery").?, 8), fc.mastery_percent); // 30+7*7=79
+    try testing.expectEqual(s.masteryValue(s.idByName("Fire Mastery").?, 8), fc.mastery_percent); // Fire Mastery ln12 = 30 + 8*7
     try testing.expectEqual(@as(i32, 0), fc.pierce_percent);
 
     // Glacial Spike (cold): Cold Mastery PIERCES (pierce_percent, no +damage); 3 synergies.
@@ -660,7 +705,7 @@ test "castElemental: any elemental skill assembles from tables (element + synerg
     const gc = castElemental(&s, book, gs, 20, &syn2);
     try testing.expectEqual(spell.Element.cold, gc.dmg.etype);
     try testing.expectEqual(@as(usize, 3), gc.synergies.len);
-    try testing.expectEqual(s.masteryLinear(s.idByName("Cold Mastery").?, 5), gc.pierce_percent); // 20+5*4=40
+    try testing.expectEqual(s.masteryValue(s.idByName("Cold Mastery").?, 5), gc.pierce_percent); // Cold Mastery ln12 = 20 + 5*5
     try testing.expectEqual(@as(i32, 0), gc.mastery_percent);
 }
 

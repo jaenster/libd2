@@ -266,7 +266,7 @@ test "SorcColdBuild: Ice Bolt cast carries maxed synergies + cold-mastery pierce
     try testing.expectEqual(@as(i32, 81), syn_total); // 20*4 + 1
     // Cold Mastery pierce at hard level 20, straight from Skills.txt (Param1+Param2*(lvl-1)).
     const cm = skills.idByName("Cold Mastery").?;
-    try testing.expectEqual(skills.masteryLinear(cm, 20), c.pierce_percent);
+    try testing.expectEqual(skills.masteryValue(cm, 20), c.pierce_percent);
     // Life/mana match the direct derive for the same class/level/attributes.
     const d = b.derived();
     const dd = derive.derive(.sorceress, 85, 300, 55);
