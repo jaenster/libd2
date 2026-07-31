@@ -155,30 +155,27 @@ pub const SorcColdBuild = struct {
     frozen_orb: i32 = 20,
     cold_mastery: i32 = 20,
 
-    /// Build the sim Ice Bolt Cast for this sorc. EVERYTHING is read from Skills.txt via `skills`:
-    /// the element row, the synergy skills + their per-level % (EDmgSymPerCalc), and Cold Mastery's
-    /// resist-pierce (Param1+Param2*(lvl-1)). This build only supplies the caster's hard-point
-    /// allocation (below); no game numbers are hardcoded. `syn` is caller storage the Cast borrows.
-    pub fn iceBoltCast(self: SorcColdBuild, skills: *const skill.Skills, syn: *[5]spell.Synergy) spell.Cast {
-        const ice_bolt = skills.idByName("Ice Bolt") orelse return .{ .dmg = .{}, .skill_level = self.ice_bolt };
-        const cold_mastery = skills.idByName("Cold Mastery");
-        return skill.buildElementalCast(skills, ice_bolt, self.ice_bolt, self, cold_mastery, .pierce, syn);
-    }
-
-    /// ctx interface for `buildElementalCast`: this build's hard-point level in a skill, resolved by
-    /// the skill's Skills.txt name (so no skill Ids are hardcoded — the id->field map goes through
-    /// the table). Unknown skills read 0.
-    pub fn skillLevel(self: SorcColdBuild, skills: *const skill.Skills, id: u16) i32 {
+    /// This build's hard-point skill allocation as a SkillBook (levels keyed by Skills.txt NAME, so
+    /// no skill Ids are hardcoded). The table-driven cast reads synergy + mastery levels from it.
+    pub fn book(self: SorcColdBuild, skills: *const skill.Skills) skill.SkillBook {
+        var b = skill.SkillBook{};
         const alloc = .{
             .{ "Ice Bolt", self.ice_bolt },       .{ "Frost Nova", self.frost_nova },
             .{ "Ice Blast", self.ice_blast },     .{ "Glacial Spike", self.glacial_spike },
             .{ "Blizzard", self.blizzard },       .{ "Frozen Orb", self.frozen_orb },
             .{ "Cold Mastery", self.cold_mastery },
         };
-        inline for (alloc) |pair| {
-            if (skills.idByName(pair[0]) == id) return pair[1];
-        }
-        return 0;
+        inline for (alloc) |pair| b.setByName(skills, pair[0], @intCast(pair[1]));
+        return b;
+    }
+
+    /// Build the sim Ice Bolt Cast for this sorc — fully table-driven via `castElemental`: the
+    /// element row, the synergy skills + their per-level % (EDmgSymPerCalc), and Cold Mastery's
+    /// resist-pierce all come from Skills.txt. This build only supplies the hard-point allocation
+    /// (`book`); no game numbers are hardcoded. `syn` is caller storage the Cast borrows.
+    pub fn iceBoltCast(self: SorcColdBuild, skills: *const skill.Skills, syn: *[5]spell.Synergy) spell.Cast {
+        const ice_bolt = skills.idByName("Ice Bolt") orelse return .{ .dmg = .{}, .skill_level = self.ice_bolt };
+        return skill.castElemental(skills, self.book(skills), ice_bolt, self.ice_bolt, syn);
     }
 
     /// Faithful derived life/mana from CharStats.txt for this build's class/level + spent
