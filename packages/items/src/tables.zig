@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const txt = @import("txt.zig");
+const d2data = @import("d2-data");
 
 pub const Tables = struct {
     treasure: txt.Table,
@@ -37,20 +38,20 @@ pub const Tables = struct {
 
     pub fn load(gpa: std.mem.Allocator) !Tables {
         var t = Tables{
-            .treasure = try txt.Table.parse(gpa, @embedFile("excel/TreasureClassEx.txt")),
-            .item_ratio = try txt.Table.parse(gpa, @embedFile("excel/ItemRatio.txt")),
-            .item_types = try txt.Table.parse(gpa, @embedFile("excel/ItemTypes.txt")),
-            .weapons = try txt.Table.parse(gpa, @embedFile("excel/Weapons.txt")),
-            .armor = try txt.Table.parse(gpa, @embedFile("excel/Armor.txt")),
-            .misc = try txt.Table.parse(gpa, @embedFile("excel/Misc.txt")),
-            .magic_prefix = try txt.Table.parse(gpa, @embedFile("excel/MagicPrefix.txt")),
-            .magic_suffix = try txt.Table.parse(gpa, @embedFile("excel/MagicSuffix.txt")),
-            .rare_prefix = try txt.Table.parse(gpa, @embedFile("excel/RarePrefix.txt")),
-            .rare_suffix = try txt.Table.parse(gpa, @embedFile("excel/RareSuffix.txt")),
-            .item_stat_cost = try txt.Table.parse(gpa, @embedFile("excel/ItemStatCost.txt")),
-            .unique_items = try txt.Table.parse(gpa, @embedFile("excel/UniqueItems.txt")),
-            .set_items = try txt.Table.parse(gpa, @embedFile("excel/SetItems.txt")),
-            .runes = try txt.Table.parse(gpa, @embedFile("excel/Runes.txt")),
+            .treasure = try txt.Table.parse(gpa, d2data.file("TreasureClassEx")),
+            .item_ratio = try txt.Table.parse(gpa, d2data.file("ItemRatio")),
+            .item_types = try txt.Table.parse(gpa, d2data.file("ItemTypes")),
+            .weapons = try txt.Table.parse(gpa, d2data.file("Weapons")),
+            .armor = try txt.Table.parse(gpa, d2data.file("Armor")),
+            .misc = try txt.Table.parse(gpa, d2data.file("Misc")),
+            .magic_prefix = try txt.Table.parse(gpa, d2data.file("MagicPrefix")),
+            .magic_suffix = try txt.Table.parse(gpa, d2data.file("MagicSuffix")),
+            .rare_prefix = try txt.Table.parse(gpa, d2data.file("RarePrefix")),
+            .rare_suffix = try txt.Table.parse(gpa, d2data.file("RareSuffix")),
+            .item_stat_cost = try txt.Table.parse(gpa, d2data.file("ItemStatCost")),
+            .unique_items = try txt.Table.parse(gpa, d2data.file("UniqueItems")),
+            .set_items = try txt.Table.parse(gpa, d2data.file("SetItems")),
+            .runes = try txt.Table.parse(gpa, d2data.file("Runes")),
             .arena = std.heap.ArenaAllocator.init(gpa),
         };
         const a = t.arena.allocator();

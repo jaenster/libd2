@@ -1,0 +1,6 @@
+# The 1.14d excel tables are the authoritative bytes extracted straight from the
+# retail MPQs (tools/extract_excel.zig). Keep them EXACTLY as extracted — CRLF and
+# all — so the committed blobs stay byte-identical to the game data and a re-extract
+# produces no phantom EOL diff. `-text` disables all end-of-line normalization while
+# still allowing textual diffs for review.
+src/excel/*.txt -text

@@ -324,6 +324,12 @@ pub const AStarParams = struct {
     /// engine takes this from the unit; a generous default lets the search deepen
     /// until it finds the optimum for reachable static targets.
     cost_limit_max: i32 = 4096,
+    /// Best-effort partial path: when the target is unreachable within cost_max,
+    /// return the path to the closest-to-goal node expanded (lowest h) instead of
+    /// Error.NoPath. Models the engine's incremental navigation — a unit steps as
+    /// far toward the target as this frame's bounded search reaches, then re-paths
+    /// next frame from its new position. Off by default (exact-target callers).
+    best_effort: bool = false,
 };
 
 const AStar = struct {
@@ -334,6 +340,10 @@ const AStar = struct {
     hash: []i32, // per-subtile: 0=unseen, 1=blocked marker, >1 = best g reached
     hw: usize,
     hh: usize,
+    // Closest-to-goal node seen across all deepening iterations (best_effort).
+    best_h: i32 = std.math.maxInt(i32),
+    best_x: i32 = 0,
+    best_y: i32 = 0,
 
     fn hashAt(self: *AStar, x: i32, y: i32) *i32 {
         // Search stays inside the grid (out-of-grid neighbors are collision-blocked
@@ -418,6 +428,11 @@ const AStar = struct {
             slot.* = gcost;
 
             const hcost = heuristic(nx, ny, self.target.x, self.target.y);
+            if (hcost < self.best_h) {
+                self.best_h = hcost;
+                self.best_x = nx;
+                self.best_y = ny;
+            }
             const fcost = hcost + gcost;
             if (fcost > cost_limit) {
                 cur = self.advanceChain(cur) orelse return null;
@@ -541,6 +556,38 @@ pub fn findPathAStar(
         });
         goal = try astar.expand(allocator, root, cost_limit);
         if (goal != null) break;
+    }
+
+    if (goal == null and params.best_effort and astar.best_h < h0) {
+        // Target unreachable within cost_max: re-path to the closest-to-goal node
+        // seen (astar.best_*, guarded to be strictly closer than the start). Retarget
+        // and re-expand once — the best node is reachable by construction, so this
+        // yields a valid parent chain to extract. The unit steps toward it and
+        // re-paths next frame from its new position (the engine's incremental nav).
+        const h_start = heuristic(start.x, start.y, astar.best_x, astar.best_y);
+        if (h_start > 0) {
+            astar.target = .{ .x = astar.best_x, .y = astar.best_y };
+            const cmax = @max(params.cost_limit_max, h_start * 3);
+            cost_limit = h_start;
+            while (cost_limit <= cmax) : (cost_limit += 5) {
+                @memset(hash, 0);
+                astar.nodes.clearRetainingCapacity();
+                const root = try astar.alloc(allocator, .{
+                    .x = start.x,
+                    .y = start.y,
+                    .g = 0,
+                    .h = h_start,
+                    .f = h_start,
+                    .dir = pathDirection(start.x, start.y, astar.target.x, astar.target.y),
+                    .visit = 0,
+                    .seed_ptr = 0,
+                    .parent = -1,
+                    .child = -1,
+                });
+                goal = try astar.expand(allocator, root, cost_limit);
+                if (goal != null) break;
+            }
+        }
     }
 
     const g = goal orelse return Error.NoPath;
@@ -927,6 +974,27 @@ test "A*: no path through a sealed wall" {
         Error.NoPath,
         findPathAStar(a, tg.view, .{ .x = 0, .y = 2 }, .{ .x = 8, .y = 2 }, .{ .cost_limit_max = 256 }),
     );
+}
+
+test "A*: best_effort returns a partial path toward an unreachable goal" {
+    const a = testing.allocator;
+    var tg = try parseAscii(a,
+        \\....#....
+        \\....#....
+        \\....#....
+        \\....#....
+        \\....#....
+    );
+    defer tg.deinit(a);
+    // Goal is walled off; best-effort must still make progress toward it (closest
+    // reachable node) and never cross the wall into x>=4.
+    const path = try findPathAStar(a, tg.view, .{ .x = 0, .y = 2 }, .{ .x = 8, .y = 2 }, .{ .cost_limit_max = 256, .best_effort = true });
+    defer a.free(path);
+    try testing.expect(path.len >= 1);
+    const last = path[path.len - 1];
+    try testing.expect(last.x < 4); // stayed on the near side of the wall
+    try testing.expect(last.x > 0); // but advanced from the start
+    _ = try assertContiguousWalkable(tg.view, path);
 }
 
 test "A*: blocked start / goal rejected" {

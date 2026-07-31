@@ -182,6 +182,59 @@ pub const PacketWriter = struct {
     }
 };
 
+// --- server->client length-prefix framing (SendPacketToClient @0x52b330) ---------------------
+//
+// After the raw 0xAF greeting, EVERY S->C packet the engine sends is prefixed with a length
+// header describing the packet's own byte count (the header itself is excluded):
+//   len < 0xF0  -> ONE byte  [len]
+//   len >= 0xF0 -> TWO bytes  [(len >> 8) | 0xF0, len & 0xFF]   (max 0xFFF = 4095)
+// The client demuxes by reading the header, taking that many bytes as one packet chunk, then
+// (0xAE containers aside) splitting by the per-opcode size table. The 0xAF greeting is RAW.
+
+/// Bytes the length header for a packet of `len` occupies (1 for <0xF0, else 2).
+pub fn frameHeaderLen(len: usize) usize {
+    return if (len < 0xF0) 1 else 2;
+}
+
+/// Write the length header for a `len`-byte packet into `out` and return the header bytes.
+/// Asserts `len <= 0xFFF` (the two-byte header's reach).
+pub fn writeFrameHeader(out: []u8, len: usize) []u8 {
+    std.debug.assert(len <= 0xFFF);
+    if (len < 0xF0) {
+        out[0] = @intCast(len);
+        return out[0..1];
+    }
+    out[0] = @intCast((len >> 8) | 0xF0);
+    out[1] = @intCast(len & 0xFF);
+    return out[0..2];
+}
+
+/// Frame ONE packet: write its length header then the packet bytes into `out`, returning the
+/// framed slice (header + packet). One packet == one framed unit — a burst must be framed per
+/// packet, never as a concatenation (a world burst exceeds the 0xFFF header reach).
+pub fn frameInto(out: []u8, packet: []const u8) []u8 {
+    const hdr = writeFrameHeader(out, packet.len);
+    @memcpy(out[hdr.len..][0..packet.len], packet);
+    return out[0 .. hdr.len + packet.len];
+}
+
+/// Reframe a concatenation of already-encoded packets (one flush buffer) into a length-prefixed
+/// stream: split `concat` into packets via `packetSize` and `frameInto` each into `out`, returning
+/// the framed bytes. Stops at the first incomplete/unknown packet (desync guard). `out` must have
+/// room for `concat.len` plus 1-2 header bytes per packet.
+pub fn frameFlush(out: []u8, concat: []const u8) []u8 {
+    var in: usize = 0;
+    var w: usize = 0;
+    while (in < concat.len) {
+        const n = packetSize(concat[in..]) orelse break;
+        if (n == 0 or in + n > concat.len) break;
+        const framed = frameInto(out[w..], concat[in .. in + n]);
+        w += framed.len;
+        in += n;
+    }
+    return out[0..w];
+}
+
 // --- typed packets -------------------------------------------------------------------------
 
 /// 0x03 LoadAct — CLIENT_AllocAct handler @0x0045C8E0. Cross-checked: D2GSPacketSrv0x03.
@@ -1108,4 +1161,49 @@ test "dispatch mirror: opcode -> name/cat matches 0x7114D0 handlers" {
     try std.testing.expectEqual(Cat.unit_add, info(0x59).cat);
     try std.testing.expectEqual(Cat.chat, info(0x26).cat);
     try std.testing.expectEqual(Cat.unknown, info(0xEE).cat);
+}
+
+test "frameInto: single-byte header for len<0xF0, header excludes itself" {
+    var out: [64]u8 = undefined;
+    const packet = [_]u8{ 0x03, 0xAA, 0xBB, 0xCC }; // 4-byte packet
+    const framed = frameInto(&out, &packet);
+    try std.testing.expectEqual(@as(usize, 1 + 4), framed.len); // one header byte + packet
+    try std.testing.expectEqual(@as(u8, 4), framed[0]); // header = packet len, NOT incl. header
+    try std.testing.expectEqualSlices(u8, &packet, framed[1..]);
+    try std.testing.expectEqual(@as(usize, 1), frameHeaderLen(packet.len));
+}
+
+test "frameInto: two-byte header for len>=0xF0" {
+    var out: [8192]u8 = undefined;
+    var packet: [0x123]u8 = undefined; // 291-byte packet -> two-byte header
+    @memset(&packet, 0x5A);
+    packet[0] = 0xAC;
+    const framed = frameInto(&out, &packet);
+    try std.testing.expectEqual(@as(usize, 2 + 0x123), framed.len);
+    try std.testing.expectEqual(@as(u8, (0x123 >> 8) | 0xF0), framed[0]); // hi | 0xF0
+    try std.testing.expectEqual(@as(u8, 0x123 & 0xFF), framed[1]); // lo
+    try std.testing.expectEqualSlices(u8, &packet, framed[2..]);
+    try std.testing.expectEqual(@as(usize, 2), frameHeaderLen(packet.len));
+    // 0xF0 is the exact boundary: still two bytes.
+    try std.testing.expectEqual(@as(usize, 2), frameHeaderLen(0xF0));
+    try std.testing.expectEqual(@as(usize, 1), frameHeaderLen(0xEF));
+}
+
+test "frameFlush: reframes a burst per-packet, demux splits back cleanly" {
+    var concat: [64]u8 = undefined;
+    var cw = PacketWriter.init(&concat);
+    cw.add(RemoveObject{ .unit_type = 1, .guid = 0x10 }); // 6 bytes
+    cw.add(PlayerStop{ .guid = 0x20, .x = 100, .y = 200 }); // 13 bytes
+    const burst = cw.bytes();
+
+    var out: [128]u8 = undefined;
+    const framed = frameFlush(&out, burst);
+    // Two single-byte headers (both packets < 0xF0) + the two packets.
+    try std.testing.expectEqual(@as(usize, 1 + 6 + 1 + 13), framed.len);
+
+    // Client demux: header -> chunk -> one packet each, in order.
+    try std.testing.expectEqual(@as(u8, 6), framed[0]);
+    try std.testing.expectEqual(@as(u32, 0x10), (try RemoveObject.decode(framed[1..][0..6])).guid);
+    try std.testing.expectEqual(@as(u8, 13), framed[7]);
+    try std.testing.expectEqual(@as(u32, 0x20), (try PlayerStop.decode(framed[8..][0..13])).guid);
 }

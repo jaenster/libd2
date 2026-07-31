@@ -29,6 +29,89 @@ pub const Op = enum(u8) {
 
 const DecodeError = error{ ShortBuffer, WrongOpcode };
 
+/// Authoritative C->S (client->server) fixed packet-size table, ported byte-exact from the 1.14d
+/// engine global `NET_D2GS_CLIENT_OUTGOING_SIZE @0x00730dc0` (indexed by opcode, int32 stride) —
+/// consumed by `NET_D2GS_CLIENT_GetOutgoingPacketSizeFromTableAndVariableSize @0x0052...`. This is
+/// the SERVER's incoming framing table: given the leading opcode byte, it yields the total wire
+/// size of the packet including the opcode. A value of -1 means the packet is variable-length and
+/// must be scanned (see `sizeOf`); 0 means the opcode has no fixed size / is unused (the engine
+/// treats that as a framing error). Range is 0x00..0x70 inclusive (113 entries); opcode 0xFF is a
+/// special 16-byte control packet the engine sizes outside this table.
+///
+/// Do NOT hand-edit individual values: they are the exact bytes from Game.exe. If the engine ever
+/// disagrees, re-dump `NET_D2GS_CLIENT_OUTGOING_SIZE` and replace the whole array.
+pub const OUTGOING_SIZE = [113]i16{
+    0,  5,  9,  5,  9,  5,  9,  9, // 0x00-0x07
+    5,  9,  9,  1,  5,  9,  9,  5, // 0x08-0x0F
+    9,  9,  1,  9,  -1, -1, 13, 5, // 0x10-0x17
+    17, 5,  9,  9,  3,  9,  9,  17, // 0x18-0x1F
+    13, 9,  5,  9,  5,  9,  13, 9, // 0x20-0x27
+    9,  9,  9,  0,  0,  1,  3,  9, // 0x28-0x2F
+    9,  9,  17, 17, 5,  17, 9,  5, // 0x30-0x37
+    13, 5,  3,  3,  9,  5,  5,  3, // 0x38-0x3F
+    1,  1,  1,  1,  17, 9,  13, 13, // 0x40-0x47
+    1,  9,  0,  9,  5,  3,  0,  7, // 0x48-0x4F
+    9,  9,  5,  1,  1,  0,  0,  0, // 0x50-0x57
+    3,  17, 0,  0,  0,  7,  6,  5, // 0x58-0x5F
+    1,  3,  5,  5,  0,  0,  -1, 46, // 0x60-0x67
+    37, 1,  1,  1,  -1, 13, 1,  0, // 0x68-0x6F
+    1, // 0x70
+};
+
+/// Size a C->S packet by its leading opcode, mirroring the engine's incoming framer exactly.
+/// Returns:
+///   - `null`  — the full packet is not present in `buf` yet (need more bytes).
+///   - `0`     — genuinely unknown/unframeable opcode (a framing/desync error); caller decides.
+///   - `n>0`   — the total packet byte length (opcode included).
+///
+/// Fixed sizes come straight from `OUTGOING_SIZE`. The four variable-length opcodes are scanned
+/// like the engine's switch (`GetOutgoingPacketSizeFromTableAndVariableSize`):
+///   - 0x14 OverheadMessage / 0x15 ChatMessage: 4-byte header + NUL-terminated msg + NUL-terminated
+///     target string.
+///   - 0x66 (warden/data): `3 + u16@1` (length prefix at offset 1, capped at 0x1FD).
+///   - 0x6C (variable NPC/skill): `7 + u16@1`.
+/// Opcode 0xFF is the engine's 16-byte control packet.
+pub fn sizeOf(buf: []const u8) ?usize {
+    if (buf.len == 0) return null;
+    const op = buf[0];
+    if (op == 0xFF) return if (buf.len < 16) null else 16;
+    if (op > 0x70) return 0;
+    const entry = OUTGOING_SIZE[op];
+    if (entry > 0) {
+        const n: usize = @intCast(entry);
+        return if (buf.len < n) null else n;
+    }
+    if (entry == 0) return 0; // unknown/unused opcode
+    // entry == -1: variable-length, scan per-opcode.
+    return switch (op) {
+        0x14, 0x15 => scanStringPacket(buf), // overhead / chat: header + two NUL-terminated strings
+        0x66 => scanLenPrefixed(buf, 1, 3, 0x1FD),
+        0x6C => scanLenPrefixed(buf, 1, 7, null),
+        else => 0,
+    };
+}
+
+/// Scan a `[op][3-byte header][msg\0][target\0]` variable packet (0x14/0x15). The header is a fixed
+/// 4 bytes total (opcode + 3), then the message string, then the target string, each NUL-terminated.
+fn scanStringPacket(buf: []const u8) ?usize {
+    const HDR = 4;
+    if (buf.len < HDR + 1) return null; // need at least header + one NUL to look for a terminator
+    const msg_end = std.mem.indexOfScalarPos(u8, buf, HDR, 0) orelse return null;
+    const tgt_end = std.mem.indexOfScalarPos(u8, buf, msg_end + 1, 0) orelse return null;
+    return tgt_end + 1;
+}
+
+/// Scan a length-prefixed variable packet: total = `overhead + u16@lenoff`, capped at `cap` if given.
+fn scanLenPrefixed(buf: []const u8, lenoff: usize, overhead: usize, cap: ?u16) ?usize {
+    if (buf.len < lenoff + 2) return null;
+    var body = std.mem.readInt(u16, buf[lenoff..][0..2], .little);
+    if (cap) |c| {
+        if (body > c) body = 0;
+    }
+    const n = overhead + @as(usize, body);
+    return if (buf.len < n) null else n;
+}
+
 /// A command that targets a map coordinate: `[nCmd u8][wX u16][wY u16]` (5 bytes).
 /// Shared shape of Clt 0x01/0x03/0x05/0x08/0x0C/0x0F (all "…OnLocation").
 pub fn CoordCmd(comptime op: Op) type {
@@ -305,4 +388,102 @@ test "chat broadcast + whisper round-trip (variable length)" {
 test "decode rejects wrong opcode and short buffers" {
     try std.testing.expectError(error.WrongOpcode, WalkToLocation.decode(&[_]u8{ 0x02, 0, 0, 0, 0 }));
     try std.testing.expectError(error.ShortBuffer, WalkToEntity.decode(&[_]u8{ 0x02, 0, 0 }));
+}
+
+test "sizeOf: fixed opcodes match the engine size table exactly" {
+    const many = 128; // plenty of trailing bytes so sizeOf never returns null for a present packet
+    var buf: [many]u8 = undefined;
+    // A representative spread of fixed sizes across the whole 0x00..0x70 range.
+    const cases = [_]struct { op: u8, size: usize }{
+        .{ .op = 0x01, .size = 5 }, // walk-to-location
+        .{ .op = 0x02, .size = 9 }, // walk-to-entity
+        .{ .op = 0x06, .size = 9 }, // left-skill-on-entity (attack)
+        .{ .op = 0x0B, .size = 1 }, // keepalive
+        .{ .op = 0x16, .size = 13 }, // pick-up-item
+        .{ .op = 0x18, .size = 17 },
+        .{ .op = 0x3C, .size = 9 }, // select-skill
+        .{ .op = 0x4F, .size = 7 },
+        .{ .op = 0x5E, .size = 6 },
+        .{ .op = 0x67, .size = 46 },
+        .{ .op = 0x68, .size = 37 }, // GAMELOGON
+        .{ .op = 0x69, .size = 1 },
+        .{ .op = 0x6A, .size = 1 }, // ping
+        .{ .op = 0x6B, .size = 1 }, // ENTERGAME
+        .{ .op = 0x6D, .size = 13 },
+        .{ .op = 0x70, .size = 1 },
+    };
+    for (cases) |c| {
+        buf[0] = c.op;
+        try std.testing.expectEqual(@as(?usize, c.size), sizeOf(buf[0..]));
+    }
+}
+
+test "sizeOf: 0xFF control packet is 16 bytes, out-of-range/unused opcodes are unknown (0)" {
+    var buf: [16]u8 = [_]u8{0} ** 16;
+    buf[0] = 0xFF;
+    try std.testing.expectEqual(@as(?usize, 16), sizeOf(buf[0..]));
+    // out of table range
+    buf[0] = 0x71;
+    try std.testing.expectEqual(@as(?usize, 0), sizeOf(buf[0..]));
+    buf[0] = 0xF0;
+    try std.testing.expectEqual(@as(?usize, 0), sizeOf(buf[0..]));
+    // in-range but unused (table entry 0)
+    buf[0] = 0x2B;
+    try std.testing.expectEqual(@as(?usize, 0), sizeOf(buf[0..]));
+}
+
+test "sizeOf: variable-length opcodes scan correctly (chat 0x15, 0x66, 0x6C)" {
+    // 0x15 chat: [op][3 hdr][msg\0][target\0]
+    const chat = [_]u8{ 0x15, 1, 2, 3 } ++ "hi\x00" ++ "Bob\x00";
+    const chat_slice: []const u8 = chat[0..];
+    try std.testing.expectEqual(@as(?usize, chat.len), sizeOf(chat_slice));
+    // truncated chat (no target terminator yet) => need more bytes
+    try std.testing.expectEqual(@as(?usize, null), sizeOf(chat_slice[0 .. chat.len - 1]));
+    // 0x66: total = 3 + u16@1
+    const p66 = [_]u8{ 0x66, 4, 0 } ++ [_]u8{0xAB} ** 4;
+    try std.testing.expectEqual(@as(?usize, 7), sizeOf(p66[0..]));
+    // 0x6C: total = 7 + u16@1
+    const p6c = [_]u8{ 0x6C, 2, 0 } ++ [_]u8{0} ** 6;
+    try std.testing.expectEqual(@as(?usize, 9), sizeOf(p6c[0..]));
+}
+
+test "sizeOf: incomplete fixed packet returns null (need more bytes)" {
+    // 0x68 GAMELOGON wants 37 bytes; give it 10.
+    var buf: [10]u8 = [_]u8{0} ** 10;
+    buf[0] = 0x68;
+    try std.testing.expectEqual(@as(?usize, null), sizeOf(buf[0..]));
+}
+
+test "sizeOf: a realistic C->S join handshake buffer frames cleanly and reaches ENTERGAME" {
+    // Reproduce the shape the real 1.14d client sends on join: GAMELOGON (0x68, 37) then a run of
+    // fixed-size C->S packets, then the ping (0x6A) + ENTERGAME (0x6B). Prior to the full table these
+    // interior opcodes returned 0 and nuked the whole buffer (dropping ENTERGAME). Walk the buffer the
+    // way server.zig does and assert every packet frames and the last opcode is ENTERGAME.
+    const alloc = std.testing.allocator;
+    var bytes: std.ArrayList(u8) = .empty;
+    defer bytes.deinit(alloc);
+    // GAMELOGON (0x68 = 37)
+    try bytes.append(alloc, 0x68);
+    try bytes.appendNTimes(alloc, 0, 36);
+    // A plausible run of join-time fixed packets (opcodes the client emits post-logon):
+    const interior = [_]u8{ 0x4B, 0x40, 0x53, 0x60, 0x59 }; // 9,1,1,1,17
+    for (interior) |op| {
+        const n: usize = @intCast(OUTGOING_SIZE[op]);
+        try bytes.append(alloc, op);
+        try bytes.appendNTimes(alloc, 0, n - 1);
+    }
+    // ping + ENTERGAME
+    try bytes.append(alloc, 0x6A);
+    try bytes.append(alloc, 0x6B);
+    const items = bytes.items;
+    var off: usize = 0;
+    var last_op: u8 = 0;
+    while (off < items.len) {
+        const n = sizeOf(items[off..]) orelse return error.NeedMoreBytes;
+        try std.testing.expect(n != 0); // no desync anywhere in the handshake
+        last_op = items[off];
+        off += n;
+    }
+    try std.testing.expectEqual(items.len, off); // consumed exactly, no leftover
+    try std.testing.expectEqual(@as(u8, 0x6B), last_op); // ENTERGAME survived to the end
 }

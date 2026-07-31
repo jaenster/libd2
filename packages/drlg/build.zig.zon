@@ -9,6 +9,7 @@
     .dependencies = .{
         .d2_formats = .{ .path = "../formats" },
         .d2_fog = .{ .path = "../fog" },
+        .d2_data = .{ .path = "../data" },
     },
 
     .paths = .{

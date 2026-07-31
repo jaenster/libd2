@@ -11,6 +11,7 @@
 //! offsets — this is NOT the 32-bit Game.exe ABI; do not memcpy into the engine.
 
 const std = @import("std");
+const d2data = @import("d2-data");
 
 /// Faithful engine types + enums — full field access for Zig consumers.
 pub const abi = @import("drlg/structs.zig");
@@ -81,8 +82,8 @@ pub const gen = struct {
     pub const ds1 = @import("d2-formats").ds1;
     // Raw table/asset bytes committed in drlg's excel/ + maps/ trees (single source
     // of truth — no duplication into render).
-    pub const automap_txt = @embedFile("excel/AutoMap.txt");
-    pub const lvltypes_txt = @embedFile("excel/LvlTypes.txt");
+    pub const automap_txt = d2data.file("AutoMap");
+    pub const lvltypes_txt = d2data.file("LvlTypes");
     pub const town_ds1 = @embedFile("maps/Act1_Town_TownN1.ds1");
 };
 
@@ -2838,7 +2839,7 @@ fn buildSeamConn(
 var g_objtxt: ?txt.Table = null;
 fn objTxt() ?*const txt.Table {
     if (g_objtxt == null) {
-        g_objtxt = txt.Table.parse(std.heap.page_allocator, @embedFile("excel/Objects.txt")) catch return null;
+        g_objtxt = txt.Table.parse(std.heap.page_allocator, d2data.file("Objects")) catch return null;
     }
     return &g_objtxt.?;
 }

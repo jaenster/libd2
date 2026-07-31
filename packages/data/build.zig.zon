@@ -1,0 +1,16 @@
+.{
+    .name = .d2_data,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x9dd3654b3403842a,
+
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "tools",
+        "README.md",
+    },
+}

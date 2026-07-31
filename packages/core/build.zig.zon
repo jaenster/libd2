@@ -1,0 +1,19 @@
+.{
+    .name = .d2_core,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x5bad13671ece468f,
+
+    // The canonical Stat/Item model foundation: the seed-RNG, the Stat enum +
+    // StatList, ItemStatCost metadata, and the wire (save-file) item bit-decoder.
+    // sim and items both depend on this so there is a single source of truth.
+    .dependencies = .{
+        .d2_data = .{ .path = "../data" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

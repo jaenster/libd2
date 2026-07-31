@@ -2,6 +2,7 @@
 //! Tables are embedded from data/excel so the tool is self-contained.
 
 const std = @import("std");
+const d2data = @import("d2-data");
 const txt = @import("txt.zig");
 
 pub const DrlgType = enum(u8) {
@@ -22,12 +23,12 @@ pub const Tables = struct {
 
     pub fn load(gpa: std.mem.Allocator) !Tables {
         return .{
-            .levels = try txt.Table.parse(gpa, @embedFile("excel/Levels.txt")),
-            .lvl_prest = try txt.Table.parse(gpa, @embedFile("excel/LvlPrest.txt")),
-            .lvl_types = try txt.Table.parse(gpa, @embedFile("excel/LvlTypes.txt")),
-            .lvl_maze = try txt.Table.parse(gpa, @embedFile("excel/LvlMaze.txt")),
-            .lvl_sub = try txt.Table.parse(gpa, @embedFile("excel/LvlSub.txt")),
-            .lvl_warp = try txt.Table.parse(gpa, @embedFile("excel/LvlWarp.txt")),
+            .levels = try txt.Table.parse(gpa, d2data.file("Levels")),
+            .lvl_prest = try txt.Table.parse(gpa, d2data.file("LvlPrest")),
+            .lvl_types = try txt.Table.parse(gpa, d2data.file("LvlTypes")),
+            .lvl_maze = try txt.Table.parse(gpa, d2data.file("LvlMaze")),
+            .lvl_sub = try txt.Table.parse(gpa, d2data.file("LvlSub")),
+            .lvl_warp = try txt.Table.parse(gpa, d2data.file("LvlWarp")),
         };
     }
 

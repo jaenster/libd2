@@ -7,19 +7,27 @@
 //!                                  @0057be00  flat-DR then resist%, physical only
 //!   GetDefense                    @006223f0  armorclass + dex/4, ×item_armor%
 //!   GetAttackRate                 (partial; character-AR base only, see below)
+//!   GetBlockRate                  @00622720  block% = (dex-15)*(toblock+BlockFactor)/(2*clvl), cap 75
+//!   DAMAGE_CalculateResistance    @0057be00  physical PDR cap 50 (players only; monsters uncapped)
+//!   MONSTER_CalculateLevelScaledStats @006538a0 (montable.zig)  MonLvl-scaled AC/AR/damage
 //!
 //! All damage is fixed-point <<8 internally, exactly as the engine (D2ApplyPercent
-//! rounds toward zero). Elemental/poison/DOT, blocking, dodge/evade, crushing blow,
-//! deadly strike and the PvP penalty are OUT OF SCOPE this pass (see TODOs).
+//! rounds toward zero). This pass adds BLOCKING, the UNIFIED damage model (physical +
+//! elemental, each resist-mitigated), and MONSTER->player attacks. Poison/DOT, dodge/evade,
+//! crushing blow, deadly strike, the moving-block ÷3 penalty and the PvP penalty remain
+//! OUT OF SCOPE (see TODOs).
 
 const std = @import("std");
 const stat = @import("stat.zig");
 const unit = @import("unit.zig");
 const rng = @import("rng.zig");
+const spell = @import("spell.zig");
+const montable = @import("montable.zig");
 
 const Stat = stat.Stat;
 const Unit = unit.Unit;
 const Seed = rng.Seed;
+const Element = spell.Element;
 
 /// D2ApplyPercent(v, p, d) = v*p/d, C integer division (truncates toward zero).
 pub fn applyPercent(v: i32, p: i32, d: i32) i32 {
@@ -115,6 +123,16 @@ pub fn rollHit(seed: *Seed, chance: i32) bool {
 /// it is added to damagepercent(25) before the str/dex bonuses.
 pub const DamageParams = struct {
     ed_percent: i32 = 0,
+    /// On-weapon / skill elemental damage rolled ALONGSIDE the physical hit (e.g. a fire-damage
+    /// weapon, a Zeal that carries elemental). `.none`/0 => pure physical. Applied through the
+    /// unified damage model (spell.applyResist) after the physical component.
+    elem_element: Element = .none,
+    elem_min: i32 = 0,
+    elem_max: i32 = 0,
+    /// The DEFENDER's block factor for the block roll: BLOCK_FACTOR when the defender is a player
+    /// with a shield, 0 for a monster (monster toblock is raw). When null, blocking is skipped
+    /// entirely (attacks that cannot be blocked / callers that model no shield).
+    defender_block_factor: ?i32 = null,
 };
 
 /// Rolled physical damage in <<8 fixed-point. `.whole` is the display value.
@@ -188,22 +206,139 @@ pub fn applyPhysical(incoming256: i32, defender: *const Unit) i32 {
 }
 
 // ---------------------------------------------------------------------------
+// Blocking  (GetBlockRate @00622720 / DAMAGE_CheckBlockAndEvasion @SUnitDmg.cpp:3320)
+// ---------------------------------------------------------------------------
+
+/// Block-chance cap (0x4b) — GetBlockRate returns this whenever the computed block >= 75.
+pub const BLOCK_CAP: i32 = 75;
+
+/// CharStats.txt BlockFactor — the flat class base block added before the dex/level scale.
+/// All 7 1.14d classes ship BlockFactor = 20 (CharStats.txt col 0x16). GetBlockRate:
+///   nToBlock += BlockFactor.
+pub const BLOCK_FACTOR: i32 = 20;
+
+/// GetBlockRate @00622720 (player expansion path). Faithful:
+///   nToBlock  = toblock(20 stat) + BlockFactor
+///   clvl      = max(1, level)
+///   block%    = (dexterity - 15) * nToBlock / (2 * clvl)
+///   cap       = min(block%, 75)
+/// A negative intermediate floors at 0 (a real char can't have a negative dex-15 with a
+/// shield equipped in normal play; we clamp for safety). `toblock` is the unit's toblock(20)
+/// stat, `dexterity`/`level` its current stats. The classic (non-expansion) path returns the
+/// raw toblock stat; the sim targets 1.14d LoD, so this is the expansion formula.
+pub fn blockChance(toblock: i32, block_factor: i32, dexterity: i32, level: i32) i32 {
+    const to_block = toblock + block_factor;
+    const clvl = @max(1, level);
+    var pct = @divTrunc((dexterity - 15) * to_block, 2 * clvl);
+    if (pct < 0) pct = 0;
+    if (pct > BLOCK_CAP) pct = BLOCK_CAP;
+    return pct;
+}
+
+/// Player block chance for a Unit: reads toblock(20)/dexterity(2)/level(12) off its stats and
+/// adds the class BlockFactor. Monsters block off their raw toblock stat (still 75-capped) —
+/// GetBlockRate's monster branch returns min(toblock, 75). `block_factor` is the caster's class
+/// BlockFactor (BLOCK_FACTOR for any 1.14d class); pass 0 for a monster (its toblock is raw).
+pub fn blockChanceForUnit(u: *const Unit, block_factor: i32) i32 {
+    if (u.unit_type == .monster) {
+        var b = u.get(.toblock);
+        if (b < 0) b = 0;
+        if (b > BLOCK_CAP) b = BLOCK_CAP;
+        return b;
+    }
+    return blockChance(u.get(.toblock), block_factor, u.get(.dexterity), u.level());
+}
+
+/// Roll a block: rand = seed % 100 (D2_SEED_NEXT then low%100); blocked if rand < chance.
+/// Consumes one RNG step. DAMAGE_CheckBlockAndEvasion halves-to-third (÷3) the chance while the
+/// player is moving in a non-walk mode; the sim's units carry no movement mode yet, so the
+/// static-stance chance is used (the ÷3 moving penalty is a documented follow-up).
+pub fn rollBlock(seed: *Seed, chance: i32) bool {
+    if (chance <= 0) return false;
+    const roll: i32 = @intCast(seed.pick(100));
+    return roll < chance;
+}
+
+// ---------------------------------------------------------------------------
+// Unified damage model  (physical + elemental, resist-mitigated)
+// ---------------------------------------------------------------------------
+
+/// One element of an attack's damage. `element == .none` is the physical component and is
+/// mitigated by applyPhysical (flat DR then damageresist%, physical-only cap); every other
+/// element is mitigated by spell.applyResist (percentage, >=100 immune). Amounts are WHOLE.
+pub const DamagePacket = struct {
+    element: Element = .none,
+    /// Whole (not <<8) damage of this element before the target's resist.
+    amount: i32 = 0,
+};
+
+/// The mitigated result of applying a DamagePacket to a defender.
+pub const AppliedComponent = struct {
+    element: Element,
+    raw: i32, // pre-resist whole
+    applied: i32, // post-resist whole
+    resist: i32, // the resist value used (physical: damageresist; else element resist)
+};
+
+/// Mitigate ONE damage element against a defender, faithfully routing physical vs elemental:
+///   physical (.none) -> applyPhysical: flat normal_damage_reduction(34) then damageresist(36)%
+///                       (physical cap 50 for players; monsters use raw resist).
+///   elemental        -> spell.applyResist against the element's resist stat (>=100 immune).
+/// `whole` is the pre-mitigation whole damage. Physical is shifted to <<8 for applyPhysical's
+/// flat-DR arithmetic then shifted back (matching the engine's fixed-point path). Returns the
+/// component with its raw + applied + resist used.
+pub fn applyDamageComponent(whole: i32, element: Element, defender: *const Unit) AppliedComponent {
+    if (element == .none) {
+        const applied = applyPhysicalFor(whole << 8, defender) >> 8;
+        return .{ .element = .none, .raw = whole, .applied = applied, .resist = defender.get(.damageresist) };
+    }
+    const resist = defender.get(element.resistStat());
+    return .{ .element = element, .raw = whole, .applied = spell.applyResist(whole, resist), .resist = resist };
+}
+
+/// applyPhysical but the physical resist cap depends on the defender: players cap at 50
+/// (PHYS_RESIST_CAP); MONSTERS have NO cap (DAMAGE_CalculateResistance applies the 0x32 cap only
+/// when !bDefenderIsMonster). This keeps monster physical-immunity / high-PDR faithful.
+pub fn applyPhysicalFor(incoming256: i32, defender: *const Unit) i32 {
+    var dmg = incoming256 - (defender.get(.normal_damage_reduction) << 8);
+    if (dmg < 0) dmg = 0;
+    var resist = defender.get(.damageresist);
+    if (defender.unit_type != .monster) {
+        if (resist < -100) resist = -100;
+        if (resist > PHYS_RESIST_CAP) resist = PHYS_RESIST_CAP;
+    }
+    if (resist >= 100) return 0; // physical immune
+    dmg = applyPercent(dmg, 100 - resist, 100);
+    return dmg;
+}
+
+// ---------------------------------------------------------------------------
 // Top-level resolution
 // ---------------------------------------------------------------------------
 
 pub const AttackResult = struct {
     hit: bool,
+    blocked: bool = false, // defender blocked the (landed) hit -> no damage
     chance: i32, // clamped hit chance used
     ar: i32,
     def: i32,
-    raw_damage: i32, // pre-mitigation, whole
-    damage: i32, // post-mitigation, whole (subtract from defender life)
+    raw_damage: i32, // pre-mitigation physical, whole
+    damage: i32, // post-mitigation total (physical + elemental), whole
+    /// Elemental component of the hit after resist (0 when a pure physical attack).
+    elem_damage: i32 = 0,
+    elem_element: Element = .none,
 };
 
-/// Resolve one physical melee attack: roll to-hit, then (on hit) roll and mitigate
-/// physical damage. RNG order matches the engine: hit roll first, damage roll
-/// second — so (attacker, defender, seed) fully determines the outcome. Does NOT
-/// mutate the defender; call `applyToLife` to subtract.
+/// Resolve one attack through the UNIFIED damage model: roll to-hit (miss => no damage), then
+/// the defender's BLOCK roll (a block => landed but 0 damage), then roll + mitigate the physical
+/// component AND any elemental component, each reduced by the target's matching resist. RNG order
+/// matches the engine: hit roll first, block roll second, physical damage roll third, elemental
+/// roll fourth — so (attacker, defender, seed, params) fully determines the outcome. Does NOT
+/// mutate the defender; call `applyToLife` to subtract `.damage`.
+///
+/// This is the single path BOTH player->monster and monster->player attacks route through:
+/// physical melee now rolls to-hit + block (not auto-hit), and elemental riders are resisted the
+/// same way spells are (spell.applyResist). See applyDamageComponent / applyPhysicalFor.
 pub fn resolveAttack(attacker: *const Unit, defender: *const Unit, seed: *Seed, params: DamageParams) AttackResult {
     const ar = getAttackRating(attacker);
     const def = getDefense(defender);
@@ -212,15 +347,42 @@ pub fn resolveAttack(attacker: *const Unit, defender: *const Unit, seed: *Seed, 
     if (!hit) {
         return .{ .hit = false, .chance = chance, .ar = ar, .def = def, .raw_damage = 0, .damage = 0 };
     }
+
+    // Block roll (only when the caller says the defender can block). A block stops all damage.
+    if (params.defender_block_factor) |bf| {
+        const bc = blockChanceForUnit(defender, bf);
+        if (rollBlock(seed, bc)) {
+            return .{ .hit = true, .blocked = true, .chance = chance, .ar = ar, .def = def, .raw_damage = 0, .damage = 0 };
+        }
+    }
+
+    // Physical component (fixed-point <<8), mitigated by applyPhysicalFor (player cap 50, monster
+    // uncapped). rollPhysicalDamage consumes one RNG step.
     const phys = rollPhysicalDamage(attacker, seed, params);
-    const applied = applyPhysical(phys.rolled256, defender);
+    const phys_applied = applyPhysicalFor(phys.rolled256, defender) >> 8;
+
+    // Elemental rider, if any: roll uniformly [min,max], resist via spell.applyResist.
+    var elem_applied: i32 = 0;
+    if (params.elem_element != .none and params.elem_max > params.elem_min) {
+        const span: u32 = @bitCast(params.elem_max - params.elem_min + 1);
+        const roll: i32 = params.elem_min + @as(i32, @bitCast(seed.pick(span)));
+        const comp = applyDamageComponent(roll, params.elem_element, defender);
+        elem_applied = comp.applied;
+    } else if (params.elem_element != .none and params.elem_max == params.elem_min and params.elem_min > 0) {
+        const comp = applyDamageComponent(params.elem_min, params.elem_element, defender);
+        elem_applied = comp.applied;
+    }
+
     return .{
         .hit = true,
+        .blocked = false,
         .chance = chance,
         .ar = ar,
         .def = def,
         .raw_damage = phys.whole(),
-        .damage = applied >> 8,
+        .damage = phys_applied + elem_applied,
+        .elem_damage = elem_applied,
+        .elem_element = params.elem_element,
     };
 }
 
@@ -239,6 +401,113 @@ pub fn attackAndApply(attacker: *const Unit, defender: *Unit, seed: *Seed, param
     const res = resolveAttack(attacker, defender, seed, params);
     if (res.hit) applyToLife(defender, res.damage);
     return res;
+}
+
+// ---------------------------------------------------------------------------
+// Monster -> player attack  (MonLvl-scaled A1/A2 damage through the unified model)
+// ---------------------------------------------------------------------------
+
+/// A monster's per-attack combat stats for one swing: the MonLvl-scaled attack rating and
+/// physical damage range (montable.ScaledCombat's A1 or A2 fields). `min == max == 0` is a
+/// non-attack (the monster has no such attack). The monster's own level drives the to-hit.
+pub const MonsterAttack = struct {
+    attack_rating: i32,
+    min_damage: i32,
+    max_damage: i32,
+    monster_level: i32,
+};
+
+/// Write a monster's MonLvl-scaled COMBAT stats onto its Unit's stat list (MONSTER_InitStats path,
+/// same 0x6538a0 scaling that produced `sc`): defense (armorclass), A1 attack rating (tohit) and A1
+/// physical min/max damage. The host does the montable.scaled lookup + monster-level assignment; this
+/// folds the result onto the unit so resolveMonsterAttack (via monsterAttackFrom) and the to-hit roll
+/// read them back. HP/resists/regen are seeded by the host on their own faithful paths.
+pub fn initMonsterStats(u: *Unit, sc: montable.ScaledCombat) void {
+    u.set(.armorclass, sc.armor_class);
+    u.set(.tohit, sc.attack_rating_a1);
+    u.set(.mindamage, sc.a1_min);
+    u.set(.maxdamage, sc.a1_max);
+}
+
+/// Read a monster's A1 attack off its Unit's stat list into a MonsterAttack (the swing
+/// resolveMonsterAttack resolves): its tohit as the attack rating, mindamage/maxdamage as the
+/// physical range, and its level as the attacker level. The inverse of `initMonsterStats`.
+pub fn monsterAttackFrom(u: *const Unit) MonsterAttack {
+    return .{
+        .attack_rating = u.get(.tohit),
+        .min_damage = u.get(.mindamage),
+        .max_damage = u.get(.maxdamage),
+        .monster_level = u.level(),
+    };
+}
+
+/// Resolve a MONSTER's swing at a player through the SAME unified model (to-hit, player block,
+/// physical mitigation via the player's defense/DR/damageresist). The monster's attack rating
+/// and damage are the MonLvl-scaled A1/A2 values (from montable.scaled); the to-hit uses the
+/// monster's level as the attacker level. RNG order: hit roll, block roll, damage roll — the
+/// player's block uses BLOCK_FACTOR (its class base block) when it has a shield.
+///
+/// `player_block_factor` = the player's CharStats BlockFactor (combat.BLOCK_FACTOR) when it can
+/// block, else null to skip blocking. Physical damage is the monster's flat min..max range (no
+/// str/dex/ED — monster damage is already fully MonLvl-scaled). Pure: caller applies `.damage`.
+pub fn resolveMonsterAttack(atk: MonsterAttack, defender: *const Unit, seed: *Seed, player_block_factor: ?i32) AttackResult {
+    const def = getDefense(defender);
+    const chance = chanceToHit(atk.attack_rating, def, atk.monster_level, defender.level());
+    const hit = rollHit(seed, chance);
+    if (!hit) {
+        return .{ .hit = false, .chance = chance, .ar = atk.attack_rating, .def = def, .raw_damage = 0, .damage = 0 };
+    }
+    if (player_block_factor) |bf| {
+        const bc = blockChanceForUnit(defender, bf);
+        if (rollBlock(seed, bc)) {
+            return .{ .hit = true, .blocked = true, .chance = chance, .ar = atk.attack_rating, .def = def, .raw_damage = 0, .damage = 0 };
+        }
+    }
+    // Monster damage: flat min..max (already MonLvl-scaled), then the player's physical mitigation.
+    var min256 = atk.min_damage << 8;
+    var max256 = atk.max_damage << 8;
+    if (min256 < 1) min256 = 256;
+    if (max256 <= min256) max256 = min256 + 256;
+    const range = max256 - min256;
+    const rolled = if (range > 0) min256 + @as(i32, @bitCast(seed.pick(@bitCast(range)))) else min256;
+    const applied = applyPhysicalFor(rolled, defender) >> 8;
+    return .{
+        .hit = true,
+        .blocked = false,
+        .chance = chance,
+        .ar = atk.attack_rating,
+        .def = def,
+        .raw_damage = rolled >> 8,
+        .damage = applied,
+    };
+}
+
+test "initMonsterStats writes AC/AR/damage onto the unit; monsterAttackFrom reads them back" {
+    const testing = std.testing;
+    var u = Unit.init(.monster);
+    u.set(.level, 42);
+    const sc = montable.ScaledCombat{
+        .armor_class = 1500,
+        .attack_rating_a1 = 3200,
+        .attack_rating_a2 = 0,
+        .a1_min = 40,
+        .a1_max = 90,
+        .a2_min = 0,
+        .a2_max = 0,
+        .to_block = 0,
+        .resist = .{},
+    };
+    initMonsterStats(&u, sc);
+    try testing.expectEqual(@as(i32, 1500), u.get(.armorclass));
+    try testing.expectEqual(@as(i32, 3200), u.get(.tohit));
+    try testing.expectEqual(@as(i32, 40), u.get(.mindamage));
+    try testing.expectEqual(@as(i32, 90), u.get(.maxdamage));
+
+    const atk = monsterAttackFrom(&u);
+    try testing.expectEqual(@as(i32, 3200), atk.attack_rating);
+    try testing.expectEqual(@as(i32, 40), atk.min_damage);
+    try testing.expectEqual(@as(i32, 90), atk.max_damage);
+    try testing.expectEqual(@as(i32, 42), atk.monster_level);
 }
 
 test "attackAndApply subtracts rolled damage on a hit, leaves life untouched on a miss" {

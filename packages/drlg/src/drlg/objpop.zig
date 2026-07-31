@@ -18,6 +18,7 @@
 //! documented as a remaining gap (see generateActObjects note + object-population.md).
 
 const std = @import("std");
+const d2data = @import("d2-data");
 const rng = @import("rng.zig");
 const s = @import("structs.zig");
 const txt = @import("../txt.zig");
@@ -68,7 +69,7 @@ pub const Tables = struct {
     levels_tbl: txt.Table,
 
     pub fn load(gpa: std.mem.Allocator) !Tables {
-        var ot = try txt.Table.parse(gpa, @embedFile("../excel/Objects.txt"));
+        var ot = try txt.Table.parse(gpa, d2data.file("Objects"));
         defer ot.deinit();
         const n = ot.rowCount();
         const populate_fn = try gpa.alloc(i32, n);
@@ -93,7 +94,7 @@ pub const Tables = struct {
             obj_gore[i] = @intCast(ot.int(i, "Gore"));
         }
 
-        var gt = try txt.Table.parse(gpa, @embedFile("../excel/objgroup.txt"));
+        var gt = try txt.Table.parse(gpa, d2data.file("objgroup"));
         defer gt.deinit();
         const gn = gt.rowCount();
         const groups = try gpa.alloc(ObjGroup, gn);
@@ -112,7 +113,7 @@ pub const Tables = struct {
             }
         }
 
-        var st = try txt.Table.parse(gpa, @embedFile("../excel/shrines.txt"));
+        var st = try txt.Table.parse(gpa, d2data.file("Shrines"));
         defer st.deinit();
         const sn = st.rowCount();
         const shrines = try gpa.alloc(Shrine, sn);
@@ -122,7 +123,7 @@ pub const Tables = struct {
             sh.level_min = @intCast(st.int(r, "LevelMin"));
         }
 
-        const levels_tbl = try txt.Table.parse(gpa, @embedFile("../excel/Levels.txt"));
+        const levels_tbl = try txt.Table.parse(gpa, d2data.file("Levels"));
 
         return .{
             .gpa = gpa,
