@@ -94,8 +94,8 @@ pub const SkillData = struct {
 /// hit with no missile (Nova/Static Field); `other` = an unmodelled/utility do-function.
 pub const Kind = enum { melee, missile, teleport, direct, aura, passive, summon, other, unknown };
 
-/// An aura's granted stat: the ItemStatCost stat NAME (borrows the Skills table) + its value at a
-/// given aura level. `.stat == ""` means the skill is not an aura.
+/// A stat a skill grants (aura or passive): the ItemStatCost stat NAME (borrows the Skills table) +
+/// its value at a given skill level. `.stat == ""` means the skill grants nothing of that kind.
 pub const AuraStat = struct {
     stat: []const u8 = "",
     value: i32 = 0,
@@ -231,7 +231,7 @@ pub const Skills = struct {
     /// whatever calc the row carries is what runs. `level <= 0` => 0 (skill not learned).
     pub fn masteryValue(self: *const Skills, skill_id: u16, level: i32) i32 {
         if (level <= 0) return 0;
-        return self.evalCalc(.{}, 0, skill_id, level, "passivecalc1");
+        return self.passiveValue(skill_id, level).value; // masteries ARE passives (passivecalc1)
     }
 
     /// The stat an aura skill grants to units in range + its value at `level`, table-driven from
@@ -243,6 +243,18 @@ pub const Skills = struct {
         const stat = self.table.get(row, "aurastat1");
         if (stat.len == 0) return .{};
         return .{ .stat = stat, .value = self.evalCalc(.{}, 0, skill_id, level, "aurastatcalc1") };
+    }
+
+    /// The stat a PASSIVE skill grants + its value at `level`, table-driven from Skills.txt
+    /// `passivestat1` (the ItemStatCost stat) valued by `passivecalc1` via the calc VM. Covers every
+    /// passive across all classes: Warmth (manarecoverybonus = ln12), Critical Strike
+    /// (passive_critical_strike = dm12 diminishing), Iron Skin, Natural Resistance, the sorc masteries
+    /// (masteryValue is the value-only view of this). Empty passivestat1 => `.stat == ""`.
+    pub fn passiveValue(self: *const Skills, skill_id: u16, level: i32) AuraStat {
+        const row = self.rowById(skill_id) orelse return .{};
+        const stat = self.table.get(row, "passivestat1");
+        if (stat.len == 0) return .{};
+        return .{ .stat = stat, .value = self.evalCalc(.{}, 0, skill_id, level, "passivecalc1") };
     }
 
     /// Evaluate one of a skill's calc-string columns (by header name) through the calc VM, resolving
@@ -808,6 +820,27 @@ test "resolveMonsterCaster maps MonStats skills to castable selections (AI picks
     const nk = monskill.forMonster(&mt, "skeleton1", &buf);
     const kmc = resolveMonsterCaster(&s, buf[0..nk]);
     try testing.expectEqual(@as(?u16, null), kmc.pickCastable(&s));
+}
+
+test "passiveValue: passives grant their stat via the calc VM (ln + dm), all classes" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    // Warmth: manarecoverybonus = ln12 = 30 + lvl*12 (linear).
+    const warmth = s.passiveValue(s.idByName("Warmth").?, 1);
+    try testing.expectEqualStrings("manarecoverybonus", warmth.stat);
+    try testing.expectEqual(@as(i32, 42), warmth.value); // 30 + 1*12
+
+    // Critical Strike: passive_critical_strike = dm12 (diminishing, Param1=5 Param2=80).
+    const cs = s.passiveValue(s.idByName("Critical Strike").?, 1);
+    try testing.expectEqualStrings("passive_critical_strike", cs.stat);
+    try testing.expectEqual(@as(i32, @intCast(calc.diminishing(1, 5, 80))), cs.value); // 16
+
+    // Iron Skin (Barb) grants defensive armor% — a passive on a different class.
+    try testing.expectEqualStrings("skill_armor_percent", s.passiveValue(s.idByName("Iron Skin").?, 1).stat);
+
+    // masteryValue is the value-only view of the same passive path.
+    const cm = s.idByName("Cold Mastery").?;
+    try testing.expectEqual(s.passiveValue(cm, 5).value, s.masteryValue(cm, 5));
 }
 
 test "auraValue: aura skills grant their stat, valued by the calc VM (Might/Defiance/Blessed Aim)" {
