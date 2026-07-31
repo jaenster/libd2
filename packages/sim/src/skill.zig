@@ -581,6 +581,28 @@ pub fn castDirectElemental(skills: *const Skills, book: SkillBook, skill_id: u16
     return resolveElementalVsUnit(c, target, seed);
 }
 
+/// Resolve an ItemStatCost stat NAME (e.g. "manarecoverybonus", "passive_critical_strike") to its
+/// stat id — the ItemStatCost.txt row index, which IS the id the StatList / Stat enum is keyed by.
+pub fn statIdByName(isc: *const d2data.Table, name: []const u8) ?u16 {
+    const row = isc.findRow("Stat", name) orelse return null;
+    return @intCast(row);
+}
+
+/// Fold a caster's PASSIVE skills onto its unit stats: for every skill the `book` has points in,
+/// evaluate its passive-granted stat (passiveValue) and ADD it to the unit's StatList by
+/// ItemStatCost id. Active skills (empty passivestat1) contribute nothing. This is how Warmth /
+/// Critical Strike / Iron Skin / the masteries actually reach the unit. `isc` is a loaded
+/// ItemStatCost table (owned by the caller). Idempotency is the caller's concern (call once on load).
+pub fn applyPassives(skills: *const Skills, u: *Unit, book: SkillBook, isc: *const d2data.Table) void {
+    for (book.levels, 0..) |lvl, id| {
+        if (lvl <= 0) continue;
+        const pv = skills.passiveValue(@intCast(id), lvl);
+        if (pv.stat.len == 0) continue;
+        const sid = statIdByName(isc, pv.stat) orelse continue;
+        u.stats.add(@enumFromInt(sid), pv.value);
+    }
+}
+
 /// A monster's castable skills, resolved from its MonStats Skill1..8 assignments to Skills.txt ids
 /// + a SkillBook carrying their levels — so monster casts flow through the SAME table-driven path as
 /// players (castElemental / cast / castDirectElemental). Built by `resolveMonsterCaster`.
@@ -820,6 +842,29 @@ test "resolveMonsterCaster maps MonStats skills to castable selections (AI picks
     const nk = monskill.forMonster(&mt, "skeleton1", &buf);
     const kmc = resolveMonsterCaster(&s, buf[0..nk]);
     try testing.expectEqual(@as(?u16, null), kmc.pickCastable(&s));
+}
+
+test "applyPassives folds a caster's passive skills onto its unit stats (end to end)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var isc = try d2data.open(testing.allocator, "ItemStatCost");
+    defer isc.deinit();
+
+    var u = Unit.init(.player);
+    var book = SkillBook{};
+    book.setByName(&s, "Warmth", 5); // passive: manarecoverybonus = ln12 = 30 + 5*12 = 90
+    book.setByName(&s, "Ice Bolt", 20); // active: no passive stat -> contributes nothing
+
+    applyPassives(&s, &u, book, &isc);
+
+    const mrb = statIdByName(&isc, "manarecoverybonus").?;
+    try testing.expectEqual(@as(i32, 90), u.stats.get(@enumFromInt(mrb)));
+    // Cold Mastery pierce also lands when the sorc has it.
+    book.setByName(&s, "Cold Mastery", 5); // passive_cold_pierce = ln12 = 20 + 5*5 = 45
+    var ucm = Unit.init(.player);
+    applyPassives(&s, &ucm, book, &isc);
+    const pcp = statIdByName(&isc, "passive_cold_pierce").?;
+    try testing.expectEqual(@as(i32, 45), ucm.stats.get(@enumFromInt(pcp)));
 }
 
 test "passiveValue: passives grant their stat via the calc VM (ln + dm), all classes" {
