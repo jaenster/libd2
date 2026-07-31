@@ -662,6 +662,29 @@ pub fn applyAuraTo(skills: *const Skills, u: *Unit, aura_id: u16, aura_level: i3
     u.stats.add(@enumFromInt(sid), av.value);
 }
 
+/// Resolve a direct-elemental AREA skill (Nova / Frost Nova / Poison Nova) against every unit within
+/// `radius` subtiles of (`cx`,`cy`): the caster's table-driven Cast is rolled once PER victim (so each
+/// takes damage after its own resist + the caster's pierce) and applied to that unit's life. The host
+/// supplies the candidate `targets` (it owns unit storage + the friend/foe policy) and the radius
+/// (from the skill's area param). Returns how many units were hit. Pure combat math; mutates only the
+/// units it hits.
+pub fn castDirectAreaElemental(skills: *const Skills, book: SkillBook, skill_id: u16, effective_level: i32, cx: i32, cy: i32, radius: i32, targets: []const *Unit, seed: *Seed) usize {
+    var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    const c = castElemental(skills, book, skill_id, effective_level, &syn);
+    const r2: i64 = @as(i64, radius) * radius;
+    var hits: usize = 0;
+    for (targets) |t| {
+        if (!t.isAlive()) continue;
+        const dx: i64 = t.x - cx;
+        const dy: i64 = t.y - cy;
+        if (dx * dx + dy * dy > r2) continue; // outside the ring
+        const hit = resolveElementalVsUnit(c, t, seed);
+        applyElementalHit(hit, t);
+        hits += 1;
+    }
+    return hits;
+}
+
 /// A monster's castable skills, resolved from its MonStats Skill1..8 assignments to Skills.txt ids
 /// + a SkillBook carrying their levels — so monster casts flow through the SAME table-driven path as
 /// players (castElemental / cast / castDirectElemental). Built by `resolveMonsterCaster`.
@@ -876,6 +899,36 @@ test "castDirectElemental resolves a direct (missile-less) elemental skill vs a 
     try testing.expectEqual(@divTrunc(hit.raw * 50, 100), hit.applied); // 50% resisted
     applyElementalHit(hit, &mob);
     try testing.expectEqual(10000 - hit.applied, mob.life());
+}
+
+test "castDirectAreaElemental hits every unit in the ring, spares those outside it" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    const fn_id = s.idByName("Frost Nova").?;
+    var book = SkillBook{};
+    book.setByName(&s, "Frost Nova", 10);
+
+    var near1 = Unit.init(.monster);
+    near1.x = 5;
+    near1.y = 0;
+    near1.setLife(10000);
+    var near2 = Unit.init(.monster);
+    near2.x = 0;
+    near2.y = 8;
+    near2.setLife(10000);
+    var far = Unit.init(.monster);
+    far.x = 100;
+    far.y = 0;
+    far.setLife(10000);
+    var targets = [_]*Unit{ &near1, &near2, &far };
+
+    var seed = Seed.fromValue(9);
+    // Cast from the origin with a radius of 10 subtiles: near1/near2 in, far out.
+    const hits = castDirectAreaElemental(&s, book, fn_id, 10, 0, 0, 10, &targets, &seed);
+    try testing.expectEqual(@as(usize, 2), hits);
+    try testing.expect(near1.life() < 10000); // took cold damage
+    try testing.expect(near2.life() < 10000);
+    try testing.expectEqual(@as(i32, 10000), far.life()); // out of range, untouched
 }
 
 test "resolveMonsterCaster maps MonStats skills to castable selections (AI picks a damaging one)" {
