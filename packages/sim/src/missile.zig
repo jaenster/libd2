@@ -60,6 +60,10 @@ pub const MissileData = struct {
     /// Pierce — the missile passes THROUGH a unit it hits instead of stopping (works with
     /// CollideKill=0). Distinct from CollideKill (which destroys on first unit hit).
     pierce: bool = false,
+    /// HitSubMissile1..4 — the "Missile" names this missile spawns AT its impact point when it hits
+    /// (Exploding Arrow -> explodingarrowexp2, Immolation Arrow -> immolationfire, Meteor -> ...).
+    /// Empty strings for unused slots; the names borrow the Missiles table.
+    hit_sub: [4][]const u8 = .{ "", "", "", "" },
 };
 
 /// CollideType bit for walls/collision map (D2 MISSILE_COLLIDE_UNITS=1, WALLS=2; the common
@@ -98,7 +102,28 @@ pub const Missiles = struct {
             .lev_range = t.getInt(i32, row, "LevRange") orelse 0,
             .collide_friend = (t.getInt(i32, row, "CollideFriend") orelse 0) != 0,
             .pierce = (t.getInt(i32, row, "Pierce") orelse 0) != 0,
+            .hit_sub = .{
+                t.get(row, "HitSubMissile1"), t.get(row, "HitSubMissile2"),
+                t.get(row, "HitSubMissile3"), t.get(row, "HitSubMissile4"),
+            },
         };
+    }
+
+    /// Spawn a missile's HitSubMissile children at `parent`'s current position when it impacts — the
+    /// host calls this on a hit/expire and adds the returned missiles (assigning guids). Children aim
+    /// the parent's heading (a 0-velocity child = a stationary cloud/explosion). Returns the count.
+    pub fn spawnHitSubs(self: *const Missiles, parent: *const Missile, seed: *Seed, out: *[4]Missile) usize {
+        _ = seed;
+        var n: usize = 0;
+        for (parent.hit_sub) |name| {
+            if (name.len == 0) continue;
+            const md = self.byName(name) orelse continue;
+            // Aim along the parent's heading; a child with vel 0 stays put (cloud/explosion).
+            const m = Missile.create(md, parent.owner_id, parent.x, parent.y, parent.x + parent.vx, parent.y + parent.vy, md.min_damage, md.max_damage);
+            out[n] = m;
+            n += 1;
+        }
+        return n;
     }
 
     /// Look up a missile by its Missiles.txt "Missile" name (skill srvmissile ref).
@@ -136,6 +161,8 @@ pub const Missile = struct {
     /// Passes through a unit it hits (Pierce) rather than stopping; can hit allies (CollideFriend).
     pierce: bool = false,
     collide_friend: bool = false,
+    /// HitSubMissile names this missile spawns on impact (see Missiles.spawnHitSubs). Borrow the table.
+    hit_sub: [4][]const u8 = .{ "", "", "", "" },
     dmg_min: i32 = 0,
     dmg_max: i32 = 0,
     /// The missile's damage is derived from the caster at hit time (e.g. a sorc cold bolt whose
@@ -180,6 +207,7 @@ pub const Missile = struct {
             .collide_kill = data.collide_kill,
             .pierce = data.pierce,
             .collide_friend = data.collide_friend,
+            .hit_sub = data.hit_sub,
             .dmg_min = dmg_min,
             .dmg_max = dmg_max,
         };
@@ -460,6 +488,27 @@ test "load missiles by name and id" {
     try testing.expect(fb.collide_kill);
     try testing.expectEqual(@as(u16, 27), m.byId(27).?.id); // magicarrow
     try testing.expectEqual(@as(?MissileData, null), m.byName("nope"));
+}
+
+test "HitSubMissile: a missile spawns its child missiles at the impact point" {
+    var m = try Missiles.load(testing.allocator);
+    defer m.deinit();
+    // Exploding Arrow spawns explodingarrowexp2 on hit.
+    const ea = m.byName("explodingarrow").?;
+    try testing.expectEqualStrings("explodingarrowexp2", ea.hit_sub[0]);
+
+    // Create the parent, fly it, then spawn its hit-subs at its position.
+    var parent = Missile.create(ea, 7, 0, 0, 100, 0, 0, 0);
+    parent.x = 40;
+    parent.y = 8;
+    var seed = Seed.fromValue(1);
+    var kids: [4]Missile = undefined;
+    const n = m.spawnHitSubs(&parent, &seed, &kids);
+    try testing.expect(n >= 1);
+    try testing.expectEqual(m.byName("explodingarrowexp2").?.id, kids[0].id); // the right child
+    try testing.expectEqual(@as(i32, 40), kids[0].x); // spawned at the parent's impact point
+    try testing.expectEqual(@as(i32, 8), kids[0].y);
+    try testing.expectEqual(@as(u32, 7), kids[0].owner_id); // inherits the caster
 }
 
 test "missile delivery fields (MaxVel/Accel/Pierce) load + the speed ramp works" {
