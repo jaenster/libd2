@@ -54,6 +54,9 @@ pub const SkillData = struct {
     manashift: i32 = 0,
     /// lvlmana — mana cost added per skill level above 1 (can be negative: Teleport gets cheaper).
     lvlmana: i32 = 0,
+    /// delay — the skill's reuse cooldown in SERVER frames (25/s): Frozen Orb 25, Meteor 30,
+    /// Blizzard 45; 0 = no cooldown. The host gates recasting on it.
+    delay: i32 = 0,
     /// The skill's Skills.txt elemental-damage row (EType/EMin.../HitShift), for the
     /// staged per-level progression in spell.zig. `.etype == .none` when the skill has no
     /// elemental damage columns filled in.
@@ -146,6 +149,7 @@ pub const Skills = struct {
             .mana = t.getInt(i32, row, "mana") orelse 0,
             .manashift = t.getInt(i32, row, "manashift") orelse 0,
             .lvlmana = t.getInt(i32, row, "lvlmana") orelse 0,
+            .delay = t.getInt(i32, row, "delay") orelse 0,
             .dmg = .{
                 .etype = spell.Element.parse(t.get(row, "EType")),
                 .e_min = t.getInt(i32, row, "EMin") orelse 0,
@@ -1185,6 +1189,15 @@ test "auraValue: aura skills grant their stat, valued by the calc VM (Might/Defi
 
     // A non-aura skill returns an empty stat.
     try testing.expectEqualStrings("", s.auraValue(s.idByName("Ice Bolt").?, 1).stat);
+}
+
+test "skill reuse cooldown (delay) loads from the table" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    try testing.expectEqual(@as(i32, 25), s.byId(s.idByName("Frozen Orb").?).?.delay);
+    try testing.expectEqual(@as(i32, 45), s.byId(s.idByName("Blizzard").?).?.delay);
+    try testing.expectEqual(@as(i32, 30), s.byId(s.idByName("Meteor").?).?.delay);
+    try testing.expectEqual(@as(i32, 0), s.byId(s.idByName("Ice Bolt").?).?.delay); // no cooldown
 }
 
 test "manaCostAt is the faithful per-level mana cost (SKILLS_CalculateManaCost)" {
