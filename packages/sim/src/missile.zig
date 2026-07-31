@@ -278,7 +278,9 @@ pub fn stepAll(missiles: []Missile, seed: *Seed, ctx: anytype) usize {
             } else {
                 combat.applyToLife(victim, m.rollDamage(seed));
             }
-            if (m.collide_kill) retire = true;
+            // CollideKill destroys the missile on its first unit hit — UNLESS it pierces, in which
+            // case it deals its damage and travels on through the unit (Pierce).
+            if (m.collide_kill and !m.pierce) retire = true;
         }
         if (!retire) {
             m.step();
@@ -336,6 +338,24 @@ test "stepAll damages a hit target, retires the killer, keeps a piercing/flying 
     try testing.expectEqual(@as(usize, 1), surviving); // missile 1 retired on kill-collision
     try testing.expectEqual(@as(u32, 2), missiles[0].guid); // survivor compacted to front, stepped
     try testing.expectEqual(@as(i32, 5), missiles[0].range_left); // 10 - vel 5
+}
+
+test "a Pierce missile deals its damage but travels on through the unit (not retired)" {
+    var mob = Unit.init(.monster);
+    mob.setLife(1000);
+    const Ctx = struct {
+        victim: *Unit,
+        fn target(self: @This(), m: *const Missile) ?*Unit {
+            _ = m;
+            return self.victim;
+        }
+    };
+    // collide_kill=true would normally retire it, but Pierce overrides -> it survives + keeps flying.
+    var arr = [_]Missile{.{ .guid = 1, .id = 1, .vel = 5, .range_left = 1000, .collide_kill = true, .pierce = true, .dmg_min = 10, .dmg_max = 10 }};
+    var seed = Seed.fromValue(1);
+    const surviving = stepAll(&arr, &seed, Ctx{ .victim = &mob });
+    try testing.expectEqual(@as(usize, 1), surviving); // pierced through, still in flight
+    try testing.expectEqual(@as(i32, 990), mob.life()); // still dealt its 10 damage
 }
 
 test "stepAll retires a units+walls bolt on a blocked cell before it hits a unit behind it" {
