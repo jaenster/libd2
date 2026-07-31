@@ -261,14 +261,41 @@ pub const CalcCtx = struct {
     pub fn idByName(self: CalcCtx, name: []const u8) ?u16 {
         return self.skills.idByName(name);
     }
+    /// Resolve the elemental-damage SkillCalc codes (edmn/edmx/edln + 256th and +mastery variants)
+    /// against `skill_id`'s staged element row at `lvl`. Returns null for codes not modelled here
+    /// (aura/passive field reads etc.), which the VM treats as 0.
     pub fn keyword(self: CalcCtx, skill_id: u16, lvl: i32, code: []const u8) ?i32 {
-        _ = self;
-        _ = skill_id;
-        _ = lvl;
-        _ = code;
+        const sd = self.skills.byId(skill_id) orelse return null;
+        const d = sd.dmg;
+        // Whole-damage min/max (edmn/edmx) and their 1/256 forms (edns/edxs).
+        if (std.mem.eql(u8, code, "edmn")) return d.minAt(lvl);
+        if (std.mem.eql(u8, code, "edmx")) return d.maxAt(lvl);
+        if (std.mem.eql(u8, code, "edns")) return @intCast(d.min256(lvl));
+        if (std.mem.eql(u8, code, "edxs")) return @intCast(d.max256(lvl));
+        if (std.mem.eql(u8, code, "edln")) return sd.e_len;
+        // +mastery variants: fire/lightning masteries ADD +% damage; cold pierces (no +damage), so
+        // the "+mastery" forms equal the base for cold. The caster's mastery level comes from `book`.
+        const mpct = self.masteryDamagePercent(d.etype);
+        if (std.mem.eql(u8, code, "enma")) return applyPct(d.minAt(lvl), mpct);
+        if (std.mem.eql(u8, code, "exma")) return applyPct(d.maxAt(lvl), mpct);
+        if (std.mem.eql(u8, code, "enms")) return applyPct(@intCast(d.min256(lvl)), mpct);
+        if (std.mem.eql(u8, code, "exms")) return applyPct(@intCast(d.max256(lvl)), mpct);
         return null;
     }
+
+    /// The caster's +% element-damage mastery for `element` (fire/lightning only; cold/poison => 0),
+    /// evaluated from the matching mastery skill's passivecalc at the book level.
+    fn masteryDamagePercent(self: CalcCtx, element: spell.Element) i32 {
+        const m = sorcMastery(element) orelse return 0;
+        if (m.kind != .damage) return 0;
+        const mid = self.skills.idByName(m.name) orelse return 0;
+        return self.skills.masteryValue(mid, self.book.get(mid));
+    }
 };
+
+fn applyPct(base: i32, pct: i32) i32 {
+    return @intCast(@divTrunc(@as(i64, base) * (100 + pct), 100));
+}
 
 /// How a caster's mastery skill affects an elemental cast: cold masteries PIERCE the target's
 /// resist; fire/lightning/poison masteries ADD +% damage. (Skills.txt passive semantics.)
@@ -652,6 +679,20 @@ test "classify: every category resolves from the real Skills.txt columns" {
         }
     }
     try testing.expect(count > 300); // the whole catalog classified
+}
+
+test "calc VM resolves the elemental-damage codes (edmn/edmx/edns) from the staged element row" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    const fb = s.idByName("Fire Bolt").?;
+    const fbd = s.byId(fb).?;
+    const ev = calc.Evaluator(CalcCtx){ .ctx = .{ .skills = &s, .book = .{}, .char_level = 1 } };
+    // edmn/edmx = the skill's staged whole min/max at the given level; edns/edxs the 1/256 forms.
+    try testing.expectEqual(fbd.dmg.minAt(1), try ev.eval("edmn", fb, 1));
+    try testing.expectEqual(fbd.dmg.maxAt(3), try ev.eval("edmx", fb, 3));
+    try testing.expectEqual(@as(i32, @intCast(fbd.dmg.min256(1))), try ev.eval("edns", fb, 1));
+    // A compound calc (Energy Shield-style) evaluates end to end.
+    try testing.expectEqual(@min(fbd.dmg.minAt(1), 95), try ev.eval("min(edmn,95)", fb, 1));
 }
 
 test "TABLE-DRIVEN: Teleport (Id 54) classifies as teleport with the real Skills.txt mana cost" {

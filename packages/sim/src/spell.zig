@@ -111,14 +111,23 @@ pub const ElementalDamage = struct {
         return a << @intCast(hit_shift);
     }
 
+    /// Min damage in 1/256 fixed point at `clvl` (the SkillCalc `edns` value; edmn = this >> 8).
+    pub fn min256(self: ElementalDamage, clvl: i32) i64 {
+        return staged(clvl, self.e_min, self.e_min_lev, self.hit_shift);
+    }
+    /// Max damage in 1/256 fixed point at `clvl` (the SkillCalc `edxs`; edmx = this >> 8).
+    pub fn max256(self: ElementalDamage, clvl: i32) i64 {
+        return staged(clvl, self.e_max, self.e_max_lev, self.hit_shift);
+    }
+
     /// Whole-damage min for this element at `clvl`, before synergy/mastery: staged(EMin) >> 8.
     pub fn minAt(self: ElementalDamage, clvl: i32) i32 {
-        return @intCast(staged(clvl, self.e_min, self.e_min_lev, self.hit_shift) >> 8);
+        return @intCast(self.min256(clvl) >> 8);
     }
 
     /// Whole-damage max for this element at `clvl`, before synergy/mastery: staged(EMax) >> 8.
     pub fn maxAt(self: ElementalDamage, clvl: i32) i32 {
-        return @intCast(staged(clvl, self.e_max, self.e_max_lev, self.hit_shift) >> 8);
+        return @intCast(self.max256(clvl) >> 8);
     }
 };
 
