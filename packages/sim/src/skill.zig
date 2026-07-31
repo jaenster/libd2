@@ -126,7 +126,126 @@ pub const Skills = struct {
             .e_len = t.getInt(i32, row, "ELen") orelse 0,
         };
     }
+
+    /// The Skills.txt row index for a numeric Id (the `skill()` name resolution + synergy lookups
+    /// go through this).
+    fn rowById(self: *const Skills, id: u16) ?usize {
+        return self.table.findByInt("Id", id);
+    }
+
+    /// Numeric Id of the skill whose `skill` column equals `name` — the exact string a Skills.txt
+    /// calc uses in `skill('Name'.blvl)` (e.g. "Frost Nova"). null if no such skill.
+    pub fn idByName(self: *const Skills, name: []const u8) ?u16 {
+        const t = &self.table;
+        for (0..t.rowCount()) |r| {
+            if (std.mem.eql(u8, t.get(r, "skill"), name)) {
+                return @intCast(t.getInt(i32, r, "Id") orelse continue);
+            }
+        }
+        return null;
+    }
+
+    /// A skill's ParamN column (1-based, matching the `parN` refs inside Skills.txt calc strings).
+    pub fn param(self: *const Skills, skill_id: u16, n: u8) i32 {
+        const row = self.rowById(skill_id) orelse return 0;
+        var buf: [16]u8 = undefined;
+        const col = std.fmt.bufPrint(&buf, "Param{d}", .{n}) catch return 0;
+        return self.table.getInt(i32, row, col) orelse 0;
+    }
+
+    /// The damage-synergy skills + per-level percent for `skill_id`, parsed from its Skills.txt
+    /// `EDmgSymPerCalc` column — the ONLY source (nothing about synergies is hardcoded). The calc
+    /// reads e.g. `(skill('Frost Nova'.blvl)+skill('Ice Blast'.blvl)+...)*par8`; we pull every
+    /// `skill('Name'.blvl)` reference (resolved to its Id) and the `parN` multiplier (-> ParamN, as
+    /// a percent). `.permille` is that percent ×10 so the synergy multiplier stays integer-exact.
+    pub const SynergyInfo = struct {
+        ids: [spell.MAX_SYNERGIES]u16 = undefined,
+        count: usize = 0,
+        /// Per-level synergy bonus in permille (‰): ParamN × 10 (e.g. Param8=15 => 150 = 15%/level).
+        permille: i32 = 0,
+    };
+
+    pub fn synergyInfo(self: *const Skills, skill_id: u16) SynergyInfo {
+        const row = self.rowById(skill_id) orelse return .{};
+        const calc = self.table.get(row, "EDmgSymPerCalc");
+        if (calc.len == 0) return .{};
+
+        var info: SynergyInfo = .{};
+        // Pull each skill('Name'...) reference and resolve it to a skill Id.
+        var rest = calc;
+        while (std.mem.indexOf(u8, rest, "skill('")) |at| {
+            const after = rest[at + "skill('".len ..];
+            const end = std.mem.indexOfScalar(u8, after, '\'') orelse break;
+            const name = after[0..end];
+            if (self.idByName(name)) |sid| {
+                if (info.count < info.ids.len) {
+                    info.ids[info.count] = sid;
+                    info.count += 1;
+                }
+            }
+            rest = after[end + 1 ..];
+        }
+        // The `parN` multiplier (the per-level %): read ParamN off this same row.
+        if (std.mem.indexOf(u8, calc, "par")) |pi| {
+            const digits = calc[pi + 3 ..];
+            var j: usize = 0;
+            while (j < digits.len and std.ascii.isDigit(digits[j])) : (j += 1) {}
+            if (j > 0) {
+                const n = std.fmt.parseInt(u8, digits[0..j], 10) catch 0;
+                info.permille = self.param(skill_id, n) * 10;
+            }
+        }
+        return info;
+    }
+
+    /// A linear passive value `Param1 + Param2*(level-1)` for `level >= 1`, else 0 — the 1.14d
+    /// `lnAB` passive/mastery calc (Cold Mastery pierce Id 65 Param1=20/Param2=5; Fire Mastery Id 61
+    /// Param1=30/Param2=7; etc.). Read straight from the skill's Param columns, never hardcoded.
+    pub fn masteryLinear(self: *const Skills, skill_id: u16, level: i32) i32 {
+        if (level <= 0) return 0;
+        return self.param(skill_id, 1) + self.param(skill_id, 2) * (level - 1);
+    }
 };
+
+/// How a caster's mastery skill affects an elemental cast: cold masteries PIERCE the target's
+/// resist; fire/lightning/poison masteries ADD +% damage. (Skills.txt passive semantics.)
+pub const MasteryKind = enum { none, pierce, damage };
+
+/// Assemble a FULLY TABLE-DRIVEN elemental Cast for `skill_id` at `effective_level`:
+///   * element damage row  — Skills.txt E* columns (SkillData.dmg)
+///   * synergies           — Skills.txt EDmgSymPerCalc (which skills, and the ParamN %/level)
+///   * mastery             — the caster's `mastery_id` skill, Param1+Param2*(lvl-1), applied as
+///                           pierce (cold) or +%damage (fire/light/poison) per `mastery_kind`
+/// Nothing is hardcoded — every number comes from Skills.txt. `ctx` supplies the caster's hard
+/// level in a skill via `ctx.skillLevel(skills, id)`; `syn_out` is caller storage the Cast borrows.
+pub fn buildElementalCast(
+    skills: *const Skills,
+    skill_id: u16,
+    effective_level: i32,
+    ctx: anytype,
+    mastery_id: ?u16,
+    mastery_kind: MasteryKind,
+    syn_out: []spell.Synergy,
+) spell.Cast {
+    const sd = skills.byId(skill_id) orelse return .{ .dmg = .{}, .skill_level = effective_level };
+    const info = skills.synergyInfo(skill_id);
+    var n: usize = 0;
+    for (info.ids[0..info.count]) |sid| {
+        if (n >= syn_out.len) break;
+        syn_out[n] = .{ .permille = info.permille, .skill_level = ctx.skillLevel(skills, sid) };
+        n += 1;
+    }
+    var result: spell.Cast = .{ .dmg = sd.dmg, .skill_level = effective_level, .synergies = syn_out[0..n] };
+    if (mastery_id) |mid| {
+        const value = skills.masteryLinear(mid, ctx.skillLevel(skills, mid));
+        switch (mastery_kind) {
+            .pierce => result.pierce_percent = value,
+            .damage => result.mastery_percent = value,
+            .none => {},
+        }
+    }
+    return result;
+}
 
 /// Where a cast is aimed. `unit` is the target unit for entity-targeted casts (melee
 /// needs it; a missile aims at its position). `x`/`y` is the cast location (used when
@@ -276,11 +395,45 @@ pub fn applyElementalHit(hit: ElementalHit, target: *Unit) void {
 
 const testing = std.testing;
 
+/// Test-only caster: a per-skill hard level resolved by Skills.txt NAME (the ctx interface
+/// `buildElementalCast` expects). Synergies default to 0 unless set. No skill Ids are hardcoded.
+const TestCaster = struct {
+    ice_bolt: i32 = 20,
+    frost_nova: i32 = 0,
+    ice_blast: i32 = 0,
+    glacial_spike: i32 = 0,
+    blizzard: i32 = 0,
+    frozen_orb: i32 = 0,
+    cold_mastery: i32 = 0,
+    fn skillLevel(self: TestCaster, skills: *const Skills, id: u16) i32 {
+        const alloc = .{
+            .{ "Ice Bolt", self.ice_bolt },   .{ "Frost Nova", self.frost_nova },
+            .{ "Ice Blast", self.ice_blast }, .{ "Glacial Spike", self.glacial_spike },
+            .{ "Blizzard", self.blizzard },   .{ "Frozen Orb", self.frozen_orb },
+            .{ "Cold Mastery", self.cold_mastery },
+        };
+        inline for (alloc) |pair| {
+            if (skills.idByName(pair[0]) == id) return pair[1];
+        }
+        return 0;
+    }
+};
+
+/// Build a real table-driven Ice Bolt cast (synergies at 0) for the resist-wiring tests.
+fn testIceBolt(skills: *const Skills, ice_bolt_lvl: i32, cold_mastery_lvl: i32, syn_out: *[spell.MAX_SYNERGIES]spell.Synergy) spell.Cast {
+    const ib = skills.idByName("Ice Bolt").?;
+    const cm = skills.idByName("Cold Mastery");
+    const ctx = TestCaster{ .ice_bolt = ice_bolt_lvl, .cold_mastery = cold_mastery_lvl };
+    return buildElementalCast(skills, ib, ice_bolt_lvl, ctx, cm, .pierce, syn_out);
+}
+
 test "resolveElemental: Ice Bolt vs a cold-resistant target applies the resist" {
     // clvl 20 Ice Bolt, no synergy/mastery: min = 6 + 4*2(9-16 span partial)... use the module's
     // verified staged value. Just assert the resist wiring: raw within [min,max], applied resisted.
-    var syn: [5]spell.Synergy = undefined;
-    const ic = spell.iceBolt(spell.ICE_BOLT, 20, 0, 0, 0, 0, 0, 0, &syn);
+    var skills = try Skills.load(testing.allocator);
+    defer skills.deinit();
+    var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    const ic = testIceBolt(&skills, 20, 0, &syn);
     const d = ic.damage();
 
     var mob = Unit.init(.monster);
@@ -299,9 +452,11 @@ test "resolveElemental: Ice Bolt vs a cold-resistant target applies the resist" 
 }
 
 test "resolveElemental: Cold Mastery pierces the target's cold resist" {
-    var syn: [5]spell.Synergy = undefined;
-    // slvl 5 Cold Mastery => -40% enemy cold resist.
-    const ic = spell.iceBolt(spell.ICE_BOLT, 20, 0, 0, 0, 0, 0, 5, &syn);
+    var skills = try Skills.load(testing.allocator);
+    defer skills.deinit();
+    var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    // slvl 5 Cold Mastery => -40% enemy cold resist (20 + 5*4, read from Skills.txt).
+    const ic = testIceBolt(&skills, 20, 5, &syn);
     var mob = Unit.init(.monster);
     mob.set(.coldresist, 50); // 50% - 40% pierce = 10% effective resist.
     mob.setLife(1000);
@@ -312,8 +467,10 @@ test "resolveElemental: Cold Mastery pierces the target's cold resist" {
 }
 
 test "resolveElemental: cold-immune target takes zero" {
-    var syn: [5]spell.Synergy = undefined;
-    const ic = spell.iceBolt(spell.ICE_BOLT, 30, 0, 0, 0, 0, 0, 0, &syn);
+    var skills = try Skills.load(testing.allocator);
+    defer skills.deinit();
+    var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    const ic = testIceBolt(&skills, 30, 0, &syn);
     var mob = Unit.init(.monster);
     mob.set(.coldresist, 100); // immune
     mob.setLife(500);
@@ -364,7 +521,8 @@ test "TABLE-DRIVEN: Teleport (Id 54) classifies as teleport with the real Skills
 test "TABLE-DRIVEN: Ice Bolt (Id 39) element damage read from the REAL Skills.txt matches the parity anchor" {
     var s = try Skills.load(testing.allocator);
     defer s.deinit();
-    const ib = s.byId(spell.ICE_BOLT_ID).?; // Id 39
+    const ib_id = s.idByName("Ice Bolt").?; // resolves to Skills.txt Id 39 by name
+    const ib = s.byId(ib_id).?;
     // The E* columns read straight from the real 1.14d Skills.txt row (no hardcoded literals):
     try testing.expectEqual(spell.Element.cold, ib.dmg.etype); // EType=cold
     try testing.expectEqual(@as(i32, 6), ib.dmg.e_min); // EMin=6
@@ -379,6 +537,19 @@ test "TABLE-DRIVEN: Ice Bolt (Id 39) element damage read from the REAL Skills.tx
     try testing.expectEqual(@as(i32, 3), ib.dmg.minAt(1));
     try testing.expectEqual(@as(i32, 5), ib.dmg.maxAt(1));
     try testing.expectEqual(@as(i32, 14), ib.dmg.minAt(10)); // the load-bearing parity number
+
+    // The synergy set + %/level come from EDmgSymPerCalc/Param8 (Param8=15 => 150‰), NOT a literal.
+    const syn = s.synergyInfo(ib_id);
+    try testing.expectEqual(@as(usize, 5), syn.count); // Frost Nova/Ice Blast/Glacial Spike/Blizzard/Frozen Orb
+    try testing.expectEqual(@as(i32, 150), syn.permille);
+    try testing.expectEqual(s.idByName("Frost Nova").?, syn.ids[0]);
+    try testing.expectEqual(s.idByName("Frozen Orb").?, syn.ids[4]);
+    // Cold Mastery pierce is Param1+Param2*(lvl-1) off its own row (Id 65, not 58=Energy Shield).
+    const cm = s.idByName("Cold Mastery").?;
+    try testing.expectEqual(@as(u16, 65), cm);
+    try testing.expectEqual(@as(i32, 0), s.masteryLinear(cm, 0));
+    try testing.expectEqual(@as(i32, 20), s.masteryLinear(cm, 1));
+    try testing.expectEqual(@as(i32, 40), s.masteryLinear(cm, 5)); // 20 + 5*4
 }
 
 test "TABLE-DRIVEN generalizes: Glacial Spike (Id 55) + Fire Bolt (Id 36) base damage from the real table" {
@@ -471,8 +642,10 @@ test "cast: Ice Bolt spawns a caster_derived missile carrying the elemental cast
     mob.y = 0;
     mob.setLife(100);
 
-    var syn: [5]spell.Synergy = undefined;
-    const c = spell.iceBolt(spell.ICE_BOLT, 20, 1, 20, 20, 20, 20, 20, &syn);
+    var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    const ib_id = skills.idByName("Ice Bolt").?;
+    const ctx = TestCaster{ .ice_bolt = 20, .frost_nova = 1, .ice_blast = 20, .glacial_spike = 20, .blizzard = 20, .frozen_orb = 20, .cold_mastery = 20 };
+    const c = buildElementalCast(&skills, ib_id, 20, ctx, skills.idByName("Cold Mastery"), .pierce, &syn);
     const out = cast(&skills, &missiles, &caster, 39, .{ .unit = &mob }, c); // Ice Bolt
     try testing.expect(out == .missile);
     const m = out.missile;

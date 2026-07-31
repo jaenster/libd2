@@ -27,10 +27,11 @@
 //!           + ManaPerLevel   * (level - 1)        / 4
 //!           + ManaPerMagic   * (enr - enr_start)  / 4
 //!
-//! CharStats.txt values below are BYTE-VERIFIED from the shipped 1.14d charstats.bin (decoded
-//! against the D2MOO D2CharStatsTxt struct layout, stride 0xC4; all 7 class rows validated).
+//! The per-class CharStats fields are read straight from the real 1.14d CharStats.txt (d2-data),
+//! derived at comptime by header name — no values are transcribed into this file.
 
 const std = @import("std");
+const d2data = @import("d2-data");
 
 /// The CharStats.txt row fields this derivation reads (per class).
 pub const CharStats = struct {
@@ -51,8 +52,9 @@ pub const CharStats = struct {
     mana_per_magic: i32,
     /// StatPerLevel (attribute points granted per level).
     stat_per_level: i32,
-    /// CharStats.txt BlockFactor (col 0x16) — flat class base block added in GetBlockRate before
-    /// the (dex-15)*factor/(2*clvl) scale. All 7 1.14d classes ship BlockFactor = 20.
+    /// CharStats.txt BlockFactor — flat class base block added in GetBlockRate before the
+    /// (dex-15)*factor/(2*clvl) scale. 1.14d: Paladin 30, Amazon/Barbarian/Assassin 25, the
+    /// caster classes (Sorceress/Necromancer/Druid) 20.
     block_factor: i32 = 20,
 };
 
@@ -68,23 +70,81 @@ pub const Class = enum(u8) {
     assassin = 6,
 };
 
-/// All 7 CharStats rows — byte-verified from the 1.14d charstats.bin (see module header).
-pub const CHAR_STATS = [_]CharStats{
-    // Amazon
-    .{ .str_start = 20, .dex_start = 25, .energy_start = 15, .vit_start = 20, .stamina_start = 84, .hpadd = 30, .life_per_level = 8, .stamina_per_level = 4, .mana_per_level = 6, .life_per_vitality = 12, .stamina_per_vitality = 4, .mana_per_magic = 6, .stat_per_level = 5 },
-    // Sorceress
-    .{ .str_start = 10, .dex_start = 25, .energy_start = 35, .vit_start = 10, .stamina_start = 74, .hpadd = 30, .life_per_level = 4, .stamina_per_level = 4, .mana_per_level = 8, .life_per_vitality = 8, .stamina_per_vitality = 4, .mana_per_magic = 8, .stat_per_level = 5 },
-    // Necromancer
-    .{ .str_start = 15, .dex_start = 25, .energy_start = 25, .vit_start = 15, .stamina_start = 79, .hpadd = 30, .life_per_level = 6, .stamina_per_level = 4, .mana_per_level = 8, .life_per_vitality = 8, .stamina_per_vitality = 4, .mana_per_magic = 8, .stat_per_level = 5 },
-    // Paladin
-    .{ .str_start = 25, .dex_start = 20, .energy_start = 15, .vit_start = 25, .stamina_start = 89, .hpadd = 30, .life_per_level = 8, .stamina_per_level = 4, .mana_per_level = 6, .life_per_vitality = 12, .stamina_per_vitality = 4, .mana_per_magic = 6, .stat_per_level = 5 },
-    // Barbarian
-    .{ .str_start = 30, .dex_start = 20, .energy_start = 10, .vit_start = 25, .stamina_start = 92, .hpadd = 30, .life_per_level = 8, .stamina_per_level = 4, .mana_per_level = 4, .life_per_vitality = 16, .stamina_per_vitality = 4, .mana_per_magic = 4, .stat_per_level = 5 },
-    // Druid
-    .{ .str_start = 15, .dex_start = 20, .energy_start = 20, .vit_start = 25, .stamina_start = 84, .hpadd = 30, .life_per_level = 6, .stamina_per_level = 4, .mana_per_level = 8, .life_per_vitality = 8, .stamina_per_vitality = 4, .mana_per_magic = 8, .stat_per_level = 5 },
-    // Assassin
-    .{ .str_start = 20, .dex_start = 20, .energy_start = 25, .vit_start = 20, .stamina_start = 95, .hpadd = 30, .life_per_level = 8, .stamina_per_level = 5, .mana_per_level = 6, .life_per_vitality = 12, .stamina_per_vitality = 5, .mana_per_magic = 7, .stat_per_level = 5 },
-};
+/// The CharStats.txt `class` cell for each class, in eD2PlayerClassID order. Used to find each
+/// class' row in the real table (the row order has an "Expansion" divider, so we key by name).
+const CLASS_NAME = [_][]const u8{ "Amazon", "Sorceress", "Necromancer", "Paladin", "Barbarian", "Druid", "Assassin" };
+
+/// All 7 CharStats rows, DERIVED AT COMPTIME from the real 1.14d CharStats.txt embedded in
+/// d2-data — no values are transcribed into this file. Column values are read by header name so
+/// the derivation survives column reordering; each class is matched by its `class` cell.
+pub const CHAR_STATS = buildCharStats();
+
+fn buildCharStats() [CLASS_NAME.len]CharStats {
+    @setEvalBranchQuota(200000);
+    const txt = d2data.file("CharStats");
+    var lines = std.mem.splitScalar(u8, txt, '\n');
+    const header = std.mem.trimEnd(u8, lines.first(), "\r");
+
+    var out: [CLASS_NAME.len]CharStats = undefined;
+    for (CLASS_NAME, 0..) |name, i| {
+        const row = findRow(txt, name) orelse @compileError("CharStats.txt: no row for class " ++ name);
+        out[i] = .{
+            .str_start = cell(header, row, "str"),
+            .dex_start = cell(header, row, "dex"),
+            .energy_start = cell(header, row, "int"),
+            .vit_start = cell(header, row, "vit"),
+            .stamina_start = cell(header, row, "stamina"),
+            .hpadd = cell(header, row, "hpadd"),
+            .life_per_level = cell(header, row, "LifePerLevel"),
+            .stamina_per_level = cell(header, row, "StaminaPerLevel"),
+            .mana_per_level = cell(header, row, "ManaPerLevel"),
+            .life_per_vitality = cell(header, row, "LifePerVitality"),
+            .stamina_per_vitality = cell(header, row, "StaminaPerVitality"),
+            .mana_per_magic = cell(header, row, "ManaPerMagic"),
+            .stat_per_level = cell(header, row, "StatPerLevel"),
+            .block_factor = cell(header, row, "BlockFactor"),
+        };
+    }
+    return out;
+}
+
+/// The data line whose first (`class`) column equals `name` (comptime; skips the header + the
+/// "Expansion" divider automatically since neither matches a class name).
+fn findRow(comptime txt: []const u8, comptime name: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, txt, '\n');
+    _ = lines.first(); // header
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (line.len == 0) continue;
+        const first = line[0 .. std.mem.indexOfScalar(u8, line, '\t') orelse line.len];
+        if (std.mem.eql(u8, first, name)) return line;
+    }
+    return null;
+}
+
+/// The integer value of column `col` (by header name) in tab-separated `row` (comptime).
+fn cell(comptime header: []const u8, comptime row: []const u8, comptime col: []const u8) i32 {
+    const idx = columnIndex(header, col) orelse @compileError("CharStats.txt: no column " ++ col);
+    var fields = std.mem.splitScalar(u8, row, '\t');
+    var i: usize = 0;
+    while (fields.next()) |f| : (i += 1) {
+        if (i == idx) {
+            const s = std.mem.trim(u8, f, " \r");
+            if (s.len == 0) return 0;
+            return std.fmt.parseInt(i32, s, 10) catch @compileError("CharStats.txt: non-integer " ++ col ++ " = '" ++ f ++ "'");
+        }
+    }
+    return 0;
+}
+
+fn columnIndex(comptime header: []const u8, comptime col: []const u8) ?usize {
+    var fields = std.mem.splitScalar(u8, header, '\t');
+    var i: usize = 0;
+    while (fields.next()) |f| : (i += 1) {
+        if (std.mem.eql(u8, std.mem.trim(u8, f, " \r"), col)) return i;
+    }
+    return null;
+}
 
 pub fn charStats(class: Class) CharStats {
     return CHAR_STATS[@intFromEnum(class)];
