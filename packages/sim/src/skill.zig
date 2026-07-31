@@ -105,6 +105,13 @@ pub const SkillData = struct {
 /// hit with no missile (Nova/Static Field); `other` = an unmodelled/utility do-function.
 pub const Kind = enum { melee, missile, teleport, direct, aura, passive, summon, other, unknown };
 
+/// What a summon skill spawns: the MonStats monster name (borrows the Skills table) + the max pet
+/// count at the queried level. `.monster == ""` means the skill is not a summon.
+pub const SummonInfo = struct {
+    monster: []const u8 = "",
+    count: i32 = 0,
+};
+
 /// A stat a skill grants (aura or passive): the ItemStatCost stat NAME (borrows the Skills table) +
 /// its value at a given skill level. `.stat == ""` means the skill grants nothing of that kind.
 pub const AuraStat = struct {
@@ -267,6 +274,25 @@ pub const Skills = struct {
         const stat = self.table.get(row, "passivestat1");
         if (stat.len == 0) return .{};
         return .{ .stat = stat, .value = self.evalCalc(.{}, 0, skill_id, level, "passivecalc1") };
+    }
+
+    /// What a SUMMON skill spawns: the MonStats monster name (the `summon` column) + how many the
+    /// caster may have at once (the `petmax` column, which is itself a calc — Raise Skeleton's is
+    /// `(lvl<4)?lvl:(2+lvl/3)`, evaluated by the VM). Empty `summon` => not a summon. The host does
+    /// the actual spawning (it owns unit creation).
+    pub fn summonInfo(self: *const Skills, skill_id: u16, level: i32) SummonInfo {
+        const row = self.rowById(skill_id) orelse return .{};
+        const mon = self.table.get(row, "summon");
+        if (mon.len == 0) return .{};
+        return .{ .monster = mon, .count = self.evalExpr(self.table.get(row, "petmax"), skill_id, level) };
+    }
+
+    /// Evaluate a raw calc EXPRESSION string (not a column name) through the VM — for columns like
+    /// `petmax` that carry the calc inline. Empty / error => 0.
+    pub fn evalExpr(self: *const Skills, expr: []const u8, skill_id: u16, level: i32) i32 {
+        if (expr.len == 0) return 0;
+        const ev = calc.Evaluator(CalcCtx){ .ctx = .{ .skills = self, .book = .{}, .char_level = 0 } };
+        return ev.eval(expr, skill_id, level) catch 0;
     }
 
     /// Evaluate one of a skill's calc-string columns (by header name) through the calc VM, resolving
@@ -1121,6 +1147,26 @@ test "passiveValue: passives grant their stat via the calc VM (ln + dm), all cla
     // masteryValue is the value-only view of the same passive path.
     const cm = s.idByName("Cold Mastery").?;
     try testing.expectEqual(s.passiveValue(cm, 5).value, s.masteryValue(cm, 5));
+}
+
+test "summonInfo: summon monster + pet count from the table (petmax is a ternary calc)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    // Raise Skeleton -> necroskeleton, petmax = (lvl<4)?lvl:(2+lvl/3).
+    const rs = s.idByName("Raise Skeleton").?;
+    try testing.expectEqualStrings("necroskeleton", s.summonInfo(rs, 1).monster);
+    try testing.expectEqual(@as(i32, 1), s.summonInfo(rs, 1).count); // lvl<4 -> lvl
+    try testing.expectEqual(@as(i32, 3), s.summonInfo(rs, 3).count);
+    try testing.expectEqual(@as(i32, 3), s.summonInfo(rs, 4).count); // 2 + 4/3 = 3
+    try testing.expectEqual(@as(i32, 5), s.summonInfo(rs, 10).count); // 2 + 10/3 = 5
+
+    // Clay Golem -> a single golem (petmax constant 1).
+    const cg = s.idByName("Clay Golem").?;
+    try testing.expectEqualStrings("ClayGolem", s.summonInfo(cg, 20).monster);
+    try testing.expectEqual(@as(i32, 1), s.summonInfo(cg, 20).count);
+
+    // A non-summon skill => empty.
+    try testing.expectEqualStrings("", s.summonInfo(s.idByName("Ice Bolt").?, 1).monster);
 }
 
 test "auraValue: aura skills grant their stat, valued by the calc VM (Might/Defiance/Blessed Aim)" {
