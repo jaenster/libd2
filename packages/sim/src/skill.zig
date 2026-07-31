@@ -538,6 +538,18 @@ pub fn applyElementalHit(hit: ElementalHit, target: *Unit) void {
     if (hit.applied > 0) combat.applyToLife(target, hit.applied);
 }
 
+/// Cast a DIRECT elemental skill (one with no missile — Frost Nova / Nova / Static Field / Poison
+/// Nova, any class that classifies `.direct`) at `target`: assemble its fully table-driven Cast
+/// (element + EDmgSymPerCalc synergies + matching mastery) and resolve it against the target's
+/// resist in one call. `book` = the caster's skill allocation; `effective_level` = the skill's
+/// level after +skills. Pure (one RNG step for the roll); subtract with `applyElementalHit`. This
+/// is the direct-hit counterpart of the missile path (`cast` spawns a bolt; this resolves in place).
+pub fn castDirectElemental(skills: *const Skills, book: SkillBook, skill_id: u16, effective_level: i32, target: *const Unit, seed: *Seed) ElementalHit {
+    var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    const c = castElemental(skills, book, skill_id, effective_level, &syn);
+    return resolveElementalVsUnit(c, target, seed);
+}
+
 const testing = std.testing;
 
 /// Test-only caster: a per-skill hard level resolved by Skills.txt NAME (the ctx interface
@@ -693,6 +705,28 @@ test "calc VM resolves the elemental-damage codes (edmn/edmx/edns) from the stag
     try testing.expectEqual(@as(i32, @intCast(fbd.dmg.min256(1))), try ev.eval("edns", fb, 1));
     // A compound calc (Energy Shield-style) evaluates end to end.
     try testing.expectEqual(@min(fbd.dmg.minAt(1), 95), try ev.eval("min(edmn,95)", fb, 1));
+}
+
+test "castDirectElemental resolves a direct (missile-less) elemental skill vs a target's resist" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    const fn_id = s.idByName("Frost Nova").?;
+    try testing.expectEqual(Kind.direct, s.byId(fn_id).?.kind());
+
+    var book = SkillBook{};
+    book.setByName(&s, "Frost Nova", 10);
+
+    var mob = Unit.init(.monster);
+    mob.set(.coldresist, 50); // half cold damage
+    mob.setLife(10000);
+    var seed = Seed.fromValue(3);
+    const hit = castDirectElemental(&s, book, fn_id, 10, &mob, &seed);
+    try testing.expectEqual(spell.Element.cold, hit.element);
+    try testing.expect(hit.raw > 0); // real staged cold damage from the table
+    try testing.expectEqual(@as(i32, 50), hit.resist);
+    try testing.expectEqual(@divTrunc(hit.raw * 50, 100), hit.applied); // 50% resisted
+    applyElementalHit(hit, &mob);
+    try testing.expectEqual(10000 - hit.applied, mob.life());
 }
 
 test "TABLE-DRIVEN: Teleport (Id 54) classifies as teleport with the real Skills.txt mana cost" {
