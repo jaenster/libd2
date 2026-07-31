@@ -603,6 +603,17 @@ pub fn applyPassives(skills: *const Skills, u: *Unit, book: SkillBook, isc: *con
     }
 }
 
+/// Grant an AURA's stat to a single unit (an ally the host decided is in range): evaluate the aura's
+/// granted stat (auraValue) and ADD it to `u`'s StatList by ItemStatCost id. The range / who-is-in-
+/// range decision is the host's (game-loop territory); this is the pure per-unit apply — a Paladin's
+/// Might grants damagepercent to each party member the host passes in. Non-aura skill => no-op.
+pub fn applyAuraTo(skills: *const Skills, u: *Unit, aura_id: u16, aura_level: i32, isc: *const d2data.Table) void {
+    const av = skills.auraValue(aura_id, aura_level);
+    if (av.stat.len == 0) return;
+    const sid = statIdByName(isc, av.stat) orelse return;
+    u.stats.add(@enumFromInt(sid), av.value);
+}
+
 /// A monster's castable skills, resolved from its MonStats Skill1..8 assignments to Skills.txt ids
 /// + a SkillBook carrying their levels — so monster casts flow through the SAME table-driven path as
 /// players (castElemental / cast / castDirectElemental). Built by `resolveMonsterCaster`.
@@ -865,6 +876,24 @@ test "applyPassives folds a caster's passive skills onto its unit stats (end to 
     applyPassives(&s, &ucm, book, &isc);
     const pcp = statIdByName(&isc, "passive_cold_pierce").?;
     try testing.expectEqual(@as(i32, 45), ucm.stats.get(@enumFromInt(pcp)));
+}
+
+test "applyAuraTo grants a Paladin aura's stat to an ally unit" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var isc = try d2data.open(testing.allocator, "ItemStatCost");
+    defer isc.deinit();
+
+    var ally = Unit.init(.player);
+    // A level-5 Might aura on the ally grants damagepercent = ln34 = 40 + 5*10 = 90.
+    applyAuraTo(&s, &ally, s.idByName("Might").?, 5, &isc);
+    const dmg = statIdByName(&isc, "damagepercent").?;
+    try testing.expectEqual(@as(i32, 90), ally.stats.get(@enumFromInt(dmg)));
+
+    // A non-aura skill (Ice Bolt) grants nothing.
+    var other = Unit.init(.player);
+    applyAuraTo(&s, &other, s.idByName("Ice Bolt").?, 5, &isc);
+    try testing.expectEqual(@as(i32, 0), other.stats.get(@enumFromInt(dmg)));
 }
 
 test "passiveValue: passives grant their stat via the calc VM (ln + dm), all classes" {
