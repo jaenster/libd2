@@ -967,6 +967,32 @@ test "applyAuraTo grants a Paladin aura's stat to an ally unit" {
     try testing.expectEqual(@as(i32, 0), other.stats.get(@enumFromInt(dmg)));
 }
 
+test "end-to-end: a Might aura flows through to a unit's physical combat damage" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var isc = try d2data.open(testing.allocator, "ItemStatCost");
+    defer isc.deinit();
+
+    var u = Unit.init(.player);
+    u.set(.mindamage, 10);
+    u.set(.maxdamage, 10); // flat 10 base so the roll is deterministic
+    var seed = Seed.fromValue(1);
+    const before = combat.rollPhysicalDamage(&u, &seed, .{}).whole();
+
+    // Might slvl5 grants +90% damagepercent, which rollPhysicalDamage already consumes.
+    applyAuraTo(&s, &u, s.idByName("Might").?, 5, &isc);
+    var seed2 = Seed.fromValue(1);
+    const after = combat.rollPhysicalDamage(&u, &seed2, .{}).whole();
+
+    try testing.expectEqual(@as(i32, 10), before);
+    // The aura's value landed on the unit's damagepercent stat exactly (auraValue -> applyAuraTo).
+    const dmgpct = statIdByName(&isc, "damagepercent").?;
+    try testing.expectEqual(@as(i32, 90), u.stats.get(@enumFromInt(dmgpct)));
+    // ...and combat consumes it: the melee damage is meaningfully higher (~+90%, plus attr rounding).
+    try testing.expect(after > before);
+    try testing.expect(after >= before + 8);
+}
+
 test "passiveValue: passives grant their stat via the calc VM (ln + dm), all classes" {
     var s = try Skills.load(testing.allocator);
     defer s.deinit();
