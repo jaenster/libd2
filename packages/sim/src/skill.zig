@@ -993,6 +993,21 @@ test "end-to-end: a Might aura flows through to a unit's physical combat damage"
     try testing.expect(after >= before + 8);
 }
 
+test "end-to-end: a Defiance aura raises a unit's defense (skill_armor_percent -> getDefense)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var isc = try d2data.open(testing.allocator, "ItemStatCost");
+    defer isc.deinit();
+    var u = Unit.init(.player);
+    u.set(.armorclass, 100);
+    const before = combat.getDefense(&u);
+    // Defiance grants skill_armor_percent, which getDefense now sums with item_armor_percent.
+    applyAuraTo(&s, &u, s.idByName("Defiance").?, 5, &isc);
+    const sap = statIdByName(&isc, "skill_armor_percent").?;
+    try testing.expect(u.stats.get(@enumFromInt(sap)) > 0); // aura applied the %
+    try testing.expect(combat.getDefense(&u) > before); // defense actually rose
+}
+
 test "passiveValue: passives grant their stat via the calc VM (ln + dm), all classes" {
     var s = try Skills.load(testing.allocator);
     defer s.deinit();
