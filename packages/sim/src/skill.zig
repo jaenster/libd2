@@ -26,6 +26,7 @@ const combat = @import("combat.zig");
 const missile = @import("missile.zig");
 const spell = @import("spell.zig");
 const calc = @import("calc.zig");
+const monskill = @import("monskill.zig");
 const d2data = @import("d2-data");
 
 const Seed = rng.Seed;
@@ -550,6 +551,43 @@ pub fn castDirectElemental(skills: *const Skills, book: SkillBook, skill_id: u16
     return resolveElementalVsUnit(c, target, seed);
 }
 
+/// A monster's castable skills, resolved from its MonStats Skill1..8 assignments to Skills.txt ids
+/// + a SkillBook carrying their levels — so monster casts flow through the SAME table-driven path as
+/// players (castElemental / cast / castDirectElemental). Built by `resolveMonsterCaster`.
+pub const MonsterCaster = struct {
+    book: SkillBook = .{},
+    ids: [monskill.MAX_SKILLS]u16 = undefined,
+    levels: [monskill.MAX_SKILLS]i32 = undefined,
+    count: usize = 0,
+
+    /// The first assigned skill that resolves to a DAMAGING cast (a missile or a direct-elemental
+    /// hit) — a minimal AI-selection primitive. Returns its Skills id, or null when the monster has
+    /// only non-damaging skills (summon/aura/heal) and should fall back to a melee attack.
+    pub fn pickCastable(self: MonsterCaster, skills: *const Skills) ?u16 {
+        for (self.ids[0..self.count]) |id| {
+            const k = (skills.byId(id) orelse continue).kind();
+            if (k == .missile or k == .direct) return id;
+        }
+        return null;
+    }
+};
+
+/// Resolve a monster's MonStats skill assignments (from monskill.read) into a MonsterCaster: map
+/// each skill NAME to its Skills.txt id and record its level in a SkillBook (skills not in Skills.txt
+/// are skipped). No hardcoded ids.
+pub fn resolveMonsterCaster(skills: *const Skills, mon_skills: []const monskill.MonSkill) MonsterCaster {
+    var mc = MonsterCaster{};
+    for (mon_skills) |ms| {
+        if (mc.count >= mc.ids.len) break;
+        const id = skills.idByName(ms.name) orelse continue;
+        mc.ids[mc.count] = id;
+        mc.levels[mc.count] = ms.level;
+        mc.book.set(id, @intCast(@max(0, ms.level)));
+        mc.count += 1;
+    }
+    return mc;
+}
+
 const testing = std.testing;
 
 /// Test-only caster: a per-skill hard level resolved by Skills.txt NAME (the ctx interface
@@ -727,6 +765,31 @@ test "castDirectElemental resolves a direct (missile-less) elemental skill vs a 
     try testing.expectEqual(@divTrunc(hit.raw * 50, 100), hit.applied); // 50% resisted
     applyElementalHit(hit, &mob);
     try testing.expectEqual(10000 - hit.applied, mob.life());
+}
+
+test "resolveMonsterCaster maps MonStats skills to castable selections (AI picks a damaging one)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var mt = try d2data.open(testing.allocator, "MonStats");
+    defer mt.deinit();
+    var buf: [monskill.MAX_SKILLS]monskill.MonSkill = undefined;
+
+    // A Will-o-Wisp casts Chain Lightning (direct elemental) -> pickCastable selects it.
+    const nw = monskill.forMonster(&mt, "willowisp1", &buf);
+    const wmc = resolveMonsterCaster(&s, buf[0..nw]);
+    try testing.expect(wmc.count >= 1);
+    const wpick = wmc.pickCastable(&s) orelse return error.NoCastable;
+    try testing.expectEqual(s.idByName("Chain Lightning").?, wpick);
+
+    // A Vampire's VampireFireball is a missile -> also castable.
+    const nv = monskill.forMonster(&mt, "vampire1", &buf);
+    const vmc = resolveMonsterCaster(&s, buf[0..nv]);
+    try testing.expectEqual(Kind.missile, s.byId(vmc.pickCastable(&s).?).?.kind());
+
+    // A pure summoner (Skeleton -> SkeletonRaise) has no damaging cast -> null (melee fallback).
+    const nk = monskill.forMonster(&mt, "skeleton1", &buf);
+    const kmc = resolveMonsterCaster(&s, buf[0..nk]);
+    try testing.expectEqual(@as(?u16, null), kmc.pickCastable(&s));
 }
 
 test "TABLE-DRIVEN: Teleport (Id 54) classifies as teleport with the real Skills.txt mana cost" {
