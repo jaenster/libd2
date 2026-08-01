@@ -180,7 +180,7 @@ pub const Skills = struct {
 
     /// The Skills.txt row index for a numeric Id (the `skill()` name resolution + synergy lookups
     /// go through this).
-    fn rowById(self: *const Skills, id: u16) ?usize {
+    pub fn rowById(self: *const Skills, id: u16) ?usize {
         return self.table.findByInt("Id", id);
     }
 
