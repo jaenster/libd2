@@ -460,7 +460,9 @@ pub fn castElemental(skills: *const Skills, book: SkillBook, skill_id: u16, effe
         mastery_id = skills.idByName(m.name);
         kind = m.kind;
     }
-    return buildElementalCast(skills, skill_id, effective_level, book, mastery_id, kind, syn_out);
+    var out = buildElementalCast(skills, skill_id, effective_level, book, mastery_id, kind, syn_out);
+    out.e_len = sd.e_len; // carry the poison/effect length so a poison missile can DoT on hit
+    return out;
 }
 
 /// Where a cast is aimed. `unit` is the target unit for entity-targeted casts (melee
