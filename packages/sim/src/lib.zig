@@ -36,6 +36,8 @@ pub const skills_druid = @import("skills_druid.zig");
 pub const skills_paladin = @import("skills_paladin.zig");
 pub const skills_assassin = @import("skills_assassin.zig");
 pub const skills_necromancer = @import("skills_necromancer.zig");
+pub const monster_monprop = @import("monster_monprop.zig");
+pub const monster_umods = @import("monster_umods.zig");
 
 pub const Seed = rng.Seed;
 pub const Stat = stat.Stat;
@@ -98,4 +100,6 @@ test {
     _ = skills_assassin;
     _ = skills_paladin;
     _ = skills_necromancer;
+    _ = monster_monprop;
+    _ = monster_umods;
 }
