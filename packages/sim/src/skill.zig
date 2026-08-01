@@ -696,10 +696,19 @@ pub fn applyCurseTo(skills: *const Skills, target: *Unit, curse_id: u16, level: 
 /// range decision is the host's (game-loop territory); this is the pure per-unit apply — a Paladin's
 /// Might grants damagepercent to each party member the host passes in. Non-aura skill => no-op.
 pub fn applyAuraTo(skills: *const Skills, u: *Unit, aura_id: u16, aura_level: i32, isc: *const d2data.Table) void {
-    const av = skills.auraValue(aura_id, aura_level);
-    if (av.stat.len == 0) return;
-    const sid = statIdByName(isc, av.stat) orelse return;
-    u.stats.add(@enumFromInt(sid), av.value);
+    const row = skills.rowById(aura_id) orelse return;
+    // Every aurastatN slot: an offensive/defensive aura has one, but a warcry buff grants several
+    // (Battle Orders -> maxhp% + maxmana% + stamina% across aurastat1..3), each valued by aurastatcalcN.
+    inline for (1..7) |slot| {
+        const stat_col = std.fmt.comptimePrint("aurastat{d}", .{slot});
+        const calc_col = std.fmt.comptimePrint("aurastatcalc{d}", .{slot});
+        const stat = skills.table.get(row, stat_col);
+        if (stat.len != 0) {
+            if (statIdByName(isc, stat)) |sid| {
+                u.stats.add(@enumFromInt(sid), skills.evalCalc(.{}, 0, aura_id, aura_level, calc_col));
+            }
+        }
+    }
 }
 
 /// Resolve a direct-elemental AREA skill (Nova / Frost Nova / Poison Nova) against every unit within
@@ -1246,6 +1255,13 @@ test "applyAuraTo grants a Paladin aura's stat to an ally unit" {
     var other = Unit.init(.player);
     applyAuraTo(&s, &other, s.idByName("Ice Bolt").?, 5, &isc);
     try testing.expectEqual(@as(i32, 0), other.stats.get(@enumFromInt(dmg)));
+
+    // Battle Orders is a MULTI-stat warcry (aurastat1..3): +mana% + life% + stamina%, all applied.
+    var bo = Unit.init(.player);
+    applyAuraTo(&s, &bo, s.idByName("Battle Orders").?, 10, &isc);
+    try testing.expect(bo.stats.get(@enumFromInt(statIdByName(&isc, "item_maxhp_percent").?)) > 0);
+    try testing.expect(bo.stats.get(@enumFromInt(statIdByName(&isc, "item_maxmana_percent").?)) > 0);
+    try testing.expect(bo.stats.get(@enumFromInt(statIdByName(&isc, "skill_staminapercent").?)) > 0);
 }
 
 test "end-to-end: a Might aura flows through to a unit's physical combat damage" {
