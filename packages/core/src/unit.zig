@@ -34,6 +34,10 @@ pub const Weapon = struct {
     dex_bonus: i32 = 0,
 };
 
+/// Sentinel `owner_id` meaning "no owner" — a hostile, un-summoned unit. A minion/pet carries its
+/// summoner's unit_id here instead, which is how targeting/collision tell friend from foe.
+pub const NO_OWNER: u32 = 0xFFFFFFFF;
+
 /// Clean-room unit for combat resolution.
 pub const Unit = struct {
     unit_type: UnitType = .monster,
@@ -41,12 +45,17 @@ pub const Unit = struct {
     class_id: u32 = 0, // char class (player) or monster type id
     x: i32 = 0,
     y: i32 = 0,
-    owner_id: u32 = 0xFFFFFFFF, // owner unit id (missiles/minions); none = -1
+    owner_id: u32 = NO_OWNER, // owner unit id (missiles/minions); none = NO_OWNER
     stats: stat.StatList = .{},
     weapon: Weapon = .{},
 
     pub fn init(unit_type: UnitType) Unit {
         return .{ .unit_type = unit_type };
+    }
+
+    /// A summoned minion (skeleton / golem / valkyrie / …): a monster carrying a summoner's owner_id.
+    pub fn isPet(self: *const Unit) bool {
+        return self.unit_type == .monster and self.owner_id != NO_OWNER;
     }
 
     pub fn get(self: *const Unit, s: stat.Stat) i32 {

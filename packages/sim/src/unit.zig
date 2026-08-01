@@ -7,3 +7,4 @@ pub const Unit = unit.Unit;
 pub const UnitType = unit.UnitType;
 pub const Weapon = unit.Weapon;
 pub const applyItemStats = unit.applyItemStats;
+pub const NO_OWNER = unit.NO_OWNER;
