@@ -47,6 +47,12 @@ pub const Script = enum {
     /// and melees. Mephisto @0x5f78b0 (NM/Hell, wall or dist>30 -> Skill6 teleport) and Baal
     /// @0x5fcfe0 (action 0xe blink ~25 units) both do this; the non-blinking bosses stay generic.
     boss_teleport,
+    /// Passive chilling aura: continuously slows every enemy in range (Duriel @0x5f67b0 sets Skill4 =
+    /// Holy Freeze on spawn). The monster still melees/casts; the aura is layered on top each think.
+    aura_chill,
+    /// Burrows: submerges (invulnerable + untargetable) for its burrow duration, then surfaces next to
+    /// the target and strikes (SandRaider @0x5f0700 emerge-ambush). Fights normally while surfaced.
+    burrower,
     /// Non-combat: town folk and neutral critters with no aggression (Idle/None/Npc*/Towner/Vendor).
     /// The host runs no attack loop for these.
     passive,
@@ -63,6 +69,8 @@ pub const Script = enum {
         if (eq(name, "GreaterMummy")) return .raiser;
         if (inAny(name, &.{ "SandMaggot", "SandMaggotQueen" })) return .spawner;
         if (inAny(name, &.{ "Mephisto", "BaalCrab", "BaalCrabClone" })) return .boss_teleport;
+        if (eq(name, "Duriel")) return .aura_chill;
+        if (eq(name, "SandRaider")) return .burrower;
         // Emplacements that never move — they must NOT charge like a generic monster.
         if (inAny(name, &.{
             "Hydra",          "ArcaneTower",   "DesertTurret", "Catapult",     "CatapultSpotter",
@@ -193,10 +201,11 @@ test "monai: Script.fromName classifies AI names case-insensitively" {
     try testing.expectEqual(Script.boss_teleport, Script.fromName("Mephisto"));
     try testing.expectEqual(Script.boss_teleport, Script.fromName("BaalCrab"));
     try testing.expectEqual(Script.ranged_kite, Script.fromName("SuccubusWitch"));
+    try testing.expectEqual(Script.aura_chill, Script.fromName("Duriel"));
+    try testing.expectEqual(Script.burrower, Script.fromName("SandRaider"));
     // Summoner is a pure multi-skill caster (no summon/teleport); non-blinking bosses -> generic baseline.
     try testing.expectEqual(Script.generic, Script.fromName("Summoner"));
     try testing.expectEqual(Script.generic, Script.fromName("Diablo"));
-    try testing.expectEqual(Script.generic, Script.fromName("Duriel"));
     try testing.expectEqual(Script.generic, Script.fromName("Izual"));
     try testing.expectEqual(Script.generic, Script.fromName("Succubus"));
     // Town / neutral NPCs have no combat AI.

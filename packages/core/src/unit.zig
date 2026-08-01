@@ -46,6 +46,9 @@ pub const Unit = struct {
     x: i32 = 0,
     y: i32 = 0,
     owner_id: u32 = NO_OWNER, // owner unit id (missiles/minions); none = NO_OWNER
+    /// True while a burrowing monster (SandRaider / SandMaggot) is UNDERGROUND: it cannot be targeted
+    /// or hit until it surfaces (the server-side stand-in for its invulnerable submerged phase).
+    submerged: bool = false,
     stats: stat.StatList = .{},
     weapon: Weapon = .{},
 

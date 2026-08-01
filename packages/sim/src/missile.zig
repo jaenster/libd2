@@ -275,6 +275,7 @@ pub const Missile = struct {
     pub fn canHit(self: *const Missile, u: *const Unit) bool {
         if (self.collide_type == 0) return false;
         if (!u.isAlive()) return false;
+        if (u.submerged) return false; // a burrowed monster underground can't be struck
         if (u.unit_id == self.owner_id) return false; // never the caster itself
         if (u.owner_id != unit.NO_OWNER and u.owner_id == self.owner_id) return false; // nor the caster's own pets
         const dx = u.x - self.x;
