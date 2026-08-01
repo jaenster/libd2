@@ -791,6 +791,14 @@ pub fn castRadialMissiles(
     return n;
 }
 
+/// A direction vector (x,y) on the engine's radius-30 ring for angle index `idx` (masked to 0..63).
+/// Same table the Frozen-Orb emitter (Missiles_SrvDoFunc_015) uses via gnMissileSrvSpreadTable — the
+/// host rotates `idx` by the missile's Param2 each emission to spiral the sub-bolts.
+pub fn ringDir(idx: usize) [2]i32 {
+    const i = idx & (NOVA_RING_DIRS - 1);
+    return .{ NOVA_RING_COS[i], NOVA_RING_Y[i] };
+}
+
 /// The engine's missile-ring direction tables, verbatim from 1.14d Game.exe: ganMissileRingCosTable
 /// @0x6e1288 (X) and ganMissileRingYOffsets @0x6e1388 (Y) — 64 points on a radius-30 circle (x²+y²=900),
 /// the exact angular offsets SKILLS_CreateMissileRing spawns Nova's 64 missiles along.
