@@ -34,18 +34,50 @@ pub const Script = enum {
     /// (QuillRat WalkRandomOffset when in-range @0x5f1140 / QuillMother @0x5fb2a0) or back-pedals
     /// (SkeletonBow retreat @0x5f6070) once the target is close; all lob their ranged Skill from afar.
     ranged_kite,
-    /// Approach + melee/cast — the host baseline is faithful; see the type doc for the RE'd list.
+    /// Immobile emplacement: never walks — holds position and fires its MonStats skill at any enemy
+    /// in range. Towers/turrets/hydras/totems/catapults/traps and static nests all sit on this script.
+    stationary,
+    /// Non-combat: town folk and neutral critters with no aggression (Idle/None/Npc*/Towner/Vendor).
+    /// The host runs no attack loop for these.
+    passive,
+    /// Approach + melee/cast — the host baseline `decideMonster` loop is a faithful match for the many
+    /// plain aggressive monsters (skeletons, goatmen, brutes, demons, casters, act-boss melee, ...).
+    /// This is the explicit classification for everything not carved out above, not a fallthrough.
     generic,
 
     pub fn fromName(name: []const u8) Script {
-        if (std.ascii.eqlIgnoreCase(name, "Fallen")) return .fallen;
-        if (std.ascii.eqlIgnoreCase(name, "FallenShaman")) return .fallen_shaman;
-        if (std.ascii.eqlIgnoreCase(name, "QuillRat")) return .ranged_kite;
-        if (std.ascii.eqlIgnoreCase(name, "QuillMother")) return .ranged_kite;
-        if (std.ascii.eqlIgnoreCase(name, "SkeletonBow")) return .ranged_kite;
+        if (eq(name, "Fallen")) return .fallen;
+        if (eq(name, "FallenShaman")) return .fallen_shaman;
+        if (inAny(name, &.{ "QuillRat", "QuillMother", "SkeletonBow" })) return .ranged_kite;
+        // Emplacements that never move — they must NOT charge like a generic monster.
+        if (inAny(name, &.{
+            "Hydra",          "ArcaneTower",   "DesertTurret", "Catapult",     "CatapultSpotter",
+            "Totem",          "GargoyleTrap",  "Trap-LeftArrow", "Trap-RightArrow", "Trap-Missile",
+            "Trap-Melee",     "Trap-Nova",     "Trap-Poison",  "BoneWall",     "HellMeteor",
+            "Sarcophagus",    "EvilHole",      "Vines",        "MosquitoNest", "FoulCrowNest",
+            "MaggotEgg",      "AncientStatue",
+        })) return .stationary;
+        // Town / neutral NPCs and harmless critters — no combat AI.
+        if (inAny(name, &.{
+            "Idle",   "None",  "Npc",      "NpcStationary", "NpcOutOfTown", "Towner",
+            "Vendor", "Navi",  "JarJar",   "TownRogue",     "GoodNpcRanged", "Buffy", "Wussie",
+        })) return .passive;
         return .generic;
     }
 };
+
+/// Case-insensitive equality against a MonStats.AI name.
+inline fn eq(name: []const u8, lit: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(name, lit);
+}
+
+/// True when `name` case-insensitively equals any entry in `lits`.
+fn inAny(name: []const u8, lits: []const []const u8) bool {
+    for (lits) |l| {
+        if (std.ascii.eqlIgnoreCase(name, l)) return true;
+    }
+    return false;
+}
 
 /// AI_Function1_Fallen corpse-proximity trigger: GetCollisionDistanceFromXY < 0xF. When a fellow
 /// monster's corpse sits within this many subtiles the Fallen sets its flee flag (dwArg0=1) and
@@ -135,9 +167,18 @@ test "monai: Script.fromName classifies AI names case-insensitively" {
     try testing.expectEqual(Script.ranged_kite, Script.fromName("QuillRat"));
     try testing.expectEqual(Script.ranged_kite, Script.fromName("quillmother"));
     try testing.expectEqual(Script.ranged_kite, Script.fromName("SkeletonBow"));
-    // Plain approach-melee scripts intentionally fall to the faithful generic baseline.
+    // Emplacements never move.
+    try testing.expectEqual(Script.stationary, Script.fromName("Hydra"));
+    try testing.expectEqual(Script.stationary, Script.fromName("Trap-Nova"));
+    try testing.expectEqual(Script.stationary, Script.fromName("totem"));
+    // Town / neutral NPCs have no combat AI.
+    try testing.expectEqual(Script.passive, Script.fromName("Towner"));
+    try testing.expectEqual(Script.passive, Script.fromName("Vendor"));
+    try testing.expectEqual(Script.passive, Script.fromName("Idle"));
+    // Plain approach-melee scripts are explicitly the faithful generic baseline.
     try testing.expectEqual(Script.generic, Script.fromName("Skeleton"));
     try testing.expectEqual(Script.generic, Script.fromName("Zombie"));
+    try testing.expectEqual(Script.generic, Script.fromName("Diablo"));
     try testing.expectEqual(Script.generic, Script.fromName(""));
 }
 
