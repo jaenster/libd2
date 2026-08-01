@@ -43,9 +43,10 @@ pub fn isLiveMonster(u: *const Unit) bool {
     return u.unit_type == .monster and u.isAlive();
 }
 
-/// Predicate: a live HOSTILE monster (no owner) — a pet's attack target. Excludes summoned minions.
+/// Predicate: a live HOSTILE monster (no owner) — a pet's/player's attack target. Excludes summoned
+/// minions and monsters currently SUBMERGED (a burrowed SandRaider can't be targeted until it surfaces).
 pub fn isHostileMonster(u: *const Unit) bool {
-    return u.unit_type == .monster and u.isAlive() and u.owner_id == unit.NO_OWNER;
+    return u.unit_type == .monster and u.isAlive() and u.owner_id == unit.NO_OWNER and !u.submerged;
 }
 
 /// Predicate: a live summoned PET (a monster carrying an owner). Excluded from a player's own attacks.
