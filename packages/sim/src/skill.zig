@@ -856,6 +856,22 @@ pub const MonsterCaster = struct {
     }
 };
 
+/// Resolve a monster's MonStats `Id` NAME (as a summon skill's `summon` column gives it, e.g.
+/// "necroskeleton", "ClayGolem", "valkyrie") to its class id — the MonStats row index. This is what a
+/// summon skill needs to actually spawn its pet unit (summonInfo gives the name + count; this maps the
+/// name to the class the host instantiates). Loads MonStats each call; null if the name isn't found.
+pub fn monClassByName(gpa: std.mem.Allocator, name: []const u8) ?u16 {
+    if (name.len == 0) return null;
+    var mt = d2data.open(gpa, "MonStats") catch return null;
+    defer mt.deinit();
+    // Case-insensitive: the summon column casing (ClayGolem) can differ from the MonStats Id
+    // (claygolem), so match ignoring case.
+    for (0..mt.rowCount()) |r| {
+        if (std.ascii.eqlIgnoreCase(mt.get(r, "Id"), name)) return @intCast(r);
+    }
+    return null;
+}
+
 /// Build a MonsterCaster for a monster CLASS — its MonStats row index IS the class id (`class_id`),
 /// so this loads the monster's Skill1..8 straight off that row and resolves them to Skills ids. Loads
 /// the MonStats table each call, so the HOST should cache the returned MonsterCaster per class id
@@ -1475,6 +1491,12 @@ test "summonInfo: summon monster + pet count from the table (petmax is a ternary
 
     // A non-summon skill => empty.
     try testing.expectEqualStrings("", s.summonInfo(s.idByName("Ice Bolt").?, 1).monster);
+
+    // The summon's monster name resolves to a real MonStats class id (what the host spawns).
+    const rsi = s.summonInfo(rs, 1);
+    try testing.expect(monClassByName(testing.allocator, rsi.monster) != null);
+    try testing.expect(monClassByName(testing.allocator, s.summonInfo(cg, 1).monster) != null);
+    try testing.expectEqual(@as(?u16, null), monClassByName(testing.allocator, "nosuchmonster_zzz"));
 }
 
 test "auraValue: aura skills grant their stat, valued by the calc VM (Might/Defiance/Blessed Aim)" {
