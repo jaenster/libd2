@@ -856,6 +856,19 @@ pub const MonsterCaster = struct {
     }
 };
 
+/// Build a MonsterCaster for a monster CLASS — its MonStats row index IS the class id (`class_id`),
+/// so this loads the monster's Skill1..8 straight off that row and resolves them to Skills ids. Loads
+/// the MonStats table each call, so the HOST should cache the returned MonsterCaster per class id
+/// (there are only ~40 monster classes in a game). Empty caster on any failure.
+pub fn casterForClass(gpa: std.mem.Allocator, skills: *const Skills, class_id: u16) MonsterCaster {
+    var mt = d2data.open(gpa, "MonStats") catch return .{};
+    defer mt.deinit();
+    if (class_id >= mt.rowCount()) return .{};
+    var buf: [monskill.MAX_SKILLS]monskill.MonSkill = undefined;
+    const n = monskill.read(&mt, class_id, &buf);
+    return resolveMonsterCaster(skills, buf[0..n]);
+}
+
 /// Resolve a monster's MonStats skill assignments (from monskill.read) into a MonsterCaster: map
 /// each skill NAME to its Skills.txt id and record its level in a SkillBook (skills not in Skills.txt
 /// are skipped). No hardcoded ids.
