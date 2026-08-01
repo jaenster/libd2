@@ -339,6 +339,30 @@ pub const AttackResult = struct {
 /// This is the single path BOTH player->monster and monster->player attacks route through:
 /// physical melee now rolls to-hit + block (not auto-hit), and elemental riders are resisted the
 /// same way spells are (spell.applyResist). See applyDamageComponent / applyPhysicalFor.
+/// On-hit ELEMENTAL damage carried by the attacker's stats (firemindam/maxdam, coldmindam/maxdam,
+/// lightmindam/maxdam, magicmindam/maxdam) — added to a melee/ranged hit ALONGSIDE the physical, each
+/// element rolled uniformly [min,max] and reduced by the defender's matching resist. This is how
+/// elemental-damage GEAR and skills like Enchant / Holy Fire / a fire-damage charm actually add their
+/// damage to attacks. Poison is a damage-over-time (not summed here). Consumes RNG per rolled element.
+pub fn onHitElementalFromStats(attacker: *const Unit, defender: *const Unit, seed: *Seed) i32 {
+    const elems = .{
+        .{ Stat.firemindam, Stat.firemaxdam, Element.fire },
+        .{ Stat.coldmindam, Stat.coldmaxdam, Element.cold },
+        .{ Stat.lightmindam, Stat.lightmaxdam, Element.lightning },
+        .{ Stat.magicmindam, Stat.magicmaxdam, Element.magic },
+    };
+    var total: i32 = 0;
+    inline for (elems) |e| {
+        const mn = attacker.get(e[0]);
+        const mx = attacker.get(e[1]);
+        if (mx > 0 or mn > 0) {
+            const roll: i32 = if (mx > mn) mn + @as(i32, @bitCast(seed.pick(@bitCast(mx - mn + 1)))) else mn;
+            total += applyDamageComponent(roll, e[2], defender).applied;
+        }
+    }
+    return total;
+}
+
 pub fn resolveAttack(attacker: *const Unit, defender: *const Unit, seed: *Seed, params: DamageParams) AttackResult {
     const ar = getAttackRating(attacker);
     const def = getDefense(defender);
@@ -372,6 +396,8 @@ pub fn resolveAttack(attacker: *const Unit, defender: *const Unit, seed: *Seed, 
         const comp = applyDamageComponent(params.elem_min, params.elem_element, defender);
         elem_applied = comp.applied;
     }
+    // Plus the attacker's own on-hit elemental damage stats (gear + Enchant/Holy Fire/etc.).
+    elem_applied += onHitElementalFromStats(attacker, defender, seed);
 
     return .{
         .hit = true,
@@ -557,6 +583,30 @@ test "attackAndApply clamps a lethal blow to zero life, never negative" {
     const res = attackAndApply(&attacker, &defender, &seed, .{});
     try testing.expect(defender.life() >= 0);
     if (res.hit) try testing.expectEqual(@as(i32, 0), defender.life());
+}
+
+test "on-hit elemental from stats adds to a physical hit (Enchant fire damage)" {
+    const testing = std.testing;
+    var attacker = Unit.init(.player);
+    attacker.set(.level, 30);
+    attacker.set(.dexterity, 200);
+    attacker.set(.tohit, 100000);
+    attacker.weapon = .{ .min_damage = 10, .max_damage = 10 };
+    var bare = Unit.init(.monster);
+    bare.set(.level, 1);
+    bare.setLife(100000);
+
+    var s1 = Seed.fromValue(0xE7);
+    const phys_only = resolveAttack(&attacker, &bare, &s1, .{});
+
+    // Enchant-style +fire damage on the attacker; the defender has 0 fire resist.
+    attacker.set(.firemindam, 200);
+    attacker.set(.firemaxdam, 200);
+    var s2 = Seed.fromValue(0xE7);
+    const with_fire = resolveAttack(&attacker, &bare, &s2, .{});
+    try testing.expect(with_fire.hit and phys_only.hit);
+    try testing.expectEqual(@as(i32, 200), with_fire.elem_damage); // 200 fire, 0 resist
+    try testing.expect(with_fire.damage > phys_only.damage); // total went up by the fire
 }
 
 test "leech divides by the difficulty steal divisor (Hell is 1/3)" {
