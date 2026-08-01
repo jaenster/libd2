@@ -37,6 +37,12 @@ pub const Script = enum {
     /// Immobile emplacement: never walks — holds position and fires its MonStats skill at any enemy
     /// in range. Towers/turrets/hydras/totems/catapults/traps and static nests all sit on this script.
     stationary,
+    /// Resurrects the dead: scans for a nearby monster corpse and raises it (GreaterMummy @0x5f2b10,
+    /// MONSTERAI_FindMonsterToResurrect + cast Skill2 on it), then falls through to its attack/curse.
+    raiser,
+    /// Lays/spawns its own minion class up to a cap while still fighting (SandMaggot @0x5f1800 /
+    /// SandMaggotQueen @0x5f9cf0 — GetSpawnParameters + SpawnMonsterAtRoomPos, capped by aip1).
+    spawner,
     /// Non-combat: town folk and neutral critters with no aggression (Idle/None/Npc*/Towner/Vendor).
     /// The host runs no attack loop for these.
     passive,
@@ -49,6 +55,8 @@ pub const Script = enum {
         if (eq(name, "Fallen")) return .fallen;
         if (eq(name, "FallenShaman")) return .fallen_shaman;
         if (inAny(name, &.{ "QuillRat", "QuillMother", "SkeletonBow" })) return .ranged_kite;
+        if (eq(name, "GreaterMummy")) return .raiser;
+        if (inAny(name, &.{ "SandMaggot", "SandMaggotQueen" })) return .spawner;
         // Emplacements that never move — they must NOT charge like a generic monster.
         if (inAny(name, &.{
             "Hydra",          "ArcaneTower",   "DesertTurret", "Catapult",     "CatapultSpotter",
@@ -171,6 +179,12 @@ test "monai: Script.fromName classifies AI names case-insensitively" {
     try testing.expectEqual(Script.stationary, Script.fromName("Hydra"));
     try testing.expectEqual(Script.stationary, Script.fromName("Trap-Nova"));
     try testing.expectEqual(Script.stationary, Script.fromName("totem"));
+    // Raise-dead + spawner behaviors.
+    try testing.expectEqual(Script.raiser, Script.fromName("GreaterMummy"));
+    try testing.expectEqual(Script.spawner, Script.fromName("SandMaggotQueen"));
+    try testing.expectEqual(Script.spawner, Script.fromName("sandmaggot"));
+    // Summoner is a pure multi-skill caster (no summon/teleport) -> generic caster baseline.
+    try testing.expectEqual(Script.generic, Script.fromName("Summoner"));
     // Town / neutral NPCs have no combat AI.
     try testing.expectEqual(Script.passive, Script.fromName("Towner"));
     try testing.expectEqual(Script.passive, Script.fromName("Vendor"));

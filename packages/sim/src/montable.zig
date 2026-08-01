@@ -52,6 +52,12 @@ pub const MonCombat = struct {
     /// MonStats.aip1..aip8 — the eight per-AI tuning parameters, each a per-difficulty triple.
     /// Meaning is AI-script-specific (e.g. Fallen aip1 = flee/rally chance percent).
     ai_params: [8][3]i32 = .{.{ 0, 0, 0 }} ** 8,
+    /// MonStats.minion1 / minion2 resolved to class ids (-1 when the column is blank / unresolved).
+    /// The summon AIs (spawners, nests) create these classes; the raise AIs use them too.
+    minion: [2]i32 = .{ -1, -1 },
+    /// MonStats.spawn resolved to a class id (-1 when blank) — the class a spawner emits (e.g. the
+    /// SandMaggotQueen's larva), used when it summons via the spawn column rather than minion1/2.
+    spawn: i32 = -1,
 };
 
 /// Per-difficulty monster resistances (percent). Physical uses ResDm.
@@ -116,6 +122,20 @@ pub const Tables = struct {
         const mon = try gpa.alloc(MonCombat, count);
         errdefer gpa.free(mon);
 
+        // Id -> class-id (out index) map so minion1/minion2 name refs below resolve to class ids.
+        // Keys are slices into the MonStats buffer — valid until mt.deinit (end of load).
+        var id_index = std.StringHashMap(i32).init(gpa);
+        defer id_index.deinit();
+        {
+            var oi: usize = 0;
+            var r: usize = 0;
+            while (r < mt.rowCount()) : (r += 1) {
+                if (std.mem.eql(u8, mt.str(r, "Id"), "Expansion")) continue;
+                try id_index.put(mt.str(r, "Id"), @intCast(oi));
+                oi += 1;
+            }
+        }
+
         const triple = struct {
             fn f(t: *const txt.Table, row: usize, base: []const u8) [3]i32 {
                 var buf: [24]u8 = undefined;
@@ -145,6 +165,11 @@ pub const Tables = struct {
                     .ai_name = try gpa.dupe(u8, mt.str(r, "AI")),
                     .ai_delay = triple(&mt, r, "aidel"),
                     .ai_params = ai_params,
+                    .minion = .{
+                        id_index.get(mt.str(r, "minion1")) orelse -1,
+                        id_index.get(mt.str(r, "minion2")) orelse -1,
+                    },
+                    .spawn = id_index.get(mt.str(r, "spawn")) orelse -1,
                     .level = triple(&mt, r, "Level"),
                     .ac = triple(&mt, r, "AC"),
                     .a1_th = triple(&mt, r, "A1TH"),
@@ -308,6 +333,25 @@ test "montable: AI column plumbs MonStats.AI/aidel/aip verbatim (Fallen)" {
     try testing.expectEqual(@as(i32, 30), mc.ai_params[0][0]);
     try testing.expectEqual(@as(i32, 40), mc.ai_params[0][1]);
     try testing.expectEqual(@as(i32, 50), mc.ai_params[0][2]);
+}
+
+test "montable: minion/spawn columns resolve to class ids (FallenShaman -> fallen1=19)" {
+    var t = try Tables.load(testing.allocator);
+    defer t.deinit();
+    var found = false;
+    for (t.mon) |mc| {
+        if (std.ascii.eqlIgnoreCase(mc.ai_name, "FallenShaman")) {
+            // minion1 = "fallen1"; resolve it and confirm the referenced class is itself a Fallen.
+            try testing.expect(mc.minion[0] >= 0 and mc.minion[0] < @as(i32, @intCast(t.mon.len)));
+            try testing.expectEqualStrings("Fallen", t.mon[@intCast(mc.minion[0])].ai_name);
+            found = true;
+        }
+        // A spawner's `spawn` column (e.g. sandmaggot2 -> maggotegg2) resolves to a real class.
+        if (std.ascii.eqlIgnoreCase(mc.ai_name, "SandMaggot") and mc.spawn >= 0) {
+            try testing.expect(mc.spawn < @as(i32, @intCast(t.mon.len)));
+        }
+    }
+    try testing.expect(found);
 }
 
 test "montable: noRatio monster uses raw MonStats (no MonLvl multiplier)" {
