@@ -185,6 +185,21 @@ pub const Missile = struct {
     /// first monster collision `applyElementalHitVs` resolves it against THAT victim's resist. Set
     /// (with `caster_derived`) for elemental bolts; null for flat-damage missiles.
     elem_cast: ?spell.Cast = null,
+    /// HOMING (Guided Arrow / Bone Spirit, missile pSrvDoFunc 7): the host re-aims this toward the
+    /// nearest valid target every few frames while it is in range (Missiles_SrvDoFunc_007). `reaim`
+    /// recomputes the velocity toward a point at the current speed; the host owns target selection.
+    homing: bool = false,
+
+    /// Re-point the velocity toward (tx,ty) at the current speed — the homing step (Guided Arrow).
+    pub fn reaim(self: *Missile, tx: i32, ty: i32) void {
+        const dx = tx - self.x;
+        const dy = ty - self.y;
+        if (dx == 0 and dy == 0) return;
+        const len = std.math.sqrt(@as(f64, @floatFromInt(dx * dx + dy * dy)));
+        const fv: f64 = @floatFromInt(@max(1, self.vel));
+        self.vx = @intFromFloat(@round(@as(f64, @floatFromInt(dx)) / len * fv));
+        self.vy = @intFromFloat(@round(@as(f64, @floatFromInt(dy)) / len * fv));
+    }
 
     /// MISSILE_InitMissileUnit @0x4cd0a0 / MISSILE_CreateFromUnitWithOffset @0x4cdc30:
     /// spawn `data` from (sx,sy) with velocity aimed at (tx,ty). A zero-length aim
