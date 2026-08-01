@@ -43,7 +43,53 @@ pub fn isLiveMonster(u: *const Unit) bool {
     return u.unit_type == .monster and u.isAlive();
 }
 
+/// Predicate: a live HOSTILE monster (no owner) — a pet's attack target. Excludes summoned minions.
+pub fn isHostileMonster(u: *const Unit) bool {
+    return u.unit_type == .monster and u.isAlive() and u.owner_id == unit.NO_OWNER;
+}
+
+/// Predicate: a live summoned PET (a monster carrying an owner). Excluded from a player's own attacks.
+pub fn isPet(u: *const Unit) bool {
+    return u.unit_type == .monster and u.isAlive() and u.owner_id != unit.NO_OWNER;
+}
+
+/// Predicate: anything a HOSTILE monster may attack — a live player OR a summoned pet. Lets monster
+/// AI go after skeletons/golems/valkyries standing between it and the player, not only the player.
+pub fn isMonsterEnemy(u: *const Unit) bool {
+    return isLivePlayer(u) or isPet(u);
+}
+
 const testing = std.testing;
+
+test "owner_id tells friend from foe: hostile-monster / pet / monster-enemy predicates" {
+    var enemy = Unit.init(.monster); // owner_id defaults to NO_OWNER => hostile
+    var pet = Unit.init(.monster);
+    pet.owner_id = 42; // a summoner's minion
+    var player = Unit.init(.player);
+    inline for (.{ &enemy, &pet, &player }) |u| {
+        u.set(.maxhp, 10);
+        u.setLife(10);
+    }
+
+    // A pet's attack target = a hostile monster only (never the player, never another pet).
+    try testing.expect(isHostileMonster(&enemy));
+    try testing.expect(!isHostileMonster(&pet));
+    try testing.expect(!isHostileMonster(&player));
+
+    try testing.expect(isPet(&pet));
+    try testing.expect(!isPet(&enemy));
+    try testing.expect(!isPet(&player));
+
+    // A hostile monster's target = the player OR a pet, but not another hostile monster.
+    try testing.expect(isMonsterEnemy(&player));
+    try testing.expect(isMonsterEnemy(&pet));
+    try testing.expect(!isMonsterEnemy(&enemy));
+
+    // A dead pet is neither a valid target nor counted as a pet.
+    pet.setLife(0);
+    try testing.expect(!isPet(&pet));
+    try testing.expect(!isMonsterEnemy(&pet));
+}
 
 const SliceIter = struct {
     items: []Unit,
