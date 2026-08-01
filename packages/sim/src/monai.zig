@@ -17,17 +17,32 @@ const rng = @import("rng.zig");
 
 pub const Seed = rng.Seed;
 
-/// AI-script identity parsed from MonStats.AI. Only scripts with a faithful port here are named;
-/// every other AI column maps to `.generic`, and the host runs its baseline approach/attack/cast
-/// loop for those until they too are ported.
+/// AI-script identity parsed from MonStats.AI, collapsed to the BEHAVIOR class the host applies.
+///
+/// `.generic` is not "unhandled" — it is the deliberate mapping for the many AI scripts whose
+/// observable behavior (walk toward the target, melee/cast when in range, pace when idle) the host's
+/// baseline `decideMonster` loop already reproduces faithfully. RE'd and confirmed equivalent so far:
+/// Skeleton (@0x5efcf0), Zombie (@0x5efe20), Goatman (@0x5f12a0), Brute (@0x5efb80, its HP-scaled
+/// "mode 7" is walk-to-unit/approach, not a flee), CorruptRogue (@0x5f0b00). Scripts get their own
+/// class here only when they add behavior the baseline lacks.
 pub const Script = enum {
+    /// AI_Function1_Fallen @0x5f02c0 — scatter from a fellow monster's corpse.
     fallen,
+    /// AI_Function1_FallenShaman @0x5f1440 — flee / summon / revive dead fallen / bolt.
     fallen_shaman,
+    /// Skittish ranged: keep distance and shoot rather than close to melee. The binary repositions
+    /// (QuillRat WalkRandomOffset when in-range @0x5f1140 / QuillMother @0x5fb2a0) or back-pedals
+    /// (SkeletonBow retreat @0x5f6070) once the target is close; all lob their ranged Skill from afar.
+    ranged_kite,
+    /// Approach + melee/cast — the host baseline is faithful; see the type doc for the RE'd list.
     generic,
 
     pub fn fromName(name: []const u8) Script {
         if (std.ascii.eqlIgnoreCase(name, "Fallen")) return .fallen;
         if (std.ascii.eqlIgnoreCase(name, "FallenShaman")) return .fallen_shaman;
+        if (std.ascii.eqlIgnoreCase(name, "QuillRat")) return .ranged_kite;
+        if (std.ascii.eqlIgnoreCase(name, "QuillMother")) return .ranged_kite;
+        if (std.ascii.eqlIgnoreCase(name, "SkeletonBow")) return .ranged_kite;
         return .generic;
     }
 };
@@ -113,11 +128,16 @@ inline fn roll100(seed: *Seed) i32 {
 
 const testing = std.testing;
 
-test "monai: Script.fromName maps the fallen family case-insensitively" {
+test "monai: Script.fromName classifies AI names case-insensitively" {
     try testing.expectEqual(Script.fallen, Script.fromName("Fallen"));
     try testing.expectEqual(Script.fallen, Script.fromName("fallen"));
     try testing.expectEqual(Script.fallen_shaman, Script.fromName("FallenShaman"));
+    try testing.expectEqual(Script.ranged_kite, Script.fromName("QuillRat"));
+    try testing.expectEqual(Script.ranged_kite, Script.fromName("quillmother"));
+    try testing.expectEqual(Script.ranged_kite, Script.fromName("SkeletonBow"));
+    // Plain approach-melee scripts intentionally fall to the faithful generic baseline.
     try testing.expectEqual(Script.generic, Script.fromName("Skeleton"));
+    try testing.expectEqual(Script.generic, Script.fromName("Zombie"));
     try testing.expectEqual(Script.generic, Script.fromName(""));
 }
 
