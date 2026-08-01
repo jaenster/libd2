@@ -725,6 +725,35 @@ pub fn castDirectAreaElemental(skills: *const Skills, book: SkillBook, skill_id:
     return hits;
 }
 
+/// Number of times a MULTI-HIT melee skill strikes: for the multi-hit do-functions (srvdofunc 12
+/// Strafe, 13 Fend/Zeal) the strike count is the skill's calc1 — a calc the VM evaluates (Zeal
+/// min(par5+lvl-1,par6) = min(lvl+1,5) => 2 hits @slvl1 up to 5; Strafe min(par3+lvl-1,par4) =
+/// min(lvl+3,10)). Any other skill is a single strike (1).
+pub fn meleeHitCount(skills: *const Skills, book: SkillBook, skill_id: u16, level: i32) i32 {
+    const sd = skills.byId(skill_id) orelse return 1;
+    if (sd.srvdofunc != 12 and sd.srvdofunc != 13) return 1;
+    return @max(1, skills.evalCalc(book, 0, skill_id, level, "calc1"));
+}
+
+pub const MultiMeleeResult = struct { hits: i32 = 0, landed: i32 = 0, total_damage: i32 = 0 };
+
+/// Resolve a (possibly multi-hit) melee skill: strike `meleeHitCount` times, each a full to-hit +
+/// damage roll vs `defender` through the combat core; sum the damage that landed. Pure — returns the
+/// total for the host to apply. Zeal/Strafe/Fend hit several times; a normal Attack hits once.
+pub fn resolveMeleeSkill(skills: *const Skills, book: SkillBook, attacker: *const Unit, defender: *const Unit, skill_id: u16, level: i32, seed: *Seed) MultiMeleeResult {
+    const n = meleeHitCount(skills, book, skill_id, level);
+    var out = MultiMeleeResult{ .hits = n };
+    var i: i32 = 0;
+    while (i < n) : (i += 1) {
+        const r = combat.resolveAttack(attacker, defender, seed, .{});
+        if (r.hit) {
+            out.landed += 1;
+            out.total_damage += r.damage;
+        }
+    }
+    return out;
+}
+
 /// Static Field (Skills_SrvDoFunc_020_Static @0x5c9800): reduce the target's CURRENT life by its
 /// `calc1` percent (par4 = 25 in 1.14d), dealt as LIGHTNING damage (the target's lightning resist
 /// reduces it). It CANNOT take a monster below the difficulty's StaticFieldMin fraction of max life —
@@ -995,6 +1024,34 @@ test "castDirectElemental resolves a direct (missile-less) elemental skill vs a 
     try testing.expectEqual(@divTrunc(hit.raw * 50, 100), hit.applied); // 50% resisted
     applyElementalHit(hit, &mob);
     try testing.expectEqual(10000 - hit.applied, mob.life());
+}
+
+test "multi-hit melee: Zeal/Strafe strike count is calc1 (a calc); a normal Attack hits once" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var book = SkillBook{};
+    book.setByName(&s, "Zeal", 1);
+    book.setByName(&s, "Strafe", 1);
+
+    const zeal = s.idByName("Zeal").?;
+    try testing.expectEqual(@as(i32, 2), meleeHitCount(&s, book, zeal, 1)); // min(1+1,5)
+    try testing.expectEqual(@as(i32, 5), meleeHitCount(&s, book, zeal, 10)); // capped at par6=5
+    try testing.expectEqual(@as(i32, 4), meleeHitCount(&s, book, s.idByName("Strafe").?, 1)); // min(1+3,10)
+    try testing.expectEqual(@as(i32, 1), meleeHitCount(&s, book, s.idByName("Attack").?, 1)); // single
+
+    // A Zeal actually resolves as multiple strikes vs a defender.
+    var atk = Unit.init(.player);
+    atk.set(.level, 30);
+    atk.set(.dexterity, 200);
+    atk.set(.tohit, 100000);
+    atk.weapon = .{ .min_damage = 20, .max_damage = 20 };
+    var def = Unit.init(.monster);
+    def.set(.level, 1);
+    def.setLife(100000);
+    var seed = Seed.fromValue(1);
+    const r = resolveMeleeSkill(&s, book, &atk, &def, zeal, 1, &seed);
+    try testing.expectEqual(@as(i32, 2), r.hits); // 2 strikes
+    try testing.expect(r.landed >= 1 and r.total_damage > 0);
 }
 
 test "Corpse Explosion: 70-120% of corpse life, scaled by caster/corpse level" {

@@ -73,7 +73,10 @@ pub fn Evaluator(comptime Ctx: type) type {
             level: i32,
 
             fn skipWs(p: *Parser) void {
-                while (p.i < p.src.len and (p.src[p.i] == ' ' or p.src[p.i] == '\t')) p.i += 1;
+                // The D2 tokenizer (SKILLS_ParseSkillDescription) skips whitespace AND double-quote
+                // chars — calc cells with a comma are quoted in the .txt ("min(a,b)"), and the quotes
+                // are not part of the expression.
+                while (p.i < p.src.len and (p.src[p.i] == ' ' or p.src[p.i] == '\t' or p.src[p.i] == '"')) p.i += 1;
             }
             fn peek(p: *Parser) u8 {
                 return if (p.i < p.src.len) p.src[p.i] else 0;
