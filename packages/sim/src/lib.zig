@@ -24,6 +24,7 @@ pub const monskill = @import("monskill.zig");
 pub const missile = @import("missile.zig");
 pub const select = @import("select.zig");
 pub const ai = @import("ai.zig");
+pub const monai = @import("monai.zig");
 pub const character = @import("character.zig");
 pub const derive = @import("derive.zig");
 pub const difficulty = @import("difficulty.zig");
@@ -88,6 +89,7 @@ test {
     _ = missile;
     _ = select;
     _ = ai;
+    _ = monai;
     _ = character;
     _ = derive;
     _ = difficulty;
