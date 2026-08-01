@@ -30,6 +30,9 @@ pub const difficulty = @import("difficulty.zig");
 pub const calc = @import("calc.zig");
 pub const buff = @import("buff.zig");
 pub const net = @import("net/net.zig");
+pub const skills_barbarian = @import("skills_barbarian.zig");
+pub const skills_amazon = @import("skills_amazon.zig");
+pub const skills_druid = @import("skills_druid.zig");
 
 pub const Seed = rng.Seed;
 pub const Stat = stat.Stat;
@@ -86,4 +89,7 @@ test {
     _ = calc;
     _ = buff;
     _ = net;
+    _ = skills_barbarian;
+    _ = skills_amazon;
+    _ = skills_druid;
 }
