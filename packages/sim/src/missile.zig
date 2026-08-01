@@ -283,12 +283,22 @@ pub fn find(missiles: []Missile, guid: u32) ?*Missile {
 /// host's `applyHit` seam moved into d2-sim: the elemental cast + resist math lives here, the host
 /// only owns unit storage + the seed. Mirrors skill.resolveElementalVsUnit + applyElementalHit
 /// (kept inline here to avoid a missile<->skill import cycle).
-pub fn applyElementalHitVs(m: *const Missile, victim: *Unit, seed: *Seed) void {
-    const cast = m.elem_cast orelse return;
+/// The resolved elemental hit a caster-derived missile deals to `victim` — computed but NOT applied,
+/// so the host can apply it instant (most elements) or spread it as a DoT (poison). Consumes one RNG
+/// step (the damage roll). Null if the missile carries no cast. `e_len` is the poison length in frames.
+pub const MissileHit = struct { element: spell.Element, applied: i32, e_len: i32 };
+
+pub fn elementalHitVs(m: *const Missile, victim: *const Unit, seed: *Seed) ?MissileHit {
+    const cast = m.elem_cast orelse return null;
     const raw = cast.roll(seed);
     const target_resist = spell.ResistProfile.fromUnit(victim, cast.dmg.etype).percent;
     const applied = spell.applyResist(raw, target_resist - cast.pierce_percent);
-    if (applied > 0) combat.applyToLife(victim, applied);
+    return .{ .element = cast.dmg.etype, .applied = applied, .e_len = cast.e_len };
+}
+
+pub fn applyElementalHitVs(m: *const Missile, victim: *Unit, seed: *Seed) void {
+    const h = elementalHitVs(m, victim, seed) orelse return;
+    if (h.applied > 0) combat.applyToLife(victim, h.applied);
 }
 
 /// Advance every missile one tick over the host's slice. For each missile, `ctx.target(m)`

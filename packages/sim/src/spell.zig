@@ -153,6 +153,9 @@ pub const Cast = struct {
     dmg: ElementalDamage,
     /// Effective skill level: hard points + +skills from items (SKILLS_GetSkillLevel).
     skill_level: i32,
+    /// Skills.txt ELen — the poison/effect duration in frames, carried so a poison missile can spread
+    /// its resisted total as a DoT over this length at hit time (0 => instant / non-poison).
+    e_len: i32 = 0,
     /// Synergy contributors for this skill (empty => none). Borrowed — valid only while the
     /// caller's backing array is alive. `seal` copies these inline so the Cast can outlive it
     /// (e.g. carried on a Missile as `elem_cast`); `damage` sums the slice AND the inline store.
