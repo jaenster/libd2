@@ -13,6 +13,23 @@ const Unit = @import("unit.zig").Unit;
 const skillmod = @import("skill.zig");
 const d2data = @import("d2-data");
 
+/// Owns the ItemStatCost table a BuffList needs, so a host can drive buffs without importing d2-data.
+/// Load once, keep on the game instance, deinit at teardown.
+pub const BuffContext = struct {
+    isc: d2data.Table,
+
+    pub fn load(gpa: std.mem.Allocator) !BuffContext {
+        return .{ .isc = try d2data.open(gpa, "ItemStatCost") };
+    }
+    pub fn deinit(self: *BuffContext) void {
+        self.isc.deinit();
+    }
+    /// Cast a timed buff on `u`, deriving its duration from the skill (see BuffList.applySkill).
+    pub fn cast(self: *const BuffContext, list: *BuffList, u: *Unit, skills: *const skillmod.Skills, book: skillmod.SkillBook, skill_id: u16, level: i32) void {
+        list.applySkill(u, skills, &self.isc, book, skill_id, level);
+    }
+};
+
 pub const MAX_BUFF_STATS = 8; // aurastat1..6 + headroom
 pub const MAX_BUFFS = 16; // distinct simultaneous buffs on one unit
 
