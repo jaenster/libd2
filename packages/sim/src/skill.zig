@@ -27,6 +27,7 @@ const missile = @import("missile.zig");
 const spell = @import("spell.zig");
 const calc = @import("calc.zig");
 const monskill = @import("monskill.zig");
+const difficulty = @import("difficulty.zig");
 const d2data = @import("d2-data");
 
 const Seed = rng.Seed;
@@ -724,6 +725,40 @@ pub fn castDirectAreaElemental(skills: *const Skills, book: SkillBook, skill_id:
     return hits;
 }
 
+/// Static Field (Skills_SrvDoFunc_020_Static @0x5c9800): reduce the target's CURRENT life by its
+/// `calc1` percent (par4 = 25 in 1.14d), dealt as LIGHTNING damage (the target's lightning resist
+/// reduces it). It CANNOT take a monster below the difficulty's StaticFieldMin fraction of max life —
+/// Normal 0 / Nightmare 33% / Hell 50%, read table-driven from DifficultyLevels.txt (this is why
+/// Static Field is far weaker in Hell). Applies + returns the damage dealt; no RNG (exact percentage).
+/// The engine applies this as an AREA effect — use castStaticFieldArea for the AoE sweep.
+pub fn staticField(skills: *const Skills, book: SkillBook, target: *Unit, level: i32, diff: difficulty.Difficulty) i32 {
+    const sf = skills.idByName("Static Field") orelse return 0;
+    const pct = skills.evalCalc(book, 0, sf, level, "calc1"); // par4 = % of current life
+    const cur = target.life();
+    var dmg = spell.applyResist(@intCast(@divTrunc(@as(i64, cur) * pct, 100)), target.get(.lightresist));
+    // StaticFieldMin: never reduce a monster below this fraction of its max life (per difficulty).
+    const floor = @divTrunc(target.get(.maxhp) * difficulty.staticFieldMin(diff), 100);
+    if (cur - dmg < floor) dmg = @max(0, cur - floor);
+    combat.applyToLife(target, dmg);
+    return dmg;
+}
+
+/// Static Field's AREA sweep: apply staticField to every unit within `radius` subtiles of the cast
+/// point (the engine's SKILLS_ApplyAreaEffect). The host supplies the candidate units + radius.
+pub fn castStaticFieldArea(skills: *const Skills, book: SkillBook, level: i32, cx: i32, cy: i32, radius: i32, diff: difficulty.Difficulty, targets: []const *Unit) usize {
+    const r2: i64 = @as(i64, radius) * radius;
+    var n: usize = 0;
+    for (targets) |t| {
+        if (!t.isAlive()) continue;
+        const dx: i64 = t.x - cx;
+        const dy: i64 = t.y - cy;
+        if (dx * dx + dy * dy > r2) continue;
+        _ = staticField(skills, book, t, level, diff);
+        n += 1;
+    }
+    return n;
+}
+
 /// A monster's castable skills, resolved from its MonStats Skill1..8 assignments to Skills.txt ids
 /// + a SkillBook carrying their levels — so monster casts flow through the SAME table-driven path as
 /// players (castElemental / cast / castDirectElemental). Built by `resolveMonsterCaster`.
@@ -938,6 +973,44 @@ test "castDirectElemental resolves a direct (missile-less) elemental skill vs a 
     try testing.expectEqual(@divTrunc(hit.raw * 50, 100), hit.applied); // 50% resisted
     applyElementalHit(hit, &mob);
     try testing.expectEqual(10000 - hit.applied, mob.life());
+}
+
+test "Static Field reduces current life by calc1% as lightning (resist + difficulty floor)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var book = SkillBook{};
+    book.setByName(&s, "Static Field", 10);
+
+    // NORMAL (StaticFieldMin 0): 25% of 1000 = 250 -> life 750, no floor.
+    var a = Unit.init(.monster);
+    a.set(.maxhp, 1000);
+    a.setLife(1000);
+    try testing.expectEqual(@as(i32, 250), staticField(&s, book, &a, 10, .normal));
+    try testing.expectEqual(@as(i32, 750), a.life());
+
+    // 50% lightning resist halves it: 125.
+    var b = Unit.init(.monster);
+    b.set(.maxhp, 1000);
+    b.setLife(1000);
+    b.set(.lightresist, 50);
+    try testing.expectEqual(@as(i32, 125), staticField(&s, book, &b, 10, .normal));
+
+    // HELL (StaticFieldMin 50): a monster at 600/1000 can only drop to 500 (100 dmg, not 150) — this
+    // is why Static Field barely dents Hell monsters.
+    var c = Unit.init(.monster);
+    c.set(.maxhp, 1000);
+    c.setLife(600);
+    try testing.expectEqual(@as(i32, 100), staticField(&s, book, &c, 10, .hell));
+    try testing.expectEqual(@as(i32, 500), c.life());
+    // A Hell monster already at/below the floor takes nothing more.
+    try testing.expectEqual(@as(i32, 0), staticField(&s, book, &c, 10, .hell));
+
+    // NIGHTMARE floor is 33%: a monster at 1000 -> 750 (25%), still above 330, fine.
+    var d = Unit.init(.monster);
+    d.set(.maxhp, 1000);
+    d.setLife(400);
+    // 25% of 400 = 100 -> 300, but NM floor 330 -> only 70 dmg.
+    try testing.expectEqual(@as(i32, 70), staticField(&s, book, &d, 10, .nightmare));
 }
 
 test "castDirectAreaElemental hits every unit in the ring, spares those outside it" {
