@@ -788,6 +788,52 @@ pub fn castRadialMissiles(
     return n;
 }
 
+/// Cast a MISSILE FAN (srvdofunc 8: Multiple Shot / Teeth — N projectiles spread toward the target).
+/// Faithful to Skills_SrvDoFunc_008_StrafeMissileSpread: `count` (= the skill's calc1) missiles of the
+/// skill's `srvmissilea`, aimed at points spread PERPENDICULAR to the caster->target direction so they
+/// fan out toward the target, each carrying `elem_cast`. `spacing` is the perpendicular step between
+/// adjacent aim points (the exact engine value lives in SKILLS_NormalizeDirectionPerp geometry, not a
+/// column — the caller passes a documented approximation). Fills `out`, returns how many were written.
+pub fn castSpreadMissiles(
+    skills: *const Skills,
+    missiles: *const missile.Missiles,
+    caster_id: u32,
+    skill_id: u16,
+    sx: i32,
+    sy: i32,
+    tx: i32,
+    ty: i32,
+    count: usize,
+    spacing: i32,
+    elem_cast: spell.Cast,
+    out: []missile.Missile,
+) usize {
+    const row = skills.rowById(skill_id) orelse return 0;
+    const md = missiles.byName(skills.table.get(row, "srvmissilea")) orelse return 0;
+    const n = @min(count, out.len);
+    const dx: f64 = @floatFromInt(tx - sx);
+    const dy: f64 = @floatFromInt(ty - sy);
+    const len = @sqrt(dx * dx + dy * dy);
+    // Perpendicular unit vector to the aim direction (fallback to the x-axis if source == target).
+    const px: f64 = if (len > 0) -dy / len else 0;
+    const py: f64 = if (len > 0) dx / len else 1;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const off: f64 = (@as(f64, @floatFromInt(i)) - @as(f64, @floatFromInt(n - 1)) / 2.0) * @as(f64, @floatFromInt(spacing));
+        const ax = tx + @as(i32, @intFromFloat(@round(px * off)));
+        const ay = ty + @as(i32, @intFromFloat(@round(py * off)));
+        // Elemental fan (Teeth = magic): the missile is caster-derived and resolves its element per
+        // victim. Physical fan (Multiple Shot arrows): a flat missile carrying the srvmissilea damage.
+        var m = missile.Missile.create(md, caster_id, sx, sy, ax, ay, md.min_damage, md.max_damage);
+        if (elem_cast.dmg.etype != .none) {
+            m.caster_derived = true;
+            m.elem_cast = elem_cast.seal();
+        }
+        out[i] = m;
+    }
+    return n;
+}
+
 /// Number of times a MULTI-HIT melee skill strikes: for the multi-hit do-functions (srvdofunc 12
 /// Strafe, 13 Fend/Zeal) the strike count is the skill's calc1 — a calc the VM evaluates (Zeal
 /// min(par5+lvl-1,par6) = min(lvl+1,5) => 2 hits @slvl1 up to 5; Strafe min(par3+lvl-1,par4) =
