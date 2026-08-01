@@ -1044,10 +1044,31 @@ pub fn monClassByName(gpa: std.mem.Allocator, name: []const u8) ?u16 {
     if (name.len == 0) return null;
     var mt = d2data.open(gpa, "MonStats") catch return null;
     defer mt.deinit();
-    // Case-insensitive: the summon column casing (ClayGolem) can differ from the MonStats Id
-    // (claygolem), so match ignoring case.
+    // Return the ENGINE class id (the "Expansion" divider row removed, matching monpop/montable and
+    // pTxtMonStats) so the resolved id lines up with buildMonsterUnit — not the raw file row. Post-
+    // divider summons (valkyrie/shadow/druid pets, all expansion monsters) were otherwise off by one.
+    // Case-insensitive: the summon column casing (ClayGolem) can differ from the Id (claygolem).
+    var class_id: u16 = 0;
     for (0..mt.rowCount()) |r| {
-        if (std.ascii.eqlIgnoreCase(mt.get(r, "Id"), name)) return @intCast(r);
+        const id = mt.get(r, "Id");
+        if (std.ascii.eqlIgnoreCase(id, "Expansion")) continue;
+        if (std.ascii.eqlIgnoreCase(id, name)) return class_id;
+        class_id += 1;
+    }
+    return null;
+}
+
+/// Translate an engine class id (MonStats "Expansion" divider REMOVED — the convention monpop, montable
+/// and the engine's pTxtMonStats use) into the raw MonStats.txt row (the file still holds the divider).
+/// Without this, skills for class ids at/past the divider (410 = the Act5/expansion monsters, incl the
+/// act bosses) were read one row high. Returns null when class_id is past the last monster.
+fn rawRowForClassId(mt: anytype, class_id: u16) ?usize {
+    var removed: u16 = 0;
+    var r: usize = 0;
+    while (r < mt.rowCount()) : (r += 1) {
+        if (std.ascii.eqlIgnoreCase(mt.get(r, "Id"), "Expansion")) continue;
+        if (removed == class_id) return r;
+        removed += 1;
     }
     return null;
 }
@@ -1059,9 +1080,10 @@ pub fn monClassByName(gpa: std.mem.Allocator, name: []const u8) ?u16 {
 pub fn casterForClass(gpa: std.mem.Allocator, skills: *const Skills, class_id: u16) MonsterCaster {
     var mt = d2data.open(gpa, "MonStats") catch return .{};
     defer mt.deinit();
-    if (class_id >= mt.rowCount()) return .{};
+    // class_id is an engine (Expansion-removed) id; map it to the raw MonStats row before reading skills.
+    const raw = rawRowForClassId(&mt, class_id) orelse return .{};
     var buf: [monskill.MAX_SKILLS]monskill.MonSkill = undefined;
-    const n = monskill.read(&mt, class_id, &buf);
+    const n = monskill.read(&mt, raw, &buf);
     return resolveMonsterCaster(skills, buf[0..n]);
 }
 
@@ -1708,6 +1730,14 @@ test "summonInfo: summon monster + pet count from the table (petmax is a ternary
     try testing.expect(monClassByName(testing.allocator, rsi.monster) != null);
     try testing.expect(monClassByName(testing.allocator, s.summonInfo(cg, 1).monster) != null);
     try testing.expectEqual(@as(?u16, null), monClassByName(testing.allocator, "nosuchmonster_zzz"));
+}
+
+test "monClassByName: engine (Expansion-removed) class ids, not raw file rows" {
+    // Monsters past the "Expansion" divider (raw row 410) must resolve to the divider-removed id
+    // (raw - 1) so they line up with monpop/montable/buildMonsterUnit. baalcrab raw 545 -> 544,
+    // baalclone raw 571 -> 570. A wrong (raw) id here summoned/statted the neighbouring monster.
+    try testing.expectEqual(@as(?u16, 544), monClassByName(testing.allocator, "baalcrab"));
+    try testing.expectEqual(@as(?u16, 570), monClassByName(testing.allocator, "baalclone"));
 }
 
 test "auraValue: aura skills grant their stat, valued by the calc VM (Might/Defiance/Blessed Aim)" {
