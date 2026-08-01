@@ -421,6 +421,18 @@ pub fn leech(damage: i32, leech_pct: i32, divisor: i32) i32 {
     return @intCast(@divTrunc(@divTrunc(@as(i64, damage) * leech_pct, 100), divisor));
 }
 
+/// Physical damage RETURNED to a melee attacker when it hits `defender`: a flat
+/// item_attackertakesdamage(78) part (Iron Maiden curse / gear) plus thorns_percent(131) of the
+/// physical damage the attacker just dealt (Thorns aura). The host applies the result to the ATTACKER
+/// on a melee hit (ranged/spell attackers are unaffected — that's the caller's gate). 0 => no return.
+pub fn thornsReturn(defender: *const Unit, physical_damage_dealt: i32) i32 {
+    const flat = defender.get(.item_attackertakesdamage);
+    const pct = defender.get(.thorns_percent);
+    var ret = flat;
+    if (pct > 0 and physical_damage_dealt > 0) ret += @intCast(@divTrunc(@as(i64, physical_damage_dealt) * pct, 100));
+    return @max(0, ret);
+}
+
 pub fn applyToLife(u: *Unit, damage: i32) void {
     var hp = u.life() - damage;
     if (hp < 0) hp = 0;
@@ -583,6 +595,19 @@ test "attackAndApply clamps a lethal blow to zero life, never negative" {
     const res = attackAndApply(&attacker, &defender, &seed, .{});
     try testing.expect(defender.life() >= 0);
     if (res.hit) try testing.expectEqual(@as(i32, 0), defender.life());
+}
+
+test "thorns/Iron Maiden return physical damage to a melee attacker" {
+    const testing = std.testing;
+    var defender = Unit.init(.player);
+    // No thorns yet -> nothing returned.
+    try testing.expectEqual(@as(i32, 0), thornsReturn(&defender, 300));
+    // Thorns aura: 250% of the 300 physical dealt = 750 back to the attacker.
+    defender.set(.thorns_percent, 250);
+    try testing.expectEqual(@as(i32, 750), thornsReturn(&defender, 300));
+    // Iron Maiden / gear flat return adds on top.
+    defender.set(.item_attackertakesdamage, 50);
+    try testing.expectEqual(@as(i32, 800), thornsReturn(&defender, 300));
 }
 
 test "on-hit elemental from stats adds to a physical hit (Enchant fire damage)" {

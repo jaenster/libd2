@@ -81,6 +81,8 @@ pub const Stat = enum(u16) {
     hpregen = 74, // ItemStatCost hpregen — per-frame life-regen delta (engine keeps it <<8)
     item_normaldamage = 111, // flat physical damage add (both min and max)
     item_tohit_percent = 119, // +% attack rating
+    item_attackertakesdamage = 78, // flat physical returned to a melee attacker (Iron Maiden / gear)
+    thorns_percent = 131, // % of the attacker's physical damage returned (Thorns aura)
     skill_armor_percent = 171, // +% defense from a skill (Defiance / Iron Skin) — GetDefense reads it
     // Sorceress element-mastery passives (+% element damage). ItemStatCost ids 329-331.
     passive_fire_mastery = 329,
