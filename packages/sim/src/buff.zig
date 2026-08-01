@@ -92,6 +92,18 @@ pub const BuffList = struct {
     }
 };
 
+/// Whether a skill is a TIMED self/party buff — a state that grants stats for a finite length — as
+/// opposed to a permanent aura, an instant cast, or a passive. True when it has an `aurastate`, a
+/// non-empty `auralencalc` (finite duration) and at least one `aurastat`. Drive these with applySkill;
+/// masteries/permanent passives use skill.applyPassives instead. Covers Enchant, Frozen/Shiver/
+/// Chilling Armor, Holy Shield, the warcries (BO/Shout/Battle Command), Enchant, etc. across classes.
+pub fn isTimedBuff(skills: *const skillmod.Skills, skill_id: u16) bool {
+    const row = skills.rowById(skill_id) orelse return false;
+    if (skills.table.get(row, "aurastate").len == 0) return false;
+    if (skills.table.get(row, "auralencalc").len == 0) return false;
+    return skills.table.get(row, "aurastat1").len != 0;
+}
+
 /// A timed buff's duration in FRAMES (D2 aura length is 1/25s frames) for (skill, level), from the
 /// skill's `auralencalc` — Battle Orders ln12 + synergy off Shout/Battle Command (BO slvl1 = 750 +
 /// 1*250 = 1000 frames = 40s, growing per level). `book` supplies the synergy skill levels. 0 for a
@@ -148,6 +160,38 @@ test "a buff grants its stats, refreshes without double-stacking, and expires" {
     bl.tick(&u, 60);
     try testing.expect(!bl.isActive(bo)); // expired
     try testing.expectEqual(@as(i32, 0), u.stats.get(@enumFromInt(hpid))); // stat gone
+}
+
+test "the timed-buff category works across classes via applySkill (Enchant/Frozen Armor/Holy Shield/Shout)" {
+    var s = try skillmod.Skills.load(testing.allocator);
+    defer s.deinit();
+    var isc = try d2data.open(testing.allocator, "ItemStatCost");
+    defer isc.deinit();
+
+    // Each is a timed buff granting a stat that BuffList applies + expires — one generic path.
+    const cases = .{
+        .{ "Enchant", "firemindam" }, // Sorceress: +fire damage to attacks
+        .{ "Frozen Armor", "skill_armor_percent" }, // Sorceress: +defense
+        .{ "Holy Shield", "toblock" }, // Paladin: +block%
+        .{ "Shout", "skill_armor_percent" }, // Barbarian: +defense
+    };
+    inline for (cases) |c| {
+        const id = s.idByName(c[0]).?;
+        try testing.expect(isTimedBuff(&s, id));
+        var u = Unit.init(.player);
+        var bl = BuffList{};
+        var book = skillmod.SkillBook{};
+        book.setByName(&s, c[0], 10);
+        bl.applySkill(&u, &s, &isc, book, id, 10);
+        const sid: u16 = skillmod.statIdByName(&isc, c[1]).?;
+        try testing.expect(u.stats.get(@enumFromInt(sid)) > 0); // buff granted its stat
+        try testing.expect(bl.isActive(id));
+        bl.tick(&u, 1_000_000); // long past any duration
+        try testing.expect(!bl.isActive(id)); // expired
+        try testing.expectEqual(@as(i32, 0), u.stats.get(@enumFromInt(sid))); // stat removed
+    }
+    // An instant skill (Ice Bolt) is NOT a timed buff.
+    try testing.expect(!isTimedBuff(&s, s.idByName("Ice Bolt").?));
 }
 
 test "buff duration is table-driven from auralencalc (Battle Orders slvl1 = 1000 frames)" {
