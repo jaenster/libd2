@@ -743,6 +743,28 @@ pub fn staticField(skills: *const Skills, book: SkillBook, target: *Unit, level:
     return dmg;
 }
 
+/// Corpse Explosion damage (Skills_SrvDoFunc_055_CorpseExplosion @0x...): a roll in [calc1%, calc2%]
+/// (par1=70 .. par2=120 in 1.14d) of the CORPSE's max life, then scaled DOWN by caster_level/
+/// corpse_level when the caster is LOWER level than the corpse (so exploding a high-level corpse as a
+/// low-level necro is weaker). The engine deals it half fire / half physical in a radius around the
+/// corpse (calc3 sets the elemental split; the AoE + split are the host's / a follow-up). Pass the
+/// corpse's WHOLE max life + both unit levels. Consumes one RNG step.
+pub const CorpseExplosionHit = struct { min: i32 = 0, max: i32 = 0, rolled: i32 = 0 };
+
+pub fn corpseExplosion(skills: *const Skills, book: SkillBook, level: i32, corpse_maxhp: i32, caster_level: i32, corpse_level: i32, seed: *Seed) CorpseExplosionHit {
+    const ce = skills.idByName("Corpse Explosion") orelse return .{};
+    var lo: i32 = @intCast(@divTrunc(@as(i64, corpse_maxhp) * skills.evalCalc(book, 0, ce, level, "calc1"), 100));
+    var hi: i32 = @intCast(@divTrunc(@as(i64, corpse_maxhp) * skills.evalCalc(book, 0, ce, level, "calc2"), 100));
+    var rolled = if (hi > lo) lo + @as(i32, @intCast(seed.pick(@intCast(hi - lo)))) else lo;
+    // Caster-level scaling (recon lines 1668-1672): only when the caster is lower level than the corpse.
+    if (corpse_level > 0 and caster_level < corpse_level) {
+        lo = @intCast(@divTrunc(@as(i64, lo) * caster_level, corpse_level));
+        hi = @intCast(@divTrunc(@as(i64, hi) * caster_level, corpse_level));
+        rolled = @intCast(@divTrunc(@as(i64, rolled) * caster_level, corpse_level));
+    }
+    return .{ .min = lo, .max = hi, .rolled = rolled };
+}
+
 /// Static Field's AREA sweep: apply staticField to every unit within `radius` subtiles of the cast
 /// point (the engine's SKILLS_ApplyAreaEffect). The host supplies the candidate units + radius.
 pub fn castStaticFieldArea(skills: *const Skills, book: SkillBook, level: i32, cx: i32, cy: i32, radius: i32, diff: difficulty.Difficulty, targets: []const *Unit) usize {
@@ -973,6 +995,26 @@ test "castDirectElemental resolves a direct (missile-less) elemental skill vs a 
     try testing.expectEqual(@divTrunc(hit.raw * 50, 100), hit.applied); // 50% resisted
     applyElementalHit(hit, &mob);
     try testing.expectEqual(10000 - hit.applied, mob.life());
+}
+
+test "Corpse Explosion: 70-120% of corpse life, scaled by caster/corpse level" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var book = SkillBook{};
+    book.setByName(&s, "Corpse Explosion", 1);
+
+    // Corpse of 1000 life, caster level >= corpse level (no down-scale): roll in [700, 1200).
+    var seed = Seed.fromValue(4);
+    const h = corpseExplosion(&s, book, 1, 1000, 50, 10, &seed);
+    try testing.expectEqual(@as(i32, 700), h.min); // par1 = 70%
+    try testing.expectEqual(@as(i32, 1200), h.max); // par2 = 120%
+    try testing.expect(h.rolled >= h.min and h.rolled < h.max);
+
+    // Low-level necro (level 5) exploding a level-10 corpse: everything halved (5/10).
+    var seed2 = Seed.fromValue(4);
+    const low = corpseExplosion(&s, book, 1, 1000, 5, 10, &seed2);
+    try testing.expectEqual(@as(i32, 350), low.min); // 700 * 5/10
+    try testing.expectEqual(@as(i32, 600), low.max); // 1200 * 5/10
 }
 
 test "Static Field reduces current life by calc1% as lightning (resist + difficulty floor)" {
