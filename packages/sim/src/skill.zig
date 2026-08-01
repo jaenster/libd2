@@ -1019,6 +1019,21 @@ pub const MonsterCaster = struct {
         }
         return null;
     }
+
+    /// Like pickCastable, but begins scanning from `offset` (wrapping), so a caller that advances
+    /// `offset` after each cast cycles through ALL of the monster's damaging skills in turn — the
+    /// multi-skill rotation the act bosses (and any multi-cast monster) use instead of spamming one
+    /// spell. Returns the chosen Skills id, or null when it has no damaging skill.
+    pub fn pickCastableRotating(self: MonsterCaster, skills: *const Skills, offset: usize) ?u16 {
+        if (self.count == 0) return null;
+        var i: usize = 0;
+        while (i < self.count) : (i += 1) {
+            const id = self.ids[(offset + i) % self.count];
+            const k = (skills.byId(id) orelse continue).kind();
+            if (k == .missile or k == .direct) return id;
+        }
+        return null;
+    }
 };
 
 /// Resolve a monster's MonStats `Id` NAME (as a summon skill's `summon` column gives it, e.g.
