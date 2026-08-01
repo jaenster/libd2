@@ -44,6 +44,14 @@ pub const MonCombat = struct {
     to_block: [3]i32 = .{ 0, 0, 0 }, // ToBlock / ToBlock(N) / ToBlock(H)
     /// Six element resists per difficulty (percent; 100 = immune, negatives amplify).
     res: [3]Resist = .{ .{}, .{}, .{} },
+    /// MonStats.AI — the AI-script name (e.g. "Fallen", "FallenShaman", "Skeleton"). Owned by
+    /// Tables; the per-monster behavior dispatch keys on this. Empty string when the row is blank.
+    ai_name: []const u8 = &.{},
+    /// MonStats.aidel / aidel(N) / aidel(H) — the AI think-delay (frames between AI runs).
+    ai_delay: [3]i32 = .{ 0, 0, 0 },
+    /// MonStats.aip1..aip8 — the eight per-AI tuning parameters, each a per-difficulty triple.
+    /// Meaning is AI-script-specific (e.g. Fallen aip1 = flee/rally chance percent).
+    ai_params: [8][3]i32 = .{.{ 0, 0, 0 }} ** 8,
 };
 
 /// Per-difficulty monster resistances (percent). Physical uses ResDm.
@@ -123,8 +131,20 @@ pub const Tables = struct {
             var r: usize = 0;
             while (r < mt.rowCount()) : (r += 1) {
                 if (std.mem.eql(u8, mt.str(r, "Id"), "Expansion")) continue;
+                var ai_params: [8][3]i32 = .{.{ 0, 0, 0 }} ** 8;
+                {
+                    var p: usize = 0;
+                    while (p < 8) : (p += 1) {
+                        var buf: [8]u8 = undefined;
+                        const col = std.fmt.bufPrint(&buf, "aip{d}", .{p + 1}) catch unreachable;
+                        ai_params[p] = triple(&mt, r, col);
+                    }
+                }
                 mon[out_i] = .{
                     .no_ratio = mt.int(r, "noRatio") != 0,
+                    .ai_name = try gpa.dupe(u8, mt.str(r, "AI")),
+                    .ai_delay = triple(&mt, r, "aidel"),
+                    .ai_params = ai_params,
                     .level = triple(&mt, r, "Level"),
                     .ac = triple(&mt, r, "AC"),
                     .a1_th = triple(&mt, r, "A1TH"),
@@ -175,8 +195,16 @@ pub const Tables = struct {
     }
 
     pub fn deinit(self: *Tables) void {
+        for (self.mon) |m| self.gpa.free(m.ai_name);
         self.gpa.free(self.mon);
         self.gpa.free(self.lvl);
+    }
+
+    /// The MonStats.AI script name for a class id ("" when unknown). Per-monster AI dispatch
+    /// keys on this; case matches the raw column ("Fallen", "FallenShaman", ...).
+    pub fn aiName(self: *const Tables, class_id: i32) []const u8 {
+        const mc = self.combat(class_id) orelse return &.{};
+        return mc.ai_name;
     }
 
     pub fn combat(self: *const Tables, class_id: i32) ?*const MonCombat {
@@ -265,6 +293,21 @@ test "montable: MonLvl scaling grows AC with monster level; Hell >= Normal multi
     }
     // A known level index clamps beyond the table without error.
     _ = t.scaled(19, 999, .hell).?;
+}
+
+test "montable: AI column plumbs MonStats.AI/aidel/aip verbatim (Fallen)" {
+    var t = try Tables.load(testing.allocator);
+    defer t.deinit();
+    // Fallen (class id 19) — real MonStats.txt row fallen1: AI=Fallen, aidel 15/14/13, aip1 30/40/50.
+    const mc = t.combat(19).?;
+    try testing.expectEqualStrings("Fallen", mc.ai_name);
+    try testing.expectEqualStrings("Fallen", t.aiName(19));
+    try testing.expectEqual(@as(i32, 15), mc.ai_delay[0]);
+    try testing.expectEqual(@as(i32, 14), mc.ai_delay[1]);
+    try testing.expectEqual(@as(i32, 13), mc.ai_delay[2]);
+    try testing.expectEqual(@as(i32, 30), mc.ai_params[0][0]);
+    try testing.expectEqual(@as(i32, 40), mc.ai_params[0][1]);
+    try testing.expectEqual(@as(i32, 50), mc.ai_params[0][2]);
 }
 
 test "montable: noRatio monster uses raw MonStats (no MonLvl multiplier)" {
