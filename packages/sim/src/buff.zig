@@ -44,6 +44,13 @@ pub const BuffList = struct {
         self.buffs[slot] = b;
     }
 
+    /// Cast a timed buff on `u`, deriving its duration from the skill's own aura-length calc — fully
+    /// table-driven, no host-supplied duration. `book` provides the levels the duration calc reads
+    /// (Battle Orders' length synergises off Shout / Battle Command).
+    pub fn applySkill(self: *BuffList, u: *Unit, skills: *const skillmod.Skills, isc: *const d2data.Table, book: skillmod.SkillBook, skill_id: u16, level: i32) void {
+        self.apply(u, skills, isc, skill_id, level, buffDuration(skills, book, skill_id, level));
+    }
+
     /// Advance every buff by `frames`; a buff whose timer reaches 0 is removed and its stat deltas
     /// subtracted from `u`. Call once per server frame (or with the elapsed frame count).
     pub fn tick(self: *BuffList, u: *Unit, frames: i32) void {
@@ -84,6 +91,14 @@ pub const BuffList = struct {
         return null;
     }
 };
+
+/// A timed buff's duration in FRAMES (D2 aura length is 1/25s frames) for (skill, level), from the
+/// skill's `auralencalc` — Battle Orders ln12 + synergy off Shout/Battle Command (BO slvl1 = 750 +
+/// 1*250 = 1000 frames = 40s, growing per level). `book` supplies the synergy skill levels. 0 for a
+/// permanent aura / a non-timed skill.
+pub fn buffDuration(skills: *const skillmod.Skills, book: skillmod.SkillBook, skill_id: u16, level: i32) i32 {
+    return skills.evalCalc(book, 0, skill_id, level, "auralencalc");
+}
 
 /// Evaluate a skill's aurastat1..6 into (stat id, value) deltas (the same stats applyAuraTo grants,
 /// captured so a buff can later remove them). Returns the count.
@@ -133,4 +148,28 @@ test "a buff grants its stats, refreshes without double-stacking, and expires" {
     bl.tick(&u, 60);
     try testing.expect(!bl.isActive(bo)); // expired
     try testing.expectEqual(@as(i32, 0), u.stats.get(@enumFromInt(hpid))); // stat gone
+}
+
+test "buff duration is table-driven from auralencalc (Battle Orders slvl1 = 1000 frames)" {
+    var s = try skillmod.Skills.load(testing.allocator);
+    defer s.deinit();
+    var isc = try d2data.open(testing.allocator, "ItemStatCost");
+    defer isc.deinit();
+    const bo = s.idByName("Battle Orders").?;
+
+    // With no synergy skills (Shout / Battle Command at 0), BO length = ln12 = 750 + 1*250 = 1000.
+    var book = skillmod.SkillBook{};
+    book.setByName(&s, "Battle Orders", 1);
+    try testing.expectEqual(@as(i32, 1000), buffDuration(&s, book, bo, 1));
+    try testing.expectEqual(@as(i32, 3250), buffDuration(&s, book, bo, 10)); // 750 + 10*250
+
+    // applySkill derives the duration itself; the buff stays active within it and drops after.
+    var u = Unit.init(.player);
+    var bl = BuffList{};
+    bl.applySkill(&u, &s, &isc, book, bo, 1);
+    try testing.expect(bl.isActive(bo));
+    bl.tick(&u, 999);
+    try testing.expect(bl.isActive(bo)); // 1 frame left
+    bl.tick(&u, 1);
+    try testing.expect(!bl.isActive(bo)); // exactly expired at 1000
 }
