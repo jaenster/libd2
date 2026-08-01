@@ -639,6 +639,22 @@ pub fn applyElementalHit(hit: ElementalHit, target: *Unit) void {
     if (hit.applied > 0) combat.applyToLife(target, hit.applied);
 }
 
+/// A poison damage-over-time: the resisted total spread across `frames`, dealt `per_frame` each
+/// server frame. Poison is NOT instant — Poison Nova / Poison Dagger / poison gear apply their
+/// (poison-resist-reduced) damage over the skill's ELen. Re-poisoning refreshes rather than stacks
+/// (the host tracks the active poison per unit, like a buff).
+pub const PoisonDot = struct { total: i32 = 0, frames: i32 = 0, per_frame: i32 = 0 };
+
+/// Turn a POISON elemental hit into a DoT spread over `length_frames` (the skill's ELen). A
+/// non-poison hit, or zero length, is returned as an instant lump (frames 1). The host ticks
+/// `per_frame` off the victim each frame for `frames` frames.
+pub fn poisonOverTime(hit: ElementalHit, length_frames: i32) PoisonDot {
+    if (hit.element != .poison or length_frames <= 1) {
+        return .{ .total = hit.applied, .frames = 1, .per_frame = hit.applied };
+    }
+    return .{ .total = hit.applied, .frames = length_frames, .per_frame = @divTrunc(hit.applied, length_frames) };
+}
+
 /// Cast a DIRECT elemental skill (one with no missile — Frost Nova / Nova / Static Field / Poison
 /// Nova, any class that classifies `.direct`) at `target`: assemble its fully table-driven Cast
 /// (element + EDmgSymPerCalc synergies + matching mastery) and resolve it against the target's
@@ -1011,6 +1027,25 @@ test "calc VM resolves the elemental-damage codes (edmn/edmx/edns) from the stag
     try testing.expectEqual(@as(i32, @intCast(fbd.dmg.min256(1))), try ev.eval("edns", fb, 1));
     // A compound calc (Energy Shield-style) evaluates end to end.
     try testing.expectEqual(@min(fbd.dmg.minAt(1), 95), try ev.eval("min(edmn,95)", fb, 1));
+}
+
+test "poison is a DoT: the total is spread over the skill's ELen; non-poison stays instant" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    const pn = s.byId(s.idByName("Poison Nova").?).?;
+    try testing.expectEqual(spell.Element.poison, pn.dmg.etype);
+    try testing.expect(pn.e_len > 0); // Poison Nova carries a poison duration (ELen)
+
+    // A resisted poison total of 500 over 100 frames = 5/frame for 100 frames.
+    const phit = ElementalHit{ .element = .poison, .raw = 500, .applied = 500, .resist = 0 };
+    const dot = poisonOverTime(phit, 100);
+    try testing.expectEqual(@as(i32, 100), dot.frames);
+    try testing.expectEqual(@as(i32, 5), dot.per_frame);
+    try testing.expectEqual(@as(i32, 500), dot.total);
+
+    // A fire hit is instant (one lump).
+    const fhit = ElementalHit{ .element = .fire, .raw = 500, .applied = 500, .resist = 0 };
+    try testing.expectEqual(@as(i32, 1), poisonOverTime(fhit, 100).frames);
 }
 
 test "castDirectElemental resolves a direct (missile-less) elemental skill vs a target's resist" {
