@@ -86,6 +86,22 @@ pub const BuffList = struct {
         }
     }
 
+    /// Remove EVERY active buff from `u` (subtracting all their stats) and empty the list. Used to
+    /// enforce single-curse-per-unit: clear the old curse before applying a new one.
+    pub fn clearAll(self: *BuffList, u: *Unit) void {
+        for (&self.buffs) |*b| {
+            if (b.active) self.deactivate(u, b);
+        }
+    }
+
+    /// Whether ANY buff is still active (used to reap an empty per-unit curse list).
+    pub fn anyActive(self: *const BuffList) bool {
+        for (self.buffs) |b| {
+            if (b.active) return true;
+        }
+        return false;
+    }
+
     /// Whether a skill's buff is currently active (its timer hasn't run out).
     pub fn isActive(self: *const BuffList, skill_id: u16) bool {
         for (self.buffs) |b| {
