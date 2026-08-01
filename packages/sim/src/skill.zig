@@ -750,6 +750,42 @@ pub fn castDirectAreaElemental(skills: *const Skills, book: SkillBook, skill_id:
     return hits;
 }
 
+/// Cast a RADIAL MISSILE SPRAY (srvdofunc 22 Nova/Frost Nova/Poison Nova = 64 missiles;
+/// srvdofunc 63 Poison Explosion = 8 missiles from the corpse). Faithful to SKILLS_CreateMissileRing
+/// (SkillSor.cpp) / MISSILES_SpawnRadialPattern (SkillNec.cpp): spawn `count` missiles of the skill's
+/// `srvmissilea` evenly spaced around a FULL circle from (ox,oy), each carrying `elem_cast`
+/// (caster-derived, so stepMissiles resolves the element per victim on hit exactly like a normal bolt).
+/// The missiles travel OUTWARD under their own velocity — there is no radius/area sweep. Fills `out`
+/// and returns how many were written (min(count, out.len)); the host gives each a guid + appends.
+/// Returns 0 if the skill has no `srvmissilea`. Aim points sit on a unit circle (direction only —
+/// Missile.create normalizes velocity — so the scale is arbitrary).
+pub fn castRadialMissiles(
+    skills: *const Skills,
+    missiles: *const missile.Missiles,
+    caster_id: u32,
+    skill_id: u16,
+    ox: i32,
+    oy: i32,
+    count: usize,
+    elem_cast: spell.Cast,
+    out: []missile.Missile,
+) usize {
+    const row = skills.rowById(skill_id) orelse return 0;
+    const md = missiles.byName(skills.table.get(row, "srvmissilea")) orelse return 0;
+    const n = @min(count, out.len);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const ang = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n));
+        const tx = ox + @as(i32, @intFromFloat(@round(@cos(ang) * 100.0)));
+        const ty = oy + @as(i32, @intFromFloat(@round(@sin(ang) * 100.0)));
+        var m = missile.Missile.create(md, caster_id, ox, oy, tx, ty, 0, 0);
+        m.caster_derived = true;
+        m.elem_cast = elem_cast.seal();
+        out[i] = m;
+    }
+    return n;
+}
+
 /// Number of times a MULTI-HIT melee skill strikes: for the multi-hit do-functions (srvdofunc 12
 /// Strafe, 13 Fend/Zeal) the strike count is the skill's calc1 — a calc the VM evaluates (Zeal
 /// min(par5+lvl-1,par6) = min(lvl+1,5) => 2 hits @slvl1 up to 5; Strafe min(par3+lvl-1,par4) =
@@ -1118,6 +1154,37 @@ test "poison is a DoT: the total is spread over the skill's ELen; non-poison sta
     // A fire hit is instant (one lump).
     const fhit = ElementalHit{ .element = .fire, .raw = 500, .applied = 500, .resist = 0 };
     try testing.expectEqual(@as(i32, 1), poisonOverTime(fhit, 100).frames);
+}
+
+test "castRadialMissiles: Nova spawns a full ring of srvmissilea missiles, distinct outward directions" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var md = try missile.Missiles.load(testing.allocator);
+    defer md.deinit();
+    const nova = s.idByName("Nova").?;
+    var book = SkillBook{};
+    book.setByName(&s, "Nova", 10);
+    var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    const cst = castElemental(&s, book, nova, 10, &syn);
+
+    var buf: [64]missile.Missile = undefined;
+    const n = castRadialMissiles(&s, &md, 1, nova, 100, 100, 64, cst, &buf);
+    try testing.expectEqual(@as(usize, 64), n); // faithful to CreateMissileRing's 64-missile ring
+    for (buf[0..n]) |m| {
+        try testing.expect(m.caster_derived);
+        try testing.expectEqual(@as(i32, 100), m.x); // originates at the caster
+        try testing.expect(m.vx != 0 or m.vy != 0); // travels outward
+    }
+    // The ring is a real circle: opposite quadrants have opposite-signed velocity.
+    try testing.expect(buf[0].vx != buf[16].vx or buf[0].vy != buf[16].vy);
+    try testing.expect(buf[0].vx != buf[32].vx or buf[0].vy != buf[32].vy);
+
+    // Poison Nova rides the same ring, carrying poison (resolved per-victim on hit).
+    const pnova = s.idByName("Poison Nova").?;
+    book.setByName(&s, "Poison Nova", 10);
+    const pcst = castElemental(&s, book, pnova, 10, &syn);
+    const pn = castRadialMissiles(&s, &md, 1, pnova, 0, 0, 64, pcst, &buf);
+    try testing.expectEqual(@as(usize, 64), pn);
 }
 
 test "castDirectElemental resolves a direct (missile-less) elemental skill vs a target's resist" {
