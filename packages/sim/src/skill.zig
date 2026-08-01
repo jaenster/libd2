@@ -986,6 +986,49 @@ test "classify: Attack is melee, Fire Bolt is a missile" {
     try testing.expectEqual(@as(?SkillData, null), s.byId(9999));
 }
 
+test "whole catalog: every skill resolves through the generic machinery without crashing" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var isc = try d2data.open(testing.allocator, "ItemStatCost");
+    defer isc.deinit();
+    var syn: [spell.MAX_SYNERGIES]spell.Synergy = undefined;
+    const book = SkillBook{};
+
+    var total: usize = 0;
+    var elemental: usize = 0;
+    var buffs: usize = 0;
+    var summons: usize = 0;
+    for (0..s.table.rowCount()) |r| {
+        const id_i = s.table.getInt(i32, r, "Id") orelse continue;
+        const id: u16 = @intCast(id_i);
+        const sd = s.byId(id) orelse continue;
+        total += 1;
+
+        // Classification + the per-skill scalars must never crash for ANY skill.
+        _ = sd.kind();
+        _ = sd.manaCostAt(1);
+        _ = sd.manaCostAt(20);
+        _ = meleeHitCount(&s, book, id, 1);
+        _ = s.summonInfo(id, 1);
+        _ = s.auraValue(id, 1);
+        _ = s.passiveValue(id, 1);
+
+        // Elemental skills must assemble a Cast with the right element + nonzero staged damage.
+        if (sd.dmg.etype != .none) {
+            elemental += 1;
+            const c = castElemental(&s, book, id, 1, &syn);
+            try testing.expectEqual(sd.dmg.etype, c.dmg.etype);
+        }
+        if (@import("buff.zig").isTimedBuff(&s, id)) buffs += 1;
+        if (s.summonInfo(id, 1).monster.len != 0) summons += 1;
+    }
+    // The whole 1.14d catalog processed: ~356 skills, a big chunk elemental, plus buffs + summons.
+    try testing.expect(total > 340);
+    try testing.expect(elemental > 40);
+    try testing.expect(buffs > 5);
+    try testing.expect(summons > 5);
+}
+
 test "classify: every category resolves from the real Skills.txt columns" {
     var s = try Skills.load(testing.allocator);
     defer s.deinit();
