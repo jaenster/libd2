@@ -67,6 +67,13 @@ pub const MissileData = struct {
     /// (Exploding Arrow -> explodingarrowexp2, Immolation Arrow -> immolationfire, Meteor -> ...).
     /// Empty strings for unused slots; the names borrow the Missiles table.
     hit_sub: [4][]const u8 = .{ "", "", "", "" },
+    /// pSrvDoFunc — the server per-frame handler id. 15 = a spread sub-missile EMITTER (Frozen Orb):
+    /// every `param1` frames it spawns `sub_missile1` at a ring direction that rotates by `param2`.
+    srv_do_func: i32 = 0,
+    param1: i32 = 0,
+    param2: i32 = 0,
+    /// SubMissile1 — the child a per-frame emitter spawns (Frozen Orb -> frozenorbbolt). Borrows the table.
+    sub_missile1: []const u8 = "",
 };
 
 /// CollideType bit for walls/collision map (D2 MISSILE_COLLIDE_UNITS=1, WALLS=2; the common
@@ -110,6 +117,10 @@ pub const Missiles = struct {
                 t.get(row, "HitSubMissile1"), t.get(row, "HitSubMissile2"),
                 t.get(row, "HitSubMissile3"), t.get(row, "HitSubMissile4"),
             },
+            .srv_do_func = t.getInt(i32, row, "pSrvDoFunc") orelse 0,
+            .param1 = t.getInt(i32, row, "Param1") orelse 0,
+            .param2 = t.getInt(i32, row, "Param2") orelse 0,
+            .sub_missile1 = t.get(row, "SubMissile1"),
         };
     }
 
