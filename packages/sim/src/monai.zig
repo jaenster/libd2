@@ -43,6 +43,10 @@ pub const Script = enum {
     /// Lays/spawns its own minion class up to a cap while still fighting (SandMaggot @0x5f1800 /
     /// SandMaggotQueen @0x5f9cf0 — GetSpawnParameters + SpawnMonsterAtRoomPos, capped by aip1).
     spawner,
+    /// Teleporting boss: blinks next to the target when it is out of reach / behind a wall, then casts
+    /// and melees. Mephisto @0x5f78b0 (NM/Hell, wall or dist>30 -> Skill6 teleport) and Baal
+    /// @0x5fcfe0 (action 0xe blink ~25 units) both do this; the non-blinking bosses stay generic.
+    boss_teleport,
     /// Non-combat: town folk and neutral critters with no aggression (Idle/None/Npc*/Towner/Vendor).
     /// The host runs no attack loop for these.
     passive,
@@ -54,9 +58,11 @@ pub const Script = enum {
     pub fn fromName(name: []const u8) Script {
         if (eq(name, "Fallen")) return .fallen;
         if (eq(name, "FallenShaman")) return .fallen_shaman;
-        if (inAny(name, &.{ "QuillRat", "QuillMother", "SkeletonBow" })) return .ranged_kite;
+        // Skittish ranged: QuillRat family + Skeleton archers; SuccubusWitch retreats to keep aip4.
+        if (inAny(name, &.{ "QuillRat", "QuillMother", "SkeletonBow", "SuccubusWitch" })) return .ranged_kite;
         if (eq(name, "GreaterMummy")) return .raiser;
         if (inAny(name, &.{ "SandMaggot", "SandMaggotQueen" })) return .spawner;
+        if (inAny(name, &.{ "Mephisto", "BaalCrab", "BaalCrabClone" })) return .boss_teleport;
         // Emplacements that never move — they must NOT charge like a generic monster.
         if (inAny(name, &.{
             "Hydra",          "ArcaneTower",   "DesertTurret", "Catapult",     "CatapultSpotter",
@@ -183,8 +189,16 @@ test "monai: Script.fromName classifies AI names case-insensitively" {
     try testing.expectEqual(Script.raiser, Script.fromName("GreaterMummy"));
     try testing.expectEqual(Script.spawner, Script.fromName("SandMaggotQueen"));
     try testing.expectEqual(Script.spawner, Script.fromName("sandmaggot"));
-    // Summoner is a pure multi-skill caster (no summon/teleport) -> generic caster baseline.
+    // Teleporting bosses; SuccubusWitch kites.
+    try testing.expectEqual(Script.boss_teleport, Script.fromName("Mephisto"));
+    try testing.expectEqual(Script.boss_teleport, Script.fromName("BaalCrab"));
+    try testing.expectEqual(Script.ranged_kite, Script.fromName("SuccubusWitch"));
+    // Summoner is a pure multi-skill caster (no summon/teleport); non-blinking bosses -> generic baseline.
     try testing.expectEqual(Script.generic, Script.fromName("Summoner"));
+    try testing.expectEqual(Script.generic, Script.fromName("Diablo"));
+    try testing.expectEqual(Script.generic, Script.fromName("Duriel"));
+    try testing.expectEqual(Script.generic, Script.fromName("Izual"));
+    try testing.expectEqual(Script.generic, Script.fromName("Succubus"));
     // Town / neutral NPCs have no combat AI.
     try testing.expectEqual(Script.passive, Script.fromName("Towner"));
     try testing.expectEqual(Script.passive, Script.fromName("Vendor"));
