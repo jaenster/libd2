@@ -26,6 +26,25 @@ pub fn resistPenalty(diff: Difficulty) i32 {
     return RESIST_PENALTY[@intFromEnum(diff)];
 }
 
+/// DifficultyLevels.txt StaticFieldMin per difficulty (Normal 0 / Nightmare 33 / Hell 50) — the
+/// minimum % of max life Static Field can leave a monster at (it can't reduce below this fraction).
+pub const STATIC_FIELD_MIN = blk: {
+    @setEvalBranchQuota(50000);
+    const txt = d2data.file("DifficultyLevels");
+    const hdr = ctsv.header(txt);
+    break :blk [3]i32{
+        ctsv.cellInt(hdr, ctsv.findRow(txt, "Normal").?, "StaticFieldMin"),
+        ctsv.cellInt(hdr, ctsv.findRow(txt, "Nightmare").?, "StaticFieldMin"),
+        ctsv.cellInt(hdr, ctsv.findRow(txt, "Hell").?, "StaticFieldMin"),
+    };
+};
+
+/// The Static Field life floor (% of max life) at this difficulty — Static Field won't take a
+/// monster below `staticFieldMin(diff)`% of its max life.
+pub fn staticFieldMin(diff: Difficulty) i32 {
+    return STATIC_FIELD_MIN[@intFromEnum(diff)];
+}
+
 const testing = std.testing;
 
 test "resist penalty comes from DifficultyLevels.txt (0 / -40 / -100)" {
