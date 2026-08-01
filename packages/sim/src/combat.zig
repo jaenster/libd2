@@ -387,6 +387,14 @@ pub fn resolveAttack(attacker: *const Unit, defender: *const Unit, seed: *Seed, 
 }
 
 /// Subtract a whole damage value from a unit's hitpoints(6), floored at 0.
+/// Life/mana STOLEN from a physical hit: `damage * leech_pct / 100`, then DIVIDED by the difficulty
+/// steal divisor (Normal 1 / Nightmare 2 / Hell 3 — see sim.difficulty.lifeStealDivisor). D2 leech is
+/// off the PHYSICAL damage dealt; the divisor is why life/mana leech is weak in Nightmare/Hell.
+pub fn leech(damage: i32, leech_pct: i32, divisor: i32) i32 {
+    if (leech_pct <= 0 or divisor <= 0 or damage <= 0) return 0;
+    return @intCast(@divTrunc(@divTrunc(@as(i64, damage) * leech_pct, 100), divisor));
+}
+
 pub fn applyToLife(u: *Unit, damage: i32) void {
     var hp = u.life() - damage;
     if (hp < 0) hp = 0;
@@ -549,4 +557,14 @@ test "attackAndApply clamps a lethal blow to zero life, never negative" {
     const res = attackAndApply(&attacker, &defender, &seed, .{});
     try testing.expect(defender.life() >= 0);
     if (res.hit) try testing.expectEqual(@as(i32, 0), defender.life());
+}
+
+test "leech divides by the difficulty steal divisor (Hell is 1/3)" {
+    const testing = std.testing;
+    const difficulty = @import("difficulty.zig");
+    // 10% life steal off 300 physical = 30 in Normal, 15 in NM, 10 in Hell.
+    try testing.expectEqual(@as(i32, 30), leech(300, 10, difficulty.lifeStealDivisor(.normal)));
+    try testing.expectEqual(@as(i32, 15), leech(300, 10, difficulty.lifeStealDivisor(.nightmare)));
+    try testing.expectEqual(@as(i32, 10), leech(300, 10, difficulty.lifeStealDivisor(.hell)));
+    try testing.expectEqual(@as(i32, 0), leech(300, 0, 1)); // no leech stat -> nothing
 }

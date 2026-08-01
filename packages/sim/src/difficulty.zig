@@ -45,10 +45,44 @@ pub fn staticFieldMin(diff: Difficulty) i32 {
     return STATIC_FIELD_MIN[@intFromEnum(diff)];
 }
 
+/// DifficultyLevels.txt Life/Mana-StealDivisor (Normal 1 / Nightmare 2 / Hell 3): life & mana leech
+/// are DIVIDED by this at higher difficulty (Hell leech is 1/3 as effective).
+pub const LIFE_STEAL_DIVISOR = stealDivisor("LifeStealDivisor");
+pub const MANA_STEAL_DIVISOR = stealDivisor("ManaStealDivisor");
+
+fn stealDivisor(comptime col: []const u8) [3]i32 {
+    @setEvalBranchQuota(50000);
+    const txt = d2data.file("DifficultyLevels");
+    const hdr = ctsv.header(txt);
+    return .{
+        ctsv.cellInt(hdr, ctsv.findRow(txt, "Normal").?, col),
+        ctsv.cellInt(hdr, ctsv.findRow(txt, "Nightmare").?, col),
+        ctsv.cellInt(hdr, ctsv.findRow(txt, "Hell").?, col),
+    };
+}
+
+pub fn lifeStealDivisor(diff: Difficulty) i32 {
+    return LIFE_STEAL_DIVISOR[@intFromEnum(diff)];
+}
+pub fn manaStealDivisor(diff: Difficulty) i32 {
+    return MANA_STEAL_DIVISOR[@intFromEnum(diff)];
+}
+
 const testing = std.testing;
 
 test "resist penalty comes from DifficultyLevels.txt (0 / -40 / -100)" {
     try testing.expectEqual(@as(i32, 0), resistPenalty(.normal));
     try testing.expectEqual(@as(i32, -40), resistPenalty(.nightmare));
     try testing.expectEqual(@as(i32, -100), resistPenalty(.hell));
+}
+
+test "per-difficulty caps from DifficultyLevels.txt (StaticFieldMin, steal divisors)" {
+    try testing.expectEqual(@as(i32, 0), staticFieldMin(.normal));
+    try testing.expectEqual(@as(i32, 33), staticFieldMin(.nightmare));
+    try testing.expectEqual(@as(i32, 50), staticFieldMin(.hell));
+    // Life/mana steal divided by 1 / 2 / 3.
+    try testing.expectEqual(@as(i32, 1), lifeStealDivisor(.normal));
+    try testing.expectEqual(@as(i32, 2), lifeStealDivisor(.nightmare));
+    try testing.expectEqual(@as(i32, 3), lifeStealDivisor(.hell));
+    try testing.expectEqual(@as(i32, 3), manaStealDivisor(.hell));
 }
