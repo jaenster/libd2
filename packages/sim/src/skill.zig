@@ -777,9 +777,12 @@ pub fn castRadialMissiles(
     const n = @min(count, out.len);
     var i: usize = 0;
     while (i < n) : (i += 1) {
-        const ang = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n));
-        const tx = ox + @as(i32, @intFromFloat(@round(@cos(ang) * 100.0)));
-        const ty = oy + @as(i32, @intFromFloat(@round(@sin(ang) * 100.0)));
+        // Use the ENGINE's own ring direction tables (ganMissileRingCosTable / ganMissileRingYOffsets,
+        // read from 1.14d Game.exe): 64 evenly-spaced dirs on a radius-30 circle. n=64 (Nova) is exact;
+        // fewer (Poison Explosion 8) sample every 64/n-th entry -> the same real angular positions.
+        const idx = (i * NOVA_RING_DIRS) / n;
+        const tx = ox + NOVA_RING_COS[idx];
+        const ty = oy + NOVA_RING_Y[idx];
         var m = missile.Missile.create(md, caster_id, ox, oy, tx, ty, 0, 0);
         m.caster_derived = true;
         m.elem_cast = elem_cast.seal();
@@ -787,6 +790,21 @@ pub fn castRadialMissiles(
     }
     return n;
 }
+
+/// The engine's missile-ring direction tables, verbatim from 1.14d Game.exe: ganMissileRingCosTable
+/// @0x6e1288 (X) and ganMissileRingYOffsets @0x6e1388 (Y) — 64 points on a radius-30 circle (x²+y²=900),
+/// the exact angular offsets SKILLS_CreateMissileRing spawns Nova's 64 missiles along.
+const NOVA_RING_DIRS = 64;
+const NOVA_RING_COS = [NOVA_RING_DIRS]i32{
+    30, 29, 29, 28, 27, 26, 24, 23, 21, 19, 16, 14, 11, 8, 5, 2, 0, -2, -5, -8, -11, -14, -16, -19,
+    -21, -23, -24, -26, -27, -28, -29, -29, -30, -29, -29, -28, -27, -26, -24, -23, -21, -19, -16,
+    -14, -11, -8, -5, -2, 0, 2, 5, 8, 11, 14, 16, 19, 21, 23, 24, 26, 27, 28, 29, 29,
+};
+const NOVA_RING_Y = [NOVA_RING_DIRS]i32{
+    0, 2, 5, 8, 11, 14, 16, 19, 21, 23, 24, 26, 27, 28, 29, 29, 30, 29, 29, 28, 27, 26, 24, 23, 21,
+    19, 16, 14, 11, 8, 5, 2, 0, -2, -5, -8, -11, -14, -16, -19, -21, -23, -24, -26, -27, -28, -29,
+    -29, -30, -29, -29, -28, -27, -26, -24, -23, -21, -19, -16, -14, -11, -8, -5, -2,
+};
 
 /// Blessed Hammer's spiral-grid spawn — a FAITHFUL port of SKILLS_CreateMissileSpiralGrid (1.14d Game.exe
 /// @0x004c71f0, offset tables read straight from the binary at 0x6dadc0..0x6dae54). It launches up to
