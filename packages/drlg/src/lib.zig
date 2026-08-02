@@ -1610,7 +1610,7 @@ fn buildLevelRoomColl(
     // neighbour's kill-edge tiles (origin just past the neighbour) land on R's shared
     // border. Each tile-origin belongs to exactly one room, so we route tiles through
     // a level tile→room index rather than the O(rooms^2) self+neighbour walk (same set).
-    const RoomBuild = struct { wpx: i32, wpy: i32, wtx: i32, hty: i32, tiles: []materialize.CollTile, is_ds1: bool, room: *abi.D2RoomExStrc };
+    const RoomBuild = struct { wpx: i32, wpy: i32, wtx: i32, hty: i32, tiles: []materialize.CollTile, is_ds1: bool, room: *abi.D2RoomExStrc, foreign: bool = false };
     var rbs: std.ArrayListUnmanaged(RoomBuild) = .empty;
     defer {
         for (rbs.items) |rb| out_alloc.free(rb.tiles);
@@ -1680,6 +1680,79 @@ fn buildLevelRoomColl(
             .room = p,
         });
     }
+        // Cross-LEVEL contributors. A room's near list (DRLGROOMEX_LinkNearRoomsByVis)
+        // reaches into other levels, and AllocRoomCollisionGrid gathers from all of them
+        // — so a neighbouring level's +1-ring wall stamps into this level's rooms. Seen
+        // in the engine oracle at the Monastery Gate / Outer Cloister seam: L27 room
+        // (3016,992) rel(0,8) carries block rows 3-4 = 0x07, exactly the 0x02 this port
+        // was missing on L26's top two subtile rows. Gathered FROM, never emitted.
+        //
+        // Their DT1 sets must outlive Phase B: the CollTiles point straight at the parsed
+        // tile records, so the foreign libraries are freed only with the function.
+        const ForeignLib = struct { lid: i32, dts: []dt1.Dt1, bits: []u8 };
+        var flibs: std.ArrayListUnmanaged(ForeignLib) = .empty;
+        defer {
+            for (flibs.items) |fl| {
+                for (fl.dts) |*d| d.deinit();
+                out_alloc.free(fl.dts);
+                out_alloc.free(fl.bits);
+            }
+            flibs.deinit(out_alloc);
+        }
+        {
+            var seen_foreign = std.AutoHashMapUnmanaged(*abi.D2RoomExStrc, void).empty;
+            defer seen_foreign.deinit(out_alloc);
+            var fbuf: [35]dt1.Dt1 = undefined;
+            var fp: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+            while (fp) |p| : (fp = p.pRoomExNext) {
+                const n = p.nDrlgRoomsExNearCount;
+                if (n <= 0 or p.ppDrlgRoomsExNear == null) continue;
+                var i: usize = 0;
+                while (i < @as(usize, @intCast(n))) : (i += 1) {
+                    const near = p.ppDrlgRoomsExNear[i] orelse continue;
+                    const nlv = near.*.pLevel orelse continue;
+                    if (nlv == pLevel) continue;
+                    if (seen_foreign.contains(near)) continue;
+                    try seen_foreign.put(out_alloc, near, {});
+                    const flid: i32 = @intFromEnum(nlv.*.eD2LevelId);
+                    const lib = blk: {
+                        for (flibs.items) |fl| {
+                            if (fl.lid == flid) break :blk fl;
+                        }
+                        const ftlv = ctx.act.level(flid) orelse continue;
+                        var ffiles: [32][]const u8 = undefined;
+                        var fcols: [32]u8 = undefined;
+                        const fnf = ctx.act.typeFilesCols(ftlv.lvl_type, &ffiles, &fcols);
+                        var fdts: std.ArrayListUnmanaged(dt1.Dt1) = .empty;
+                        var fbits: std.ArrayListUnmanaged(u8) = .empty;
+                        loadLevelDts(out_alloc, idx, ffiles[0..fnf], fcols[0..fnf], &fdts, &fbits);
+                        const nl: ForeignLib = .{
+                            .lid = flid,
+                            .dts = try fdts.toOwnedSlice(out_alloc),
+                            .bits = try fbits.toOwnedSlice(out_alloc),
+                        };
+                        try flibs.append(out_alloc, nl);
+                        break :blk nl;
+                    };
+                    const pmap = roomPMap(near) orelse continue;
+                    var fd = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
+                    defer fd.deinit();
+                    var fmr = materialize.materializeDs1(out_alloc, &fd, roomDts(lib.dts, lib.bits, pmap, &fbuf), roomWindow(near, pmap), null) catch continue;
+                    defer fmr.deinit(out_alloc);
+                    try rbs.append(out_alloc, .{
+                        .wpx = near.*.sCoords.WorldPosition.x,
+                        .wpy = near.*.sCoords.WorldPosition.y,
+                        .wtx = near.*.sCoords.WorldSize.x,
+                        .hty = near.*.sCoords.WorldSize.y,
+                        .tiles = try out_alloc.dupe(materialize.CollTile, fmr.tiles),
+                        .is_ds1 = true,
+                        .room = near,
+                        .foreign = true,
+                    });
+                }
+            }
+        }
+
     if (rbs.items.len == 0) return;
 
     // Allocate + zero each room's CollMap (ownership moves to `rooms`).
@@ -1713,6 +1786,7 @@ fn buildLevelRoomColl(
     // stamps it into each — so this is per-room containment, not a single-owner routing.
     // Source rooms whose tile bbox cannot reach R are skipped (they contribute nothing).
     for (rbs.items, 0..) |R, ri| {
+        if (R.foreign) continue; // gathered FROM, never emitted
         const gw: usize = @intCast(R.wtx * SUB);
         const gh: usize = @intCast(R.hty * SUB);
         const wtxu: usize = @intCast(R.wtx);
