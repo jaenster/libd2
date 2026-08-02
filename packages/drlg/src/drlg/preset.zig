@@ -44,7 +44,7 @@ inline fn returnZero() i32 {
 // LvlPrest row access
 // D2DrlgMapStrc.pTxtLevelPrest is typed against structs.zig's opaque
 // D2LvlPrestTxt; the real fielded row lives in tables.zig. Cast at the boundary.
-inline fn prest(pDrlgMap: [*c]s.D2DrlgMapStrc) [*c]tables.D2LvlPrestTxt {
+pub inline fn prest(pDrlgMap: [*c]s.D2DrlgMapStrc) [*c]tables.D2LvlPrestTxt {
     return @ptrCast(@alignCast(pDrlgMap.*.pTxtLevelPrest));
 }
 

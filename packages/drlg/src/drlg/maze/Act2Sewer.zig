@@ -77,14 +77,16 @@ pub fn generateSewerLevel(pDrlgLevelStrc: [*c]s.D2DrlgLevelStrc) void {
             var pNewRoom = Maze.findTopMostRoom(pDrlgLevelStrc);
             var pTempRoom = growRoom(1, pNewRoom);
             pNewRoom = growRoom(1, pTempRoom);
-            // 1.14d 0x672984: PUSH 0x14d (fixed preset id) -> AllocRoomExAndPickPreset.
-            _ = Maze.allocRoomExAndPickPreset(DIRECTION_SOUTHEAST, pNewRoom, 0x14d, -1, 1);
+            // 1.14d 0x672984: PUSH 0x1 / PUSH 0x0 / PUSH 0x14d, XOR EAX,EAX -> eDir 0,
+            // preset 0x14d, variant 0, bPickSource 1. The variant is NOT -1: it pins the
+            // room's DS1 to File[0], so SelectRandomPresetFile returns before the roll.
+            _ = Maze.allocRoomExAndPickPreset(DIRECTION_SOUTHEAST, pNewRoom, 0x14d, 0, 1);
 
             pNewRoom = Maze.findRightMostRoom(pDrlgLevelStrc);
             pTempRoom = growRoom(2, pNewRoom);
             pNewRoom = growRoom(2, pTempRoom);
-            // 1.14d 0x672a89: PUSH 0x150 (fixed preset id) -> AllocRoomExAndPickPreset.
-            pNewRoom = Maze.allocRoomExAndPickPreset(nDirection, pNewRoom, 0x150, -1, 1);
+            // 1.14d 0x672a89: PUSH 0x1 / PUSH 0x0 / PUSH 0x150 -> preset 0x150, variant 0.
+            pNewRoom = Maze.allocRoomExAndPickPreset(nDirection, pNewRoom, 0x150, 0, 1);
 
             // Final appended room in nDirection off pNewRoom (no PickRoomPresets).
             const pRoomEx = DrlgRoom.allocRoomEx(pNewRoom.*.pLevel, 2);

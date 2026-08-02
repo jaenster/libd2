@@ -108,6 +108,44 @@ pub const NearTileIndex = struct {
 
     pub const Entry = struct { n_tile_type: i32, n_flags: i32, ox: i32, oy: i32, ow: i32, oh: i32, is_blank: bool = false, owner_idx: usize = 0 };
 
+    /// gnRoomTileMappingByTypeAndLayer (Game.exe 1.14d @0x6ef620): visiting LAYER ->
+    /// transition-table row. -1 keeps the layer as-is, -2 aborts the update entirely.
+    const kMappingByLayer = [20]i32{ -1, 0, 1, 2, -1, 3, 4, 5, -2, -2, -1, -1, -1, -2, -1, -1, -1, -1, -1, -1 };
+    /// gnRoomTileMappingTransitionByType (@0x6ef574): [row * 7 + existing nTileType] ->
+    /// the layer the owner's tile is re-typed to. Six rows of seven, plus a lone 7th.
+    const kMappingTransition = [43]i32{
+        0, 1, 3, 3, 4, 1, 3,
+        1, 1, 2, 3, 4, 3, 2,
+        2, 3, 3, 3, 4, 3, 3,
+        3, 1, 3, 3, 4, 5, 6,
+        1, 3, 2, 3, 4, 3, 6,
+        2, 1, 2, 3, 4, 1, 2,
+        7,
+    };
+
+    /// The layer DRLGROOMTILE_UpdateTileType (0x66e740) settles on for the owner's tile,
+    /// or null when it returns without touching it. `visit_layer` is the layer the seam
+    /// cell asked for, `held` the type the owner's tile currently carries.
+    fn resolveLayer(visit_layer: i32, held: i32, held_flags: i32, gf: i32, searcher: Rect, ox: i32, oy: i32, wx: i32, wy: i32) ?i32 {
+        // nFlags bit 0 (grid flag 0x80) pins the tile: only wall types 8/9 get their draw
+        // flags recomputed, and the library entry is never swapped.
+        if (held_flags & 1 != 0) return if (held == 8 or held == 9) held else null;
+        if (gf & 0x80 == 0) {
+            // Wall types 8/9 on a room's top/left edge skip the mapping and keep the layer.
+            const edge_skip = (visit_layer == 8 or visit_layer == 9) and (wx == searcher.x or wy == searcher.y);
+            if (!edge_skip) {
+                if ((held == 8 or held == 9) and (wx == ox or wy == oy)) return null;
+                const row = if (visit_layer >= 0 and visit_layer < kMappingByLayer.len) kMappingByLayer[@intCast(visit_layer)] else -1;
+                if (row < 0 or held > 7) {
+                    if (row != -1) return null;
+                } else {
+                    return kMappingTransition[@intCast(row * 7 + held)];
+                }
+            }
+        }
+        return visit_layer;
+    }
+
     fn key(wx: i32, wy: i32, floor_link: bool) u64 {
         return (@as(u64, @as(u32, @bitCast(wx))) << 33) | (@as(u64, @as(u32, @bitCast(wy))) << 1) |
             @intFromBool(floor_link);
@@ -176,27 +214,27 @@ pub const NearTileIndex = struct {
         // tile rects touch (the shared seam is one tile wide).
         if (e.ox + e.ow < searcher.x or searcher.x + searcher.w < e.ox) return false;
         if (e.oy + e.oh < searcher.y or searcher.y + searcher.h < e.oy) return false;
-        if (e.is_blank and n_tile_type == 0) {
+        if (e.is_blank) {
             const mut: *NearTileIndex = @constCast(self);
             // UpdateTileType ends in SetWallTileFlags(pTileData, tileType, ..., nGridFlags):
             // the owner's tile keeps its identity slot but its DRAW flags are recomputed
             // from the VISITING cell's grid flags. That is where COLLIDE_BLOCK_PLAYER comes
             // from on a re-typed seam blank (gf 0x20000 -> nFlags 0x40 -> 0x01), so the swap
             // has to carry the new nFlags as well as the new entry.
-            // TODO: nTileType is pinned at 0 (floor). UpdateTileType actually maps it
-            // through gnRoomTileMappingByTypeAndLayer + gnRoomTileMappingTransitionByType,
-            // and when that mapping lands on a WALL type the re-resolve returns a
-            // zero-block entry instead of the Blank — which is the last 100-cell residual
-            // (L34/36/66/67 seams, golden 0x01 vs our 0x05). Porting those two tables is
-            // what closes it.
-            var td: s.D2DrlgTileDataStrc = std.mem.zeroes(s.D2DrlgTileDataStrc);
-            tilegen.setWallTileFlags(&td, 0, @bitCast(gf));
-            mut.markBlankReplaced(wx, wy, .{
-                .tile = mut.reresolveOnOwner(e.owner_idx, 0, gf),
-                .n_flags = td.nFlags,
-                .ox = e.ox,
-                .oy = e.oy,
-            });
+            // The layer is not pinned at 0: the two mapping tables decide what the owner's
+            // tile becomes. When they land on a WALL type the owner room has no such entry
+            // and the re-resolve yields the zero-collision fallback, which is why the
+            // engine reads 0x01 on these seams where a kept Blank would read 0x05.
+            if (resolveLayer(n_tile_type, e.n_tile_type, e.n_flags, gf, searcher, e.ox, e.oy, wx, wy)) |layer| {
+                var td: s.D2DrlgTileDataStrc = std.mem.zeroes(s.D2DrlgTileDataStrc);
+                tilegen.setWallTileFlags(&td, layer, @bitCast(gf));
+                mut.markBlankReplaced(wx, wy, .{
+                    .tile = mut.reresolveOnOwner(e.owner_idx, layer, gf),
+                    .n_flags = td.nFlags,
+                    .ox = e.ox,
+                    .oy = e.oy,
+                });
+            }
         }
         if (e.n_tile_type == 4) return false;
         if (e.n_tile_type != 0xd and (gf & CELLFLAGS_0x8000000) != 0) return false;
