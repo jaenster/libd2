@@ -53,6 +53,7 @@ pub var probe_only_level: i32 = -1;
 /// Set by the caller as it walks levels/rooms, so probe output can be attributed.
 pub var probe_cur_level: i32 = -1;
 pub var probe_cur_room: [2]i32 = .{ -1, -1 };
+pub var probe_cur_cell: [2]i32 = .{ -1, -1 };
 
 inline fn probing() bool {
     return probe_seq and (probe_only_level < 0 or probe_only_level == probe_cur_level);
@@ -153,7 +154,7 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
 
     const nCount = lookupTilesInAllProjects(pRoomEx, nTileType, nMainIndex, nSub, &aTileResults, 0x28);
     if (probing()) {
-        std.debug.print("SEQ {d} {d} {d} {X} {X}\n", .{ probe_cur_room[0], probe_cur_room[1], nTileType, nGridFlags, @as(u32, @bitCast(pRoomEx.*.sSeed.nSeedLow)) });
+        std.debug.print("SEQ {d} {d} {d} {X} {X} {d} {d}\n", .{ probe_cur_room[0], probe_cur_room[1], nTileType, nGridFlags, @as(u32, @bitCast(pRoomEx.*.sSeed.nSeedLow)), probe_cur_cell[0], probe_cur_cell[1] });
     }
     if (nCount == 0) {
         // Engine (0x66d820 line 1385): retry as the special orientation-10 (main=0,
