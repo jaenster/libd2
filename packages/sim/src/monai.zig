@@ -53,6 +53,13 @@ pub const Script = enum {
     /// Burrows: submerges (invulnerable + untargetable) for its burrow duration, then surfaces next to
     /// the target and strikes (SandRaider @0x5f0700 emerge-ambush). Fights normally while surfaced.
     burrower,
+    /// Coward: flees from the target while its life is below a threshold, otherwise fights normally.
+    /// Vampire @0x5f4a70 (flee <33% life) and PantherWoman @0x5f22b0 (pack-flee) sit here.
+    coward,
+    /// Ally support: heals the nearest wounded fellow monster in range each think, then fights via the
+    /// generic loop. Overseer @0x5e27a0 (whip-heal), ZakarumPriest @0x5f72d0, OblivionKnight @0x5faf00
+    /// (buff/curse) and Nihlathak @0x5ee5d0 (heal minions) all keep their allies up.
+    ally_support,
     /// Non-combat: town folk and neutral critters with no aggression (Idle/None/Npc*/Towner/Vendor).
     /// The host runs no attack loop for these.
     passive,
@@ -64,20 +71,30 @@ pub const Script = enum {
     pub fn fromName(name: []const u8) Script {
         if (eq(name, "Fallen")) return .fallen;
         if (eq(name, "FallenShaman")) return .fallen_shaman;
-        // Skittish ranged: QuillRat family + Skeleton archers; SuccubusWitch retreats to keep aip4.
-        if (inAny(name, &.{ "QuillRat", "QuillMother", "SkeletonBow", "SuccubusWitch" })) return .ranged_kite;
-        if (eq(name, "GreaterMummy")) return .raiser;
-        if (inAny(name, &.{ "SandMaggot", "SandMaggotQueen" })) return .spawner;
+        // Skittish ranged: hold distance and shoot, retreating from melee (RE-confirmed retreat calls).
+        if (inAny(name, &.{
+            "QuillRat",     "QuillMother", "SkeletonBow",  "SuccubusWitch", "CorruptArcher",
+            "SkeletonMage", "FingerMage",  "ThornHulk",    "PantherJavelin", "Mosquito",
+        })) return .ranged_kite;
+        // Raise the dead: rez nearby corpses (GreaterMummy) / raise zombies (BloodRaven Skill1).
+        if (inAny(name, &.{ "GreaterMummy", "BloodRaven" })) return .raiser;
+        // Lay/spawn own minions up to a cap while fighting.
+        if (inAny(name, &.{ "SandMaggot", "SandMaggotQueen", "VileMother", "Scarab", "Vulture", "FetishShaman" })) return .spawner;
         if (inAny(name, &.{ "Mephisto", "BaalCrab", "BaalCrabClone" })) return .boss_teleport;
         if (eq(name, "Duriel")) return .aura_chill;
         if (eq(name, "SandRaider")) return .burrower;
+        // Low-life / pack fleers.
+        if (inAny(name, &.{ "Vampire", "PantherWoman" })) return .coward;
+        // Ally supporters (heal/buff/rez fellow monsters).
+        if (inAny(name, &.{ "Overseer", "ZakarumPriest", "OblivionKnight", "Nihlathak" })) return .ally_support;
+        // Emplacements that never move — includes FrozenHorror (ranged cold caster, holds position).
         // Emplacements that never move — they must NOT charge like a generic monster.
         if (inAny(name, &.{
             "Hydra",          "ArcaneTower",   "DesertTurret", "Catapult",     "CatapultSpotter",
             "Totem",          "GargoyleTrap",  "Trap-LeftArrow", "Trap-RightArrow", "Trap-Missile",
             "Trap-Melee",     "Trap-Nova",     "Trap-Poison",  "BoneWall",     "HellMeteor",
             "Sarcophagus",    "EvilHole",      "Vines",        "MosquitoNest", "FoulCrowNest",
-            "MaggotEgg",      "AncientStatue",
+            "MaggotEgg",      "AncientStatue", "FrozenHorror",
         })) return .stationary;
         // Town / neutral NPCs and harmless critters — no combat AI.
         if (inAny(name, &.{
@@ -203,6 +220,16 @@ test "monai: Script.fromName classifies AI names case-insensitively" {
     try testing.expectEqual(Script.ranged_kite, Script.fromName("SuccubusWitch"));
     try testing.expectEqual(Script.aura_chill, Script.fromName("Duriel"));
     try testing.expectEqual(Script.burrower, Script.fromName("SandRaider"));
+    // Wave-2 reclassifications (RE-verified, not name-guessed).
+    try testing.expectEqual(Script.ranged_kite, Script.fromName("CorruptArcher"));
+    try testing.expectEqual(Script.ranged_kite, Script.fromName("SkeletonMage"));
+    try testing.expectEqual(Script.stationary, Script.fromName("FrozenHorror"));
+    try testing.expectEqual(Script.spawner, Script.fromName("VileMother"));
+    try testing.expectEqual(Script.spawner, Script.fromName("Vulture"));
+    try testing.expectEqual(Script.raiser, Script.fromName("BloodRaven"));
+    try testing.expectEqual(Script.coward, Script.fromName("Vampire"));
+    try testing.expectEqual(Script.ally_support, Script.fromName("Overseer"));
+    try testing.expectEqual(Script.ally_support, Script.fromName("Nihlathak"));
     // Summoner is a pure multi-skill caster (no summon/teleport); non-blinking bosses -> generic baseline.
     try testing.expectEqual(Script.generic, Script.fromName("Summoner"));
     try testing.expectEqual(Script.generic, Script.fromName("Diablo"));
