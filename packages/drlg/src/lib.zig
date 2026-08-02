@@ -1820,7 +1820,12 @@ fn buildLevelRoomColl(
                     // rather than silently un-blocking the cell.
                     if (near_tiles.blankReplacement(otx, oty)) |sw| {
                         if (sw.ox == A.wpx and sw.oy == A.wpy) {
-                            if (sw.tile) |t| ct2.tile = t;
+                            // The owner's Blank is re-typed in place. GetTileLibraryEntry
+                            // never yields nothing in-engine (it falls back to the
+                            // zero-collision type-10 tile), so an unresolved identity here
+                            // means our library missed — fall back the same way rather than
+                            // leaving solid rock behind.
+                            ct2.tile = sw.tile orelse materialize.zeroCollisionTile();
                             ct2.nFlags = sw.n_flags;
                         }
                     }

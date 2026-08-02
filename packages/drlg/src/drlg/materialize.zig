@@ -183,6 +183,12 @@ pub const NearTileIndex = struct {
             // from the VISITING cell's grid flags. That is where COLLIDE_BLOCK_PLAYER comes
             // from on a re-typed seam blank (gf 0x20000 -> nFlags 0x40 -> 0x01), so the swap
             // has to carry the new nFlags as well as the new entry.
+            // TODO: nTileType is pinned at 0 (floor). UpdateTileType actually maps it
+            // through gnRoomTileMappingByTypeAndLayer + gnRoomTileMappingTransitionByType,
+            // and when that mapping lands on a WALL type the re-resolve returns a
+            // zero-block entry instead of the Blank — which is the last 100-cell residual
+            // (L34/36/66/67 seams, golden 0x01 vs our 0x05). Porting those two tables is
+            // what closes it.
             var td: s.D2DrlgTileDataStrc = std.mem.zeroes(s.D2DrlgTileDataStrc);
             tilegen.setWallTileFlags(&td, 0, @bitCast(gf));
             mut.markBlankReplaced(wx, wy, .{
@@ -199,6 +205,12 @@ pub const NearTileIndex = struct {
         return owner_layer == (@as(u32, @bitCast(gf)) >> 0x12 & 3);
     }
 };
+
+/// The engine's type-10 fallback entry: a real tile with an all-zero collision block.
+const zero_coll_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 0, .rarity = 1, .flags = [_]u8{0} ** 25 };
+pub fn zeroCollisionTile() *const dt1.Tile {
+    return &zero_coll_tile;
+}
 
 pub const Rect = struct { x: i32, y: i32, w: i32, h: i32 };
 
