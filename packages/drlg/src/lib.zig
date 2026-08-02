@@ -1453,7 +1453,7 @@ fn materializeLevelColl(
             const rel = preset.presetDs1Path(pmap) orelse continue;
             var d = preset.unpackDs1(out_alloc, rel) orelse continue;
             defer d.deinit();
-            var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap)) catch continue;
+            var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap), null) catch continue;
             defer mr.deinit(out_alloc);
             try grids.append(out_alloc, .{
                 .x = gx,
@@ -1707,6 +1707,13 @@ pub fn generateActRoomCollision(
             rbs.deinit(out_alloc);
         }
 
+        // Level-wide tile index for the engine's UpdateOrAddTile seam handling: a
+        // room's seam cell whose tile an EARLIER room already owns creates nothing and
+        // rolls nothing here. Rooms are walked in pRoomExFirst order, which is the
+        // order InitLevel builds them, so "earlier" matches the engine.
+        var near_tiles: materialize.NearTileIndex = .{};
+        defer near_tiles.deinit(out_alloc);
+
         var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
         while (pr) |p| : (pr = p.pRoomExNext) {
             tilegen.probe_cur_room = .{ p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB };
@@ -1714,15 +1721,30 @@ pub fn generateActRoomCollision(
                 if (roomPMap(p)) |pmap| {
                     var d = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
                     defer d.deinit();
-                    var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap)) catch continue;
+                    var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap), .{
+                        .index = &near_tiles,
+                        .alloc = out_alloc,
+                        .wx = p.sCoords.WorldPosition.x,
+                        .wy = p.sCoords.WorldPosition.y,
+                        .w = p.sCoords.WorldSize.x,
+                        .h = p.sCoords.WorldSize.y,
+                    }) catch continue;
                     defer mr.deinit(out_alloc);
-                    if (probe_room) |pb| if (pb.level == lid)
-                        std.debug.print("ROOMINFO {d},{d} floors={d} walls={d} shadows={d} special={d} warp={d} trans={d}\n", .{
+                    if (probe_room) |pb| if (pb.level == lid) {
+                        var shadow_nz: usize = 0;
+                        for (d.shadow) |c| {
+                            if (c.raw != 0) shadow_nz += 1;
+                        }
+                        std.debug.print("ROOMINFO {d},{d} ds1={s} floorlayers={d} walllayers={d} shadow_len={d} shadow_nz={d} floors={d} walls={d} shadows={d} upd={d}\n", .{
                             p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB,
-                            mr.n_floors,                     mr.n_walls,
-                            mr.n_shadows,                    mr.special_count,
-                            mr.warp_setup_skipped,           mr.transition_skipped,
+                            preset.presetDs1Path(pmap) orelse "?",
+                            d.floor_layers.len,              d.wall_layers.len,
+                            d.shadow.len,                    shadow_nz,
+                            mr.n_floors,
+                            mr.n_walls,                      mr.n_shadows,
+                            mr.transition_updated,
                         });
+                    };
                     break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
                 } else if (p.eRoomExFlags.noLos) {
                     const sub_type2, const sub_theme2, const sub_picked2 = t: {

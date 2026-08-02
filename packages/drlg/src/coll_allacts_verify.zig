@@ -43,6 +43,8 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
     defer ctx.deinit();
 
+    lib.dump_mismatch_cells = true;
+    defer lib.dump_mismatch_cells = false;
     const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, true);
     const pct: u64 = if (r.total_cells > 0) @as(u64, r.masked_ok) * 100 / r.total_cells else 0;
     std.debug.print(
@@ -56,9 +58,9 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     // active at that moment, so a plain activate+dump walk bakes the activation
     // ORDER into the capture (645 cells / 36 rooms at seed 1). The capture now
     // frees + re-allocs every room's grid after the full level walk, giving the
-    // steady-state map the port targets. Measured 11,086,289 (99.986%) after the
-    // type-3 wall-companion fix.
-    try std.testing.expect(r.masked_ok >= 11_086_200);
+    // steady-state map the port targets. Measured 11,086,361 (99.9866%) after the
+    // type-3 wall-companion fix + the UpdateOrAddTile seam path.
+    try std.testing.expect(r.masked_ok >= 11_086_300);
 }
 
 test "coll: all-acts golden (seed 777, cross-seed regression)" {
@@ -80,8 +82,8 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
     try std.testing.expectEqual(@as(u32, 777), r.seed);
     try std.testing.expect(r.matched_rooms > 0);
     try std.testing.expectEqual(@as(usize, 0), r.dim_mismatch);
-    // Rebuilt (all-rooms-active) golden; 11,156,455 after the type-3 wall-companion fix.
-    try std.testing.expect(r.masked_ok >= 11_156_400);
+    // Rebuilt (all-rooms-active) golden; 11,156,611 after the UpdateOrAddTile seam path.
+    try std.testing.expect(r.masked_ok >= 11_156_550);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
@@ -125,16 +127,16 @@ test "coll: single-level focus (probe)" {
     const gpa = std.testing.allocator;
     const golden = decompressGolden(gpa) catch return;
     defer gpa.free(golden);
-    const one = try filterToLevels(gpa, golden, 19, 19);
+    const one = try filterToLevels(gpa, golden, 35, 35);
     defer gpa.free(one);
     var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
     defer ctx.deinit();
     // px/py = -1 probes every room of the level.
-    lib.probe_room = .{ .level = 19, .px = -1, .py = -1 };
+    lib.probe_room = .{ .level = 35, .px = -1, .py = -1 };
     defer lib.probe_room = null;
     @import("drlg/tilegen.zig").probe_seq = true;
-    defer @import("drlg/tilegen.zig").probe_seq = false;
-    @import("drlg/tilegen.zig").probe_only_level = 19;
+    defer @import("drlg/tilegen.zig").probe_seq = true;
+    @import("drlg/tilegen.zig").probe_only_level = 35;
     defer @import("drlg/tilegen.zig").probe_only_level = -1;
     lib.dump_mismatch_cells = true;
     defer lib.dump_mismatch_cells = false;
@@ -164,7 +166,6 @@ test "coll: Act-1 from all-acts golden (seed 1, per-cell floor)" {
     defer ctx.deinit();
     const r = try lib.verifyActCollision(gpa, &ctx, act1, .nightmare, false);
     try std.testing.expectEqual(@as(u32, 1), r.seed);
-    // Precise Act-1 tracker for the session's outdoor sub-theme / DS1-parse fixes.
-    // Never regress; raise as fidelity climbs.
-    try std.testing.expect(r.masked_ok >= 2_189_500);
+    // Precise Act-1 tracker. Never regress; raise as fidelity climbs.
+    try std.testing.expect(r.masked_ok >= 2_219_600);
 }
