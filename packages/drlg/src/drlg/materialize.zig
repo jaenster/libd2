@@ -86,13 +86,16 @@ const CELLFLAGS_0x80000000: i32 = @bitCast(@as(u32, 0x80000000));
 /// therefore emit the seam tile exactly once, and the receiving room's seed
 /// stream stays aligned. The caller populates this after each room is done
 /// (FindTileInNearRooms skips the searching room itself).
-/// UpdateTileType's bNeedUpdate re-resolve is only approximated (the owner's seed is
-/// gone by the time a later room reaches its tile), and the approximation trades an
-/// OVER-blocked cell for an UNDER-blocked one — worse for a pathing consumer, and
-/// marginally worse against the golden. Off until the owner seed is carried.
-const blank_swap_enabled = false;
-
 pub const NearTileIndex = struct {
+    /// One already-built room, kept alive past its own materialization: the engine's
+    /// UpdateTileType re-resolve rolls on the OWNER room's seed and resolves in the
+    /// OWNER's tile library, so both have to outlive the room that produced them.
+    pub const Owner = struct {
+        dts: []const dt1.Dt1,
+        seed: s.D2SeedStrc,
+        rect: Rect,
+    };
+    owners: std.ArrayListUnmanaged(Owner) = .empty,
     /// key = world tile (x,y) + link class; value = the owning tile's identity bits.
     map: std.AutoHashMapUnmanaged(u64, Entry) = .empty,
     /// Seam hits where UpdateTileType's bNeedUpdate fired: the owner's tile is a
@@ -100,10 +103,10 @@ pub const NearTileIndex = struct {
     /// against the VISITING room's grid flags and swaps the owner tile's library
     /// entry — the owner's solid-rock blank stops being solid rock. Recorded here so
     /// the caller can apply it to the owner's already-collected tile list.
-    blank_replaced: std.AutoHashMapUnmanaged(u64, ?*const dt1.Tile) = .empty,
+    blank_replaced: std.AutoHashMapUnmanaged(u64, Swap) = .empty,
     patch_alloc: std.mem.Allocator = undefined,
 
-    pub const Entry = struct { n_tile_type: i32, n_flags: i32, ox: i32, oy: i32, ow: i32, oh: i32, is_blank: bool = false };
+    pub const Entry = struct { n_tile_type: i32, n_flags: i32, ox: i32, oy: i32, ow: i32, oh: i32, is_blank: bool = false, owner_idx: usize = 0 };
 
     fn key(wx: i32, wy: i32, floor_link: bool) u64 {
         return (@as(u64, @as(u32, @bitCast(wx))) << 33) | (@as(u64, @as(u32, @bitCast(wy))) << 1) |
@@ -113,21 +116,47 @@ pub const NearTileIndex = struct {
     pub fn deinit(self: *NearTileIndex, a: std.mem.Allocator) void {
         self.map.deinit(a);
         self.blank_replaced.deinit(a);
+        for (self.owners.items) |o| a.free(o.dts);
+        self.owners.deinit(a);
+    }
+
+    /// DRLGROOMTILE_UpdateTileType (0x66e740), the bNeedUpdate arm: the owner's tile is
+    /// a FLOOR carrying Blank(30,0), so the engine re-resolves it for the VISITING
+    /// room's grid flags — `GetTileLibraryEntry(pOwnerRoom, nTileLayer, nGridFlags)` —
+    /// which rolls the OWNER's seed and swaps the owner tile's library entry. Replayed
+    /// here against the owner's persisted seed + library, so the owner's stream advances
+    /// exactly as the engine's does and later re-resolves into the same room follow on.
+    fn reresolveOnOwner(self: *NearTileIndex, owner_idx: usize, n_tile_type: i32, gf: i32) ?*const dt1.Tile {
+        if (owner_idx >= self.owners.items.len) return null;
+        const o = &self.owners.items[owner_idx];
+        var tlib = tilegen.TileLib{ .dts = o.dts };
+        var room: s.D2RoomExStrc = std.mem.zeroes(s.D2RoomExStrc);
+        room.sSeed = o.seed;
+        room.apTiles[0] = @ptrCast(&tlib);
+        room.sCoords = .{ .WorldPosition = .{ .x = o.rect.x, .y = o.rect.y }, .WorldSize = .{ .x = o.rect.w, .y = o.rect.h } };
+        // The engine passes the OWNER room to GetTileLibraryEntry, so its seqtile
+        // record is attributed to the owner, not to the room that triggered it.
+        const saved_room = tilegen.probe_cur_room;
+        tilegen.probe_cur_room = .{ o.rect.x * SUBTILES, o.rect.y * SUBTILES };
+        const e = tilegen.getTileLibraryEntry(&room, n_tile_type, @bitCast(gf));
+        tilegen.probe_cur_room = saved_room;
+        o.seed = room.sSeed; // the roll is permanent on the owner's stream
+        return e;
     }
 
     /// The entry a seam hit re-resolved the blank floor owned at this world cell to,
     /// or null if no hit re-typed it.
-    pub fn blankReplacement(self: *const NearTileIndex, wx: i32, wy: i32) ??*const dt1.Tile {
+    pub fn blankReplacement(self: *const NearTileIndex, wx: i32, wy: i32) ?Swap {
         return self.blank_replaced.get(key(wx, wy, true));
     }
 
-    pub fn add(self: *NearTileIndex, a: std.mem.Allocator, wx: i32, wy: i32, n_tile_type: i32, n_flags: i32, owner: Rect, is_blank: bool) !void {
+    pub fn add(self: *NearTileIndex, a: std.mem.Allocator, wx: i32, wy: i32, n_tile_type: i32, n_flags: i32, owner: Rect, is_blank: bool, owner_idx: usize) !void {
         // Companions (type 4) are never matched by FindTileAtPosition, so they are
         // not owners either. First writer wins: the engine walks a room's tile list
         // and returns the first hit.
         if (n_tile_type == 4) return;
         const gop = try self.map.getOrPut(a, key(wx, wy, n_tile_type == 0));
-        if (!gop.found_existing) gop.value_ptr.* = .{ .n_tile_type = n_tile_type, .n_flags = n_flags, .ox = owner.x, .oy = owner.y, .ow = owner.w, .oh = owner.h, .is_blank = is_blank };
+        if (!gop.found_existing) gop.value_ptr.* = .{ .n_tile_type = n_tile_type, .n_flags = n_flags, .ox = owner.x, .oy = owner.y, .ow = owner.w, .oh = owner.h, .is_blank = is_blank, .owner_idx = owner_idx };
     }
 
     /// FindTileAtPosition's match: same world cell, same link class, owner type != 4,
@@ -135,19 +164,22 @@ pub const NearTileIndex = struct {
     /// owner's layer index (nFlags bits 0x1c000, written as (layer+1)<<0xe) must
     /// either be absent or equal the requesting cell's layer ((gf>>0x12)&3).
     /// UpdateTileType's bNeedUpdate swap (see `blank_replaced`).
-    fn markBlankReplaced(self: *const NearTileIndex, wx: i32, wy: i32, replacement: ?*const dt1.Tile) void {
+    fn markBlankReplaced(self: *const NearTileIndex, wx: i32, wy: i32, sw: Swap) void {
         const mut: *NearTileIndex = @constCast(self);
-        mut.blank_replaced.put(mut.patch_alloc, key(wx, wy, true), replacement) catch {};
+        mut.blank_replaced.put(mut.patch_alloc, key(wx, wy, true), sw) catch {};
     }
 
-    pub fn find(self: *const NearTileIndex, wx: i32, wy: i32, n_tile_type: i32, gf: i32, searcher: Rect, replacement: ?*const dt1.Tile) bool {
+    pub fn find(self: *const NearTileIndex, wx: i32, wy: i32, n_tile_type: i32, gf: i32, searcher: Rect) bool {
         const e = self.map.get(key(wx, wy, n_tile_type == 0)) orelse return false;
         // FindTileInNearRooms only walks ppDrlgRoomsExNear, so an owner that is not a
         // neighbour of the searching room is invisible. Rooms are "near" when their
         // tile rects touch (the shared seam is one tile wide).
         if (e.ox + e.ow < searcher.x or searcher.x + searcher.w < e.ox) return false;
         if (e.oy + e.oh < searcher.y or searcher.y + searcher.h < e.oy) return false;
-        if (blank_swap_enabled and e.is_blank and n_tile_type == 0) self.markBlankReplaced(wx, wy, replacement);
+        if (e.is_blank and n_tile_type == 0) {
+            const mut: *NearTileIndex = @constCast(self);
+            mut.markBlankReplaced(wx, wy, .{ .tile = mut.reresolveOnOwner(e.owner_idx, 0, gf), .ox = e.ox, .oy = e.oy });
+        }
         if (e.n_tile_type == 4) return false;
         if (e.n_tile_type != 0xd and (gf & CELLFLAGS_0x8000000) != 0) return false;
         if ((e.n_flags & 0x1c000) == 0) return true;
@@ -157,6 +189,10 @@ pub const NearTileIndex = struct {
 };
 
 pub const Rect = struct { x: i32, y: i32, w: i32, h: i32 };
+
+/// A re-resolved seam tile: the new entry plus the OWNER whose tile it belongs to —
+/// the engine mutates exactly that one tile, not every blank sharing the world cell.
+pub const Swap = struct { tile: ?*const dt1.Tile, ox: i32, oy: i32 };
 
 pub const LinkedTile = struct { wx: i32, wy: i32, n_tile_type: i32, n_flags: i32, is_blank: bool };
 
@@ -536,10 +572,12 @@ fn processTile(nFlags_in: i32, pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nPar
 /// Only these are linked into pRoomTiles->pMapLinks, so only these can ever be
 /// returned by FindTileAtPosition — the tiles ProcessTile creates on its direct
 /// path are invisible to a neighbour's seam lookup.
-fn publishRoomTiles(n: NearRooms, linked: []const LinkedTile) !void {
+fn publishRoomTiles(n: NearRooms, linked: []const LinkedTile, dts: []const dt1.Dt1, final_seed: s.D2SeedStrc) !void {
     const owner: Rect = .{ .x = n.wx, .y = n.wy, .w = n.w, .h = n.h };
     n.index.patch_alloc = n.alloc;
-    for (linked) |t| try n.index.add(n.alloc, t.wx, t.wy, t.n_tile_type, t.n_flags, owner, t.is_blank);
+    const owner_idx = n.index.owners.items.len;
+    try n.index.owners.append(n.alloc, .{ .dts = try n.alloc.dupe(dt1.Dt1, dts), .seed = final_seed, .rect = owner });
+    for (linked) |t| try n.index.add(n.alloc, t.wx, t.wy, t.n_tile_type, t.n_flags, owner, t.is_blank, owner_idx);
 }
 
 /// DRLGROOMTILE_UpdateOrAddTile (0x66e940) -> FindTileInNearRooms / AddTileData
@@ -548,12 +586,7 @@ fn publishRoomTiles(n: NearRooms, linked: []const LinkedTile) !void {
 /// through the shared tile list, so nothing is emitted or rolled here).
 fn updateOrAddTile(pRoom: [*c]s.D2RoomExStrc, nTileType: i32, nX: i32, nY: i32, nFlags: i32) void {
     if (g_ctx.near) |near| {
-        // The engine re-resolves the owner's tile against THIS room's grid flags,
-        // rolling on the OWNER's seed. The owner's seed is gone by now, so take the
-        // first candidate of the identity — variants of one identity mostly share a
-        // collision block, and the identity is what decides the cell's flags.
-        const repl: ?*const dt1.Tile = if (nTileType == 0) tilegen.firstTileOfGridFlags(pRoom, 0, @bitCast(nFlags)) else null;
-        if (near.find(g_ctx.room_wx + nX, g_ctx.room_wy + nY, nTileType, nFlags, g_ctx.room_rect, repl)) {
+        if (near.find(g_ctx.room_wx + nX, g_ctx.room_wy + nY, nTileType, nFlags, g_ctx.room_rect)) {
             g_ctx.transition_updated += 1;
             return;
         }
@@ -649,6 +682,21 @@ fn flagBorderCells(g: *const OwnedGrid, flag: i32) void {
     for (1..height) |y| {
         cells[@intCast(rows[y])] |= flag;
         cells[@intCast(rows[y] + @as(i32, @intCast(width)) - 1)] |= flag;
+    }
+}
+
+/// DrlgGrid::AlterAllGridFlags as called by DRLGPRESET_InitGridsFromDS1File: OR a flag
+/// into EVERY cell of a grid (as opposed to FlagOperations' border ring). Used to stamp
+/// each layer's index into its own cells as `i << 0x12`, which is what later reappears
+/// in a tile's nFlags as ((layer+1) << 0xe) and is how FindTileAtPosition tells a seam
+/// tile of one layer from another.
+fn flagAllCells(g: *const OwnedGrid, flag: i32) void {
+    const wgrid = g.grid;
+    const height: usize = @intCast(wgrid.nHeight);
+    const width: usize = @intCast(wgrid.nWidth);
+    const rows = wgrid.pCellsRowOffsets[0..height];
+    for (0..height) |y| {
+        for (0..width) |x| wgrid.pCellsFlags[@intCast(rows[y] + @as(i32, @intCast(x)))] |= flag;
     }
 }
 
@@ -921,9 +969,12 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     for (shadow_cells, 0..) |*c, i| c.* = @bitCast(d.shadow[i].raw);
     var shadow_grid = try buildGridWindow(ar, shadow_cells, w, win.off_x, win.off_y, winW, winH);
 
-    // InitGridsFromDS1File's border pass: wall grid 0, every floor grid, and the
-    // shadow/cell grid (NOT the orientation grids) get 0x84 OR'd into their ring.
+    // InitGridsFromDS1File, in its order: the wall-grid border ring, then each layer's
+    // index into all of its own cells (wall grids 1.., every floor grid), then the floor
+    // and cell-grid border rings. Orientation grids get neither.
     if (wall_grids.len != 0) flagBorderCells(&wall_grids[0], CELLFLAGS_0x04);
+    for (wall_grids[@min(1, wall_grids.len)..], 1..) |*g, li| flagAllCells(g, @as(i32, @intCast(li)) << 0x12);
+    for (floor_grids, 0..) |*g, li| flagAllCells(g, @as(i32, @intCast(li)) << 0x12);
     for (floor_grids) |*g| flagBorderCells(g, CELLFLAGS_0x04);
     flagBorderCells(&shadow_grid, CELLFLAGS_0x04);
 
@@ -1056,7 +1107,7 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
 
     // Publish this room's tiles for the rooms built after it (FindTileInNearRooms
     // skips the searching room, so this must happen only once the room is done).
-    if (near) |n| try publishRoomTiles(n, ctx.linked.items);
+    if (near) |n| try publishRoomTiles(n, ctx.linked.items, dts, room.sSeed);
 
     return .{
         .coll = coll,

@@ -1736,9 +1736,16 @@ fn buildLevelRoomColl(
                 // rock anywhere it stamps.
                 var ct2 = ct;
                 if (ct.is_floor and ct.tile.main == 30) {
-                    if (near_tiles.blankReplacement(otx, oty)) |repl| {
-                        if (repl) |t| ct2.tile = t else continue;
-                    }
+                    // A seam re-resolve swapped the owner's Blank for whatever the visiting
+                    // cell's identity resolves to — often the same Blank. GetTileLibraryEntry
+                    // never yields nothing in-engine (it falls back to the type-10 tile), so
+                    // an unresolved identity here means OUR lookup missed: keep the original
+                    // rather than silently un-blocking the cell.
+                    if (blank_swap_enabled) if (near_tiles.blankReplacement(otx, oty)) |sw| {
+                        if (sw.ox == A.wpx and sw.oy == A.wpy) {
+                            if (sw.tile) |t| ct2.tile = t;
+                        }
+                    };
                 }
                 if (probe_room) |pb| if (pb.level == lid and (pb.px < 0 or (pb.px == R.wpx * SUB and pb.py == R.wpy * SUB))) {
                     dprint("PROBE L{d} room({d},{d}) tile({d},{d}) from{s} orient={d} main={d} sub={d} rar={d} nFlags=0x{X} blk=", .{
@@ -1928,6 +1935,11 @@ pub var dump_ours_rooms: bool = false;
 /// Debug: when set, verifyActCollision prints one line per masked-0x1F mismatching
 /// subtile as `MISM <level> <px> <py> <w> <h> <lx> <ly> <golden0x1F> <ours0x1F>`, for
 /// offline classification of what mechanism each residual cell belongs to.
+/// The seam-blank re-resolve (UpdateTileType's bNeedUpdate arm) is ported but OFF:
+/// replaying it faithfully still turns an over-blocked cell into an under-blocked one,
+/// so something upstream of it is wrong. Flip to compare.
+const blank_swap_enabled = false;
+
 pub var dump_mismatch_cells: bool = false;
 
 /// Debug: verify the SHIPPED consumer path (generateActCollisionAll, what the C-ABI
