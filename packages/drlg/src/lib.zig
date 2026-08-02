@@ -1744,11 +1744,12 @@ fn buildLevelRoomColl(
                     // never yields nothing in-engine (it falls back to the type-10 tile), so
                     // an unresolved identity here means OUR lookup missed: keep the original
                     // rather than silently un-blocking the cell.
-                    if (blank_swap_enabled) if (near_tiles.blankReplacement(otx, oty)) |sw| {
+                    if (near_tiles.blankReplacement(otx, oty)) |sw| {
                         if (sw.ox == A.wpx and sw.oy == A.wpy) {
                             if (sw.tile) |t| ct2.tile = t;
+                            ct2.nFlags = sw.n_flags;
                         }
-                    };
+                    }
                 }
                 if (probe_room) |pb| if (pb.level == lid and (pb.px < 0 or (pb.px == R.wpx * SUB and pb.py == R.wpy * SUB))) {
                     dprint("PROBE L{d} room({d},{d}) tile({d},{d}) src({d},{d} {d}x{d}) rel({d},{d}) from{s} orient={d} main={d} sub={d} rar={d} nFlags=0x{X} blk=", .{
@@ -1940,11 +1941,6 @@ pub var dump_ours_rooms: bool = false;
 /// Debug: when set, verifyActCollision prints one line per masked-0x1F mismatching
 /// subtile as `MISM <level> <px> <py> <w> <h> <lx> <ly> <golden0x1F> <ours0x1F>`, for
 /// offline classification of what mechanism each residual cell belongs to.
-/// The seam-blank re-resolve (UpdateTileType's bNeedUpdate arm) is ported but OFF:
-/// replaying it faithfully still turns an over-blocked cell into an under-blocked one,
-/// so something upstream of it is wrong. Flip to compare.
-const blank_swap_enabled = false;
-
 pub var dump_mismatch_cells: bool = false;
 
 /// Debug: verify the SHIPPED consumer path (generateActCollisionAll, what the C-ABI
