@@ -13,6 +13,11 @@ const lib = @import("lib.zig");
 
 const GOLDEN_GZ = @embedFile("golden/coll_seed1_all.jsonl.gz");
 const GOLDEN_777_GZ = @embedFile("golden/coll_seed777_all.jsonl.gz");
+/// A THIRD per-cell seed. Seeds 1 and 777 are both byte-clean on 127 of 131 levels, so
+/// neither can see the defect that fails 15 maze levels on the cross-seed CRC gate while
+/// they are perfect at seed 1 — seed 2 can (953 of its 1203 wrong cells are one Sewers
+/// room). Captured 2026-08-02 with the same d2probe build as the other two.
+const GOLDEN_2_GZ = @embedFile("golden/coll_seed2_all.jsonl.gz");
 
 fn decompressGolden(gpa: std.mem.Allocator) ![]u8 {
     return decompressGz(gpa, GOLDEN_GZ);
@@ -61,6 +66,21 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     // steady-state map the port targets. Measured 11,087,540 (99.99720%) after the
     // seam re-resolve + cross-level gather.
     try std.testing.expect(r.masked_ok >= 11_087_740);
+}
+
+test "coll: all-acts golden (seed 2, maze cross-seed probe)" {
+    const gpa = std.testing.allocator;
+    const golden = decompressGz(gpa, GOLDEN_2_GZ) catch return;
+    defer gpa.free(golden);
+    var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+    const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
+    std.debug.print("[coll all-acts seed 2] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n", .{ r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok });
+    try std.testing.expectEqual(@as(u32, 2), r.seed);
+    try std.testing.expectEqual(@as(u32, 0), r.dim_mismatch);
+    // Never regress. Currently 1203 masked / 632 walkable off, nearly all of it one maze
+    // room (L47 Sewers 1) — the substitution-group replay this port does not do.
+    try std.testing.expect(r.masked_ok >= 11_130_700);
 }
 
 test "coll: all-acts golden (seed 777, cross-seed regression)" {
