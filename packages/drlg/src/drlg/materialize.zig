@@ -86,6 +86,12 @@ const CELLFLAGS_0x80000000: i32 = @bitCast(@as(u32, 0x80000000));
 /// therefore emit the seam tile exactly once, and the receiving room's seed
 /// stream stays aligned. The caller populates this after each room is done
 /// (FindTileInNearRooms skips the searching room itself).
+/// UpdateTileType's bNeedUpdate re-resolve is only approximated (the owner's seed is
+/// gone by the time a later room reaches its tile), and the approximation trades an
+/// OVER-blocked cell for an UNDER-blocked one — worse for a pathing consumer, and
+/// marginally worse against the golden. Off until the owner seed is carried.
+const blank_swap_enabled = false;
+
 pub const NearTileIndex = struct {
     /// key = world tile (x,y) + link class; value = the owning tile's identity bits.
     map: std.AutoHashMapUnmanaged(u64, Entry) = .empty,
@@ -141,7 +147,7 @@ pub const NearTileIndex = struct {
         // tile rects touch (the shared seam is one tile wide).
         if (e.ox + e.ow < searcher.x or searcher.x + searcher.w < e.ox) return false;
         if (e.oy + e.oh < searcher.y or searcher.y + searcher.h < e.oy) return false;
-        if (e.is_blank and n_tile_type == 0) self.markBlankReplaced(wx, wy, replacement);
+        if (blank_swap_enabled and e.is_blank and n_tile_type == 0) self.markBlankReplaced(wx, wy, replacement);
         if (e.n_tile_type == 4) return false;
         if (e.n_tile_type != 0xd and (gf & CELLFLAGS_0x8000000) != 0) return false;
         if ((e.n_flags & 0x1c000) == 0) return true;

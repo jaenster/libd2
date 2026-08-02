@@ -48,8 +48,8 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, true);
     const pct: u64 = if (r.total_cells > 0) @as(u64, r.masked_ok) * 100 / r.total_cells else 0;
     std.debug.print(
-        "\n[coll all-acts seed 1] rooms matched={d} dim_mismatch={d} golden_only={d} | cells={d} masked-0x1F ok={d} ({d}%)\n",
-        .{ r.matched_rooms, r.dim_mismatch, r.golden_only, r.total_cells, r.masked_ok, pct },
+        "\n[coll all-acts seed 1] cells={d} | walkable off {d} | masked off {d} | exact off {d} | pct {d}\n",
+        .{ r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok, pct },
     );
     try std.testing.expect(r.matched_rooms > 0);
     // Lock overall all-acts fidelity; raise as mechanisms close. Never regress.
@@ -76,8 +76,8 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
 
     const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
     std.debug.print(
-        "[coll all-acts seed 777] rooms matched={d} dim_mismatch={d} | cells={d} masked-0x1F ok={d}\n",
-        .{ r.matched_rooms, r.dim_mismatch, r.total_cells, r.masked_ok },
+        "[coll all-acts seed 777] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n",
+        .{ r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok },
     );
     try std.testing.expectEqual(@as(u32, 777), r.seed);
     try std.testing.expect(r.matched_rooms > 0);
@@ -119,7 +119,7 @@ test "coll: SHIPPED consumer path (generateActCollisionAll) vs golden" {
     lib.verify_consumer_path = true;
     defer lib.verify_consumer_path = false;
     const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
-    std.debug.print("[coll CONSUMER seed 1] matched={d} golden_only={d} dim={d} | cells={d} masked ok={d} exact={d}\n", .{ r.matched_rooms, r.golden_only, r.dim_mismatch, r.total_cells, r.masked_ok, r.exact_ok });
+    std.debug.print("[coll CONSUMER seed 1] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n", .{ r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok });
     // The C-ABI path must not drift from the per-room path the goldens verify — it is
     // the same builder now, so it has to score identically, EXACT included (the older
     // materializer differed by 1038 masked / 1479 exact cells).
