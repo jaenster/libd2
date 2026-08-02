@@ -137,6 +137,16 @@ pub const Tables = struct {
             .misc => &self.misc,
         };
     }
+
+    /// Inventory grid footprint {width, height} in cells for a base item code (invwidth/invheight of
+    /// Weapons/Armor/Misc.txt), clamped to 1..6. Null when the code isn't a known base item.
+    pub fn itemDims(self: *const Tables, code: []const u8) ?[2]u8 {
+        const ref = self.itemRef(code) orelse return null;
+        const tbl = self.itemTable(ref.table);
+        const w = std.math.clamp(tbl.int(ref.row, "invwidth"), 1, 6);
+        const h = std.math.clamp(tbl.int(ref.row, "invheight"), 1, 6);
+        return .{ @intCast(w), @intCast(h) };
+    }
 };
 
 const testing = std.testing;
@@ -150,4 +160,15 @@ test "load all tables and build indexes" {
     // A well-known TC must resolve.
     try testing.expect(t.tcRow("Act 1 Equip A") != null);
     try testing.expect(t.tcRow("Gold") != null);
+}
+
+test "itemDims resolves the inventory footprint of a base item" {
+    var t = try Tables.load(testing.allocator);
+    defer t.deinit();
+    // ssd = Short Sword: 1x3 in the weapons table.
+    try testing.expectEqual(@as(?[2]u8, .{ 1, 3 }), t.itemDims("ssd"));
+    // cap = Cap: 2x2 in the armor table.
+    try testing.expectEqual(@as(?[2]u8, .{ 2, 2 }), t.itemDims("cap"));
+    // Unknown code -> null.
+    try testing.expectEqual(@as(?[2]u8, null), t.itemDims("zzz"));
 }
