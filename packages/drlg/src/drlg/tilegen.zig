@@ -40,6 +40,24 @@ const dt1 = @import("d2-formats").dt1;
 pub var g_lookup_fallback: usize = 0;
 pub var g_lookup_null: usize = 0;
 
+/// Debug: emit this port's tile-resolution stream in the same shape as d2probe's
+/// live-engine oracle (wall_log/seed_N.jsonl), so the two can be diffed pick-by-pick:
+///   SEQ  <room px> <room py> <nTileType> <nGridFlags> <room seed lo>   per getTileLibraryEntry
+///   SEQW <room px> <room py> <nPosX> <nPosY> <nTileType>               per createWallTileData
+/// The engine's `seqtile`/`walltile` records carry the same fields (its x/y are world
+/// tile coords: subtract the record's rx/ry to get the room-relative pair SEQW prints).
+/// A count or seed difference in the SEQ streams localizes a rarity-roll divergence
+/// exactly; SEQW localizes it to a cell. `probe_only_level` restricts output to one level.
+pub var probe_seq: bool = false;
+pub var probe_only_level: i32 = -1;
+/// Set by the caller as it walks levels/rooms, so probe output can be attributed.
+pub var probe_cur_level: i32 = -1;
+pub var probe_cur_room: [2]i32 = .{ -1, -1 };
+
+inline fn probing() bool {
+    return probe_seq and (probe_only_level < 0 or probe_only_level == probe_cur_level);
+}
+
 /// The engine's Act1\Outdoors\Blank.dt1 "blank fill" tiles, returned when neither the
 /// primary identity nor the type-10 fallback resolve in the loaded DT1 set (that DT1 isn't
 /// in our baked blob). Values verified against the real Blank.dt1 subtile blocks:
@@ -134,6 +152,9 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
     }
 
     const nCount = lookupTilesInAllProjects(pRoomEx, nTileType, nMainIndex, nSub, &aTileResults, 0x28);
+    if (probing()) {
+        std.debug.print("SEQ {d} {d} {d} {X} {X}\n", .{ probe_cur_room[0], probe_cur_room[1], nTileType, nGridFlags, @as(u32, @bitCast(pRoomEx.*.sSeed.nSeedLow)) });
+    }
     if (nCount == 0) {
         // Engine (0x66d820 line 1385): retry as the special orientation-10 (main=0,
         // sub=0) tile and return the FIRST match — no rarity roll, no seed advance.
@@ -362,6 +383,8 @@ pub fn createWallTileData(pRoomEx: [*c]s.D2RoomExStrc, ppTileHead: ?*?*s.D2DrlgT
         pTileData.pNext = null;
     }
     pTileGrid.nWalls += 1;
+    if (probing())
+        std.debug.print("SEQW {d} {d} {d} {d} {d}\n", .{ probe_cur_room[0], probe_cur_room[1], nPosX, nPosY, nTileType });
 
     pTileData.nPosX = nPosX - pRoomEx.*.sCoords.WorldPosition.x;
     pTileData.nPosY = nPosY - pRoomEx.*.sCoords.WorldPosition.y;

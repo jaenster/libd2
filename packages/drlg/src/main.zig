@@ -494,10 +494,48 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return;
     }
 
+    // tileinfo <levelId> <orient> <main> <sub> — every DT1 record in the level's tile
+    // library matching that identity, in library (file) order, with rarity + the raw
+    // 25-byte collision block. Rarity variants of one identity do NOT always share a
+    // collision block, so this is how a residual collision cell gets traced to its tile.
+    if (std.mem.eql(u8, cmd, "tileinfo")) {
+        const dt1blob = @import("d2-formats").dt1_blob;
+        const dt1_data = @import("d2-formats").dt1_data;
+        const level_id = std.fmt.parseInt(i32, args.next() orelse "0", 10) catch 0;
+        const want_o = std.fmt.parseInt(i32, args.next() orelse "-1", 10) catch -1;
+        const want_m = std.fmt.parseInt(i32, args.next() orelse "-1", 10) catch -1;
+        const want_s = std.fmt.parseInt(i32, args.next() orelse "-1", 10) catch -1;
+        var ctx = try drlglib.Ctx.init(gpa);
+        defer ctx.deinit();
+        const tlv = ctx.act.level(level_id) orelse return;
+        const raw = try dt1blob.decompress(gpa, dt1_data.bytes);
+        defer gpa.free(raw);
+        var idx = try dt1blob.buildIndex(gpa, raw);
+        defer idx.deinit();
+        var files: [32][]const u8 = undefined;
+        const nf = ctx.act.typeFiles(tlv.lvl_type, &files);
+        std.debug.print("level {d} LevelType={d}: {d} DT1 files\n", .{ level_id, tlv.lvl_type, nf });
+        for (files[0..nf], 0..) |f, fi| {
+            const rec = idx.get(f) orelse continue;
+            var d = try dt1blob.unpack(gpa, rec);
+            defer d.deinit();
+            for (d.tiles, 0..) |t, ti| {
+                if (want_o >= 0 and t.orientation != want_o) continue;
+                if (want_m >= 0 and t.main != want_m) continue;
+                if (want_s >= 0 and t.sub != want_s) continue;
+                std.debug.print("  file[{d}] {s} rec[{d}] o={d} m={d} s={d} rarity={d} blk=", .{ fi, f, ti, t.orientation, t.main, t.sub, t.rarity });
+                for (t.flags) |fl| std.debug.print("{X:0>2},", .{fl});
+                std.debug.print("\n", .{});
+            }
+        }
+        return;
+    }
+
     std.debug.print(
         \\d2-drlg — D2 1.14d map generation (Zig)
         \\usage:
         \\  d2-drlg rng <seed>          first RNG rolls for a seed
+        \\  d2-drlg tileinfo <lvl> <o> <m> <s>   DT1 records matching an identity (-1 = any)
         \\  d2-drlg level <id>          level table info
         \\  d2-drlg ds1 <file.ds1>      parse + ASCII-render a DS1 map
         \\  d2-drlg verify-seeds-recon <f>  cross-seed scoreboard via the recon->Zig transform closure

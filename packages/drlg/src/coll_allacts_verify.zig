@@ -56,8 +56,9 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     // active at that moment, so a plain activate+dump walk bakes the activation
     // ORDER into the capture (645 cells / 36 rooms at seed 1). The capture now
     // frees + re-allocs every room's grid after the full level walk, giving the
-    // steady-state map the port targets. Measured 11,083,341 (99.959%) at rebase.
-    try std.testing.expect(r.masked_ok >= 11_085_600);
+    // steady-state map the port targets. Measured 11,086,289 (99.986%) after the
+    // type-3 wall-companion fix.
+    try std.testing.expect(r.masked_ok >= 11_086_200);
 }
 
 test "coll: all-acts golden (seed 777, cross-seed regression)" {
@@ -79,8 +80,8 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
     try std.testing.expectEqual(@as(u32, 777), r.seed);
     try std.testing.expect(r.matched_rooms > 0);
     try std.testing.expectEqual(@as(usize, 0), r.dim_mismatch);
-    // Rebuilt (all-rooms-active) golden; 11,154,056 after the +1 wall-edge gather.
-    try std.testing.expect(r.masked_ok >= 11_155_900);
+    // Rebuilt (all-rooms-active) golden; 11,156,455 after the type-3 wall-companion fix.
+    try std.testing.expect(r.masked_ok >= 11_156_400);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
@@ -117,6 +118,27 @@ test "coll: DUMP ours rooms for diff viz" {
     lib.dump_ours_rooms = true;
     _ = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
     lib.dump_ours_rooms = false;
+}
+
+test "coll: single-level focus (probe)" {
+    if (true) return; // opt-in: set the level range + probes below, flip to `if (false)`
+    const gpa = std.testing.allocator;
+    const golden = decompressGolden(gpa) catch return;
+    defer gpa.free(golden);
+    const one = try filterToLevels(gpa, golden, 19, 19);
+    defer gpa.free(one);
+    var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+    // px/py = -1 probes every room of the level.
+    lib.probe_room = .{ .level = 19, .px = -1, .py = -1 };
+    defer lib.probe_room = null;
+    @import("drlg/tilegen.zig").probe_seq = true;
+    defer @import("drlg/tilegen.zig").probe_seq = false;
+    @import("drlg/tilegen.zig").probe_only_level = 19;
+    defer @import("drlg/tilegen.zig").probe_only_level = -1;
+    lib.dump_mismatch_cells = true;
+    defer lib.dump_mismatch_cells = false;
+    _ = try lib.verifyActCollision(gpa, &ctx, one, .nightmare, false);
 }
 
 test "coll: Kurast focus (L79-83 verbose)" {
