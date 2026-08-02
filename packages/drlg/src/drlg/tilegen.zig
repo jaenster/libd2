@@ -138,6 +138,20 @@ fn lookupTilesInAllProjects(
     return n;
 }
 
+/// The identity lookup without the rarity roll — the first candidate for
+/// (nTileType, nGridFlags) in the room's library, consuming no room seed.
+pub fn firstTileOfGridFlags(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFlags: u32) ?*const dt1.Tile {
+    var results: [40]?*const dt1.Tile = undefined;
+    var nMainIndex: i32 = 0;
+    var nSub: i32 = 0;
+    if (nGridFlags != 0) {
+        nMainIndex = @intCast((nGridFlags >> 0x14) & 0x3f);
+        nSub = @intCast((nGridFlags >> 8) & 0xff);
+    }
+    const n = lookupTilesInAllProjects(pRoomEx, nTileType, nMainIndex, nSub, &results, 0x28);
+    return if (n == 0) null else results[0];
+}
+
 /// DRLGROOMTILE_GetTileLibraryEntry (Drlg.cpp:1366, 1.14d 0066d820).
 /// Resolves (nTileType, nGridFlags) to a tile-library entry, consuming the room
 /// seed for the rarity-weighted pick. nGridFlags decode: main=(f>>0x14)&0x3f,

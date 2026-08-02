@@ -110,6 +110,24 @@ fn filterToLevels(gpa: std.mem.Allocator, golden: []const u8, min: i64, max: i64
     return out.toOwnedSlice(gpa);
 }
 
+test "coll: SHIPPED consumer path (generateActCollisionAll) vs golden" {
+    const gpa = std.testing.allocator;
+    const golden = decompressGolden(gpa) catch return;
+    defer gpa.free(golden);
+    var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+    lib.verify_consumer_path = true;
+    defer lib.verify_consumer_path = false;
+    const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
+    std.debug.print("[coll CONSUMER seed 1] matched={d} golden_only={d} dim={d} | cells={d} masked ok={d} exact={d}\n", .{ r.matched_rooms, r.golden_only, r.dim_mismatch, r.total_cells, r.masked_ok, r.exact_ok });
+    // The C-ABI path must not drift from the per-room path the goldens verify — it is
+    // the same builder now, so it has to score identically, EXACT included (the older
+    // materializer differed by 1038 masked / 1479 exact cells).
+    try std.testing.expectEqual(@as(u32, 0), r.dim_mismatch);
+    try std.testing.expect(r.masked_ok >= 11_086_300);
+    try std.testing.expect(r.exact_ok >= 11_086_300);
+}
+
 test "coll: DUMP ours rooms for diff viz" {
     if (true) return; // opt-in debug dump: flip to `if (false)` to emit OURSROOM lines
     const gpa = std.testing.allocator;
