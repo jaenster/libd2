@@ -15,6 +15,7 @@
         .d2_drlg = .{ .path = "packages/drlg" },
         .d2_formats = .{ .path = "packages/formats" },
         .d2_fog = .{ .path = "packages/fog" },
+        .d2_util = .{ .path = "packages/util" },
     },
 
     .paths = .{
