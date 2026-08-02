@@ -145,16 +145,16 @@ test "coll: single-level focus (probe)" {
     const gpa = std.testing.allocator;
     const golden = decompressGolden(gpa) catch return;
     defer gpa.free(golden);
-    const one = try filterToLevels(gpa, golden, 34, 34);
+    const one = try filterToLevels(gpa, golden, 7, 7);
     defer gpa.free(one);
     var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
     defer ctx.deinit();
     // px/py = -1 probes every room of the level.
-    lib.probe_room = .{ .level = 34, .px = 22620, .py = 5180 };
+    lib.probe_room = .{ .level = 7, .px = -1, .py = -1 };
     defer lib.probe_room = null;
-    @import("drlg/tilegen.zig").probe_seq = false;
+    @import("drlg/tilegen.zig").probe_seq = true;
     defer @import("drlg/tilegen.zig").probe_seq = true;
-    @import("drlg/tilegen.zig").probe_only_level = 34;
+    @import("drlg/tilegen.zig").probe_only_level = 7;
     defer @import("drlg/tilegen.zig").probe_only_level = -1;
     lib.dump_mismatch_cells = true;
     defer lib.dump_mismatch_cells = false;
