@@ -1427,9 +1427,15 @@ fn checkSubTileOverlap(
 // DRLGOUTDOOR_ApplyLvlSubTileData (0x66fad0) — writes the sub group's floor cells (bit 2) into
 // the room floor grid (fg), and its wall cells (bit 1) into the room wall grid (wg =
 // apWallGrids[0]). The wall stamp is what lets a later group's checkSubTileOverlap reject an
-// overlap with a wall-bearing sub placement (shadow/other DS1 layers are skipped — collision-
-// irrelevant).
+// overlap with a wall-bearing sub placement.
+//
+// It also spawns a SHADOW tile per sub shadow-grid cell carrying CELLFLAGS_0x8000000, via
+// DRLGROOMTILE_CreateShadowTileFromGrid (0x66e060) = GetTileLibraryEntry(room, 0xd, gf) +
+// CreateShadowTileData. Those tiles are real collision AND each consumes a rarity roll, so
+// omitting them left the room seed short and every later pick in the room on the wrong
+// stream — the engine's outdoor pick streams open with exactly these tt=13 lookups.
 fn applySubTileFloor(
+    pRoom: *s.D2RoomExStrc,
     fg: *s.D2DrlgGridStrc,
     wg: *s.D2DrlgGridStrc,
     og: *s.D2DrlgGridStrc,
@@ -1461,6 +1467,11 @@ fn applySubTileFloor(
                     const tt = DrlgGrid.GetGridFlags(&pSubTxt.pTileTypeGrid[0], srcX + dx, srcY + dy);
                     DrlgGrid.AlterGridFlag(og, baseX + dx, baseY + dy, tt, 3);
                 }
+            }
+            const sh = DrlgGrid.GetGridFlags(&pSubTxt.pShadowGrid, srcX + dx, srcY + dy);
+            if (sh & CELLFLAGS_0x8000000 != 0) {
+                const e = tilegen.getTileLibraryEntry(pRoom, 0xd, @bitCast(sh));
+                _ = tilegen.createShadowTileData(pRoom, null, baseX + dx, baseY + dy, @bitCast(sh), e);
             }
         }
     }
@@ -1531,7 +1542,7 @@ fn doNotCheckAll(
                         const bx: i32 = coordBuf[i * 2] + 1;
                         const by: i32 = coordBuf[i * 2 + 1] + 1;
                         if (checkSubTileOverlap(bx, by, fg, wg, pSubstGroup, pSubTxt)) {
-                            applySubTileFloor(fg, wg, og, bx, by, pSubstGroup, pSubTxt);
+                            applySubTileFloor(pRoom, fg, wg, og, bx, by, pSubstGroup, pSubTxt);
                             break;
                         }
                     }
@@ -1543,7 +1554,7 @@ fn doNotCheckAll(
                     const bx: i32 = @intCast(drlg_rng.randomNumberSelector(&pRoom.sSeed, nMaxX) + 1);
                     const by: i32 = @intCast(drlg_rng.randomNumberSelector(&pRoom.sSeed, nMaxY) + 1);
                     if (checkSubTileOverlap(bx, by, fg, wg, pSubstGroup, pSubTxt)) {
-                        applySubTileFloor(fg, wg, og, bx, by, pSubstGroup, pSubTxt);
+                        applySubTileFloor(pRoom, fg, wg, og, bx, by, pSubstGroup, pSubTxt);
                         break;
                     }
                 }
@@ -1679,6 +1690,18 @@ pub fn materializeOutdoorFloorRoom(
     // waypoint/shrine sub-type ids come from the level's LvlDefs line; counts from the
     // room's eRoomExFlags (>>0x10&3 waypoint, >>0xc&0xf shrine).
     try allocRoomTileGrid(pRoom, ar);
+    {
+        // ApplyLvlSubTileData calls DRLGROOMTILE_GrowTileDataArray for the shadow tiles it
+        // is about to spawn, so the roof array has to exist BEFORE the sub passes run (the
+        // normal count/alloc pass comes later). Allocate it here with room for one shadow
+        // per cell; allocTileDataArrays leaves a non-null pRoofTiles alone.
+        const pg: [*c]s.D2DrlgTileGridStrc = @ptrCast(pRoom.*.pRoomTiles);
+        const n = ncells + 16;
+        const arr = try ar.alloc(s.D2DrlgTileDataStrc, n);
+        @memset(std.mem.sliceAsBytes(arr), 0);
+        pg.*.pRoofTiles = @ptrCast(arr.ptr);
+        pg.*.nRoofTilesMax = @intCast(n);
+    }
     const pDef = dtables.levelDefsGetLine(@enumFromInt(level_id));
     if (nWaypointCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubWaypoint, 0, nWaypointCount);
     if (nShrineCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubShrine, 0, nShrineCount);

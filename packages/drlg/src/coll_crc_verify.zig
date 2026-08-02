@@ -153,5 +153,5 @@ test "coll: masked-CRC holdout across seeds (Act 1, Nightmare)" {
     try std.testing.expect(grand_total > 0);
     // Cross-seed floor. A fix tuned to seed 1 cannot hold here, so this is the gate that
     // makes "works on any seed" mean something. Raise it as mechanisms close.
-    try std.testing.expect(grand_match * 100 / grand_total >= 94);
+    try std.testing.expect(grand_match * 100 / grand_total >= 96);
 }
