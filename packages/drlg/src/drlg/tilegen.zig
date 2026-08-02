@@ -373,7 +373,7 @@ pub fn createsPresetsRoll(pRoomEx: [*c]s.D2RoomExStrc, nGridFlags: u32, nWorldX:
 }
 
 /// DRLGROOMTILE_SetWallTileFlags (Drlg.cpp:1451, 1.14d 0066db20).
-fn setWallTileFlags(pTileData: *s.D2DrlgTileDataStrc, nTileType: i32, nGridFlags: u32) void {
+pub fn setWallTileFlags(pTileData: *s.D2DrlgTileDataStrc, nTileType: i32, nGridFlags: u32) void {
     if (nTileType != 0xd) {
         pTileData.nFlags |= @as(i32, @intCast((nGridFlags >> 0x12) & 3)) * 0x4000 + 0x4000;
     }

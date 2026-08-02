@@ -178,7 +178,19 @@ pub const NearTileIndex = struct {
         if (e.oy + e.oh < searcher.y or searcher.y + searcher.h < e.oy) return false;
         if (e.is_blank and n_tile_type == 0) {
             const mut: *NearTileIndex = @constCast(self);
-            mut.markBlankReplaced(wx, wy, .{ .tile = mut.reresolveOnOwner(e.owner_idx, 0, gf), .ox = e.ox, .oy = e.oy });
+            // UpdateTileType ends in SetWallTileFlags(pTileData, tileType, ..., nGridFlags):
+            // the owner's tile keeps its identity slot but its DRAW flags are recomputed
+            // from the VISITING cell's grid flags. That is where COLLIDE_BLOCK_PLAYER comes
+            // from on a re-typed seam blank (gf 0x20000 -> nFlags 0x40 -> 0x01), so the swap
+            // has to carry the new nFlags as well as the new entry.
+            var td: s.D2DrlgTileDataStrc = std.mem.zeroes(s.D2DrlgTileDataStrc);
+            tilegen.setWallTileFlags(&td, 0, @bitCast(gf));
+            mut.markBlankReplaced(wx, wy, .{
+                .tile = mut.reresolveOnOwner(e.owner_idx, 0, gf),
+                .n_flags = td.nFlags,
+                .ox = e.ox,
+                .oy = e.oy,
+            });
         }
         if (e.n_tile_type == 4) return false;
         if (e.n_tile_type != 0xd and (gf & CELLFLAGS_0x8000000) != 0) return false;
@@ -192,7 +204,7 @@ pub const Rect = struct { x: i32, y: i32, w: i32, h: i32 };
 
 /// A re-resolved seam tile: the new entry plus the OWNER whose tile it belongs to —
 /// the engine mutates exactly that one tile, not every blank sharing the world cell.
-pub const Swap = struct { tile: ?*const dt1.Tile, ox: i32, oy: i32 };
+pub const Swap = struct { tile: ?*const dt1.Tile, n_flags: i32, ox: i32, oy: i32 };
 
 pub const LinkedTile = struct { wx: i32, wy: i32, n_tile_type: i32, n_flags: i32, is_blank: bool };
 
