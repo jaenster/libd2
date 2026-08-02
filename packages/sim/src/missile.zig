@@ -661,6 +661,11 @@ test "step travels and eventually expires; canHit respects owner + radius" {
     mob.y = 0;
     mob.setLife(50);
     try testing.expect(m.canHit(&mob)); // within collide radius
+    // A submerged (burrowed) monster cannot be struck even in range.
+    mob.submerged = true;
+    try testing.expect(!m.canHit(&mob));
+    mob.submerged = false;
+    try testing.expect(m.canHit(&mob));
     // Travel until the budget (2*RANGE_SCALE=32 subtiles, 20/tick) runs out.
     var ticks: usize = 0;
     while (!m.expired() and ticks < 100) : (ticks += 1) m.step();
