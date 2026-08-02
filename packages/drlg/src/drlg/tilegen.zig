@@ -55,6 +55,14 @@ pub var probe_cur_level: i32 = -1;
 pub var probe_cur_room: [2]i32 = .{ -1, -1 };
 pub var probe_cur_cell: [2]i32 = .{ -1, -1 };
 
+/// Debug-dump print that compiles to nothing off-native. The probe/dump paths below
+/// sit inside functions the C ABI reaches, and freestanding wasm has no stderr — a
+/// live `std.debug.print` there drags in std.Io.Threaded (posix getrandom/IOV_MAX)
+/// and breaks the libc-free wasm build.
+inline fn dprint(comptime fmt: []const u8, args: anytype) void {
+    if (comptime @import("builtin").target.os.tag != .freestanding) std.debug.print(fmt, args);
+}
+
 inline fn probing() bool {
     return probe_seq and (probe_only_level < 0 or probe_only_level == probe_cur_level);
 }
@@ -168,7 +176,7 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
 
     const nCount = lookupTilesInAllProjects(pRoomEx, nTileType, nMainIndex, nSub, &aTileResults, 0x28);
     if (probing()) {
-        std.debug.print("SEQ {d} {d} {d} {X} {X} {d} {d}\n", .{ probe_cur_room[0], probe_cur_room[1], nTileType, nGridFlags, @as(u32, @bitCast(pRoomEx.*.sSeed.nSeedLow)), probe_cur_cell[0], probe_cur_cell[1] });
+        dprint("SEQ {d} {d} {d} {X} {X} {d} {d}\n", .{ probe_cur_room[0], probe_cur_room[1], nTileType, nGridFlags, @as(u32, @bitCast(pRoomEx.*.sSeed.nSeedLow)), probe_cur_cell[0], probe_cur_cell[1] });
     }
     if (nCount == 0) {
         // Engine (0x66d820 line 1385): retry as the special orientation-10 (main=0,
@@ -399,7 +407,7 @@ pub fn createWallTileData(pRoomEx: [*c]s.D2RoomExStrc, ppTileHead: ?*?*s.D2DrlgT
     }
     pTileGrid.nWalls += 1;
     if (probing())
-        std.debug.print("SEQW {d} {d} {d} {d} {d}\n", .{ probe_cur_room[0], probe_cur_room[1], nPosX, nPosY, nTileType });
+        dprint("SEQW {d} {d} {d} {d} {d}\n", .{ probe_cur_room[0], probe_cur_room[1], nPosX, nPosY, nTileType });
 
     pTileData.nPosX = nPosX - pRoomEx.*.sCoords.WorldPosition.x;
     pTileData.nPosY = nPosY - pRoomEx.*.sCoords.WorldPosition.y;
