@@ -597,7 +597,10 @@ pub fn generateActFull(
         _ = scratch.reset(.free_all);
         const sa = scratch.allocator();
         const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
-        drlg.InitLevel(pLevel);
+        // On-demand, like the engine: the collision builder's warp-node linking inits
+        // warp-DESTINATION levels early, and a second InitLevel would regenerate and
+        // corrupt them (same guard as generateActCollisionAll).
+        if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
         try out.append(out_alloc, try collectLevelFull(out_alloc, sa, ctx, idx, &act, pLevel, lid, deflate_fn));
     }
 
@@ -1404,6 +1407,9 @@ pub fn roomPMap(p: *abi.D2RoomExStrc) ?*abi.D2DrlgMapStrc {
 /// area type: DS1/pMap rooms (preset/maze/preset-border) through materializeDs1,
 /// wilderness FLOOR cells through materializeOutdoorFloorRoom. Returns null if the
 /// level materialized nothing. Caller owns `cells` (free with `out_alloc`).
+/// One level's per-room collision, in LEVEL-LOCAL subtile coords. Delegates to
+/// `buildLevelRoomColl` — the same engine-faithful builder the world-keyed goldens
+/// verify — so the C-ABI / composite consumers get exactly the verified grids.
 fn materializeLevelColl(
     out_alloc: std.mem.Allocator,
     ctx: *Ctx,
@@ -1411,86 +1417,35 @@ fn materializeLevelColl(
     pLevel: *abi.D2DrlgLevelStrc,
     level_id: i32,
 ) !?LevelColl {
-    const tlv = ctx.act.level(level_id) orelse return null;
+    if (ctx.act.level(level_id) == null) return null;
     const lvlPos = pLevel.sCoordinatesAndSize.WorldPosition;
-    const nLevelType: i32 = @intFromEnum(pLevel.nLevelType);
-
-    // Level DT1 library (LvlTypes File1..32 for this LevelType).
-    var files: [32][]const u8 = undefined;
-    var file_cols: [32]u8 = undefined;
-    const nf = ctx.act.typeFilesCols(tlv.lvl_type, &files, &file_cols);
-    var dts: std.ArrayListUnmanaged(dt1.Dt1) = .empty;
-    defer {
-        for (dts.items) |*d| d.deinit();
-        dts.deinit(out_alloc);
-    }
-    var dts_bits: std.ArrayListUnmanaged(u8) = .empty;
-    defer dts_bits.deinit(out_alloc);
-    loadLevelDts(out_alloc, idx, files[0..nf], file_cols[0..nf], &dts, &dts_bits);
-    var room_dts_buf: [35]dt1.Dt1 = undefined;
-
-    // Emit one grid per materialized room, at its level-local subtile offset. The
-    // frontend composites them (open wins, uncovered = void) — same pipeline as
-    // the existing preset collision, so interior dungeons keep tight wall outlines.
-    var grids: std.ArrayListUnmanaged(CollGrid) = .empty;
-    errdefer {
-        for (grids.items) |g| out_alloc.free(g.cells);
-        grids.deinit(out_alloc);
-    }
-
     const tilegen = @import("drlg/tilegen.zig");
     tilegen.g_lookup_null = 0;
     tilegen.g_lookup_fallback = 0;
 
-    var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
-    while (pr) |p| : (pr = p.pRoomExNext) {
-        const gx = (p.sCoords.WorldPosition.x - lvlPos.x) * SUB;
-        const gy = (p.sCoords.WorldPosition.y - lvlPos.y) * SUB;
-
-        if (roomPMap(p)) |pmap| {
-            // DS1/pMap room (preset, maze, or wilderness preset-border): materialize
-            // only THIS room's window of the shared level DS1 (engine per-room CollMap).
-            const rel = preset.presetDs1Path(pmap) orelse continue;
-            var d = preset.unpackDs1(out_alloc, rel) orelse continue;
-            defer d.deinit();
-            var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap), null) catch continue;
-            defer mr.deinit(out_alloc);
-            try grids.append(out_alloc, .{
-                .x = gx,
-                .y = gy,
-                .w = @intCast(mr.coll.width),
-                .h = @intCast(mr.coll.height),
-                .cells = try out_alloc.dupe(u8, mr.coll.cells),
-            });
-        } else if (p.eRoomExFlags.noLos) {
-            // Wilderness FLOOR cell (an 8x8 CreateOutdoorRoomEx shell, no DS1).
-            const sub_type, const sub_theme, const sub_picked = blk: {
-                if (p.pRoomExData) |rd| {
-                    const maze: *abi.D2DrlgRoomExDataMazeStrc = @ptrCast(@alignCast(rd));
-                    break :blk .{ maze.nSubType, maze.nSubTheme, maze.nSubThemePicked };
-                }
-                break :blk .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
-            };
-            var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type, sub_theme, sub_picked, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
-            defer mr.deinit(out_alloc);
-            try grids.append(out_alloc, .{
-                .x = gx,
-                .y = gy,
-                .w = @intCast(mr.coll.width),
-                .h = @intCast(mr.coll.height),
-                .cells = try out_alloc.dupe(u8, mr.coll.cells),
-            });
-        }
+    var rooms: std.ArrayListUnmanaged(RoomColl) = .empty;
+    defer {
+        for (rooms.items) |r| out_alloc.free(r.cells);
+        rooms.deinit(out_alloc);
     }
+    try buildLevelRoomColl(out_alloc, ctx, idx, pLevel, level_id, &rooms);
+    if (rooms.items.len == 0) return null;
 
-    if (grids.items.len == 0) {
-        grids.deinit(out_alloc);
-        return null;
+    const grids = try out_alloc.alloc(CollGrid, rooms.items.len);
+    for (rooms.items, 0..) |*r, i| {
+        grids[i] = .{
+            .x = r.px - lvlPos.x * SUB,
+            .y = r.py - lvlPos.y * SUB,
+            .w = r.w,
+            .h = r.h,
+            .cells = r.cells,
+        };
+        r.cells = &.{}; // ownership moves to `grids`
     }
     return LevelColl{
         .level_id = level_id,
         .unresolved = tilegen.g_lookup_null + tilegen.g_lookup_fallback,
-        .grids = try grids.toOwnedSlice(out_alloc),
+        .grids = grids,
         .origin_x = lvlPos.x,
         .origin_y = lvlPos.y,
         .width = pLevel.sCoordinatesAndSize.WorldSize.x,
@@ -1605,6 +1560,236 @@ pub const ActRoomCollResult = struct {
     }
 };
 
+/// Build one level's per-room CollMap set exactly as the engine does
+/// (AllocRoomCollisionGrid 0x64c900): materialize every room, then stamp each tile
+/// into every room whose subtile rect contains its origin. Shared by the world-keyed
+/// `generateActRoomCollision` (what the engine goldens verify) and by
+/// `materializeLevelColl` (what the C-ABI ships), so both get the same fidelity.
+fn buildLevelRoomColl(
+    out_alloc: std.mem.Allocator,
+    ctx: *Ctx,
+    idx: *const dt1blob.Index,
+    pLevel: *abi.D2DrlgLevelStrc,
+    lid: i32,
+    rooms: *std.ArrayListUnmanaged(RoomColl),
+) !void {
+    const tilegen = @import("drlg/tilegen.zig");
+    linkLevelWarpNodes(pLevel);
+    const tlv = ctx.act.level(lid) orelse return;
+    const nLevelType: i32 = @intFromEnum(pLevel.nLevelType);
+    tilegen.probe_cur_level = lid;
+
+    // Level DT1 library (LvlTypes File1..32 for this LevelType).
+    var files: [32][]const u8 = undefined;
+    var file_cols: [32]u8 = undefined;
+    const nf = ctx.act.typeFilesCols(tlv.lvl_type, &files, &file_cols);
+    var dts: std.ArrayListUnmanaged(dt1.Dt1) = .empty;
+    defer {
+        for (dts.items) |*d| d.deinit();
+        dts.deinit(out_alloc);
+    }
+    var dts_bits: std.ArrayListUnmanaged(u8) = .empty;
+    defer dts_bits.deinit(out_alloc);
+    loadLevelDts(out_alloc, idx, files[0..nf], file_cols[0..nf], &dts, &dts_bits);
+    var room_dts_buf: [35]dt1.Dt1 = undefined;
+
+    // ── Faithful per-room CollMap build (AllocRoomCollisionGrid 0x64c900). ──
+    // Phase A: materialize every room in the level to its placed FLOOR/WALL/ROOF
+    // tile list (room-local tile coords, incl. the +1 kill-edge). Phase B: for each
+    // room R, zero a dwXSize*dwYSize (=WorldSize*5) grid and stamp every tile whose
+    // WORLD origin subtile falls inside R — that is TileLibrary_SetupCollision's
+    // AreSubtileCoordinatesInsideRoom clip. A room's own tiles fill its interior; a
+    // neighbour's kill-edge tiles (origin just past the neighbour) land on R's shared
+    // border. Each tile-origin belongs to exactly one room, so we route tiles through
+    // a level tile→room index rather than the O(rooms^2) self+neighbour walk (same set).
+    const RoomBuild = struct { wpx: i32, wpy: i32, wtx: i32, hty: i32, tiles: []materialize.CollTile, is_ds1: bool };
+    var rbs: std.ArrayListUnmanaged(RoomBuild) = .empty;
+    defer {
+        for (rbs.items) |rb| out_alloc.free(rb.tiles);
+        rbs.deinit(out_alloc);
+    }
+
+    // Level-wide tile index for the engine's UpdateOrAddTile seam handling: a
+    // room's seam cell whose tile an EARLIER room already owns creates nothing and
+    // rolls nothing here. Rooms are walked in pRoomExFirst order, which is the
+    // order InitLevel builds them, so "earlier" matches the engine.
+    var near_tiles: materialize.NearTileIndex = .{};
+    defer near_tiles.deinit(out_alloc);
+
+    var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+    while (pr) |p| : (pr = p.pRoomExNext) {
+        tilegen.probe_cur_room = .{ p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB };
+        const tiles: []materialize.CollTile = blk: {
+            if (roomPMap(p)) |pmap| {
+                var d = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
+                defer d.deinit();
+                var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap), .{
+                    .index = &near_tiles,
+                    .alloc = out_alloc,
+                    .wx = p.sCoords.WorldPosition.x,
+                    .wy = p.sCoords.WorldPosition.y,
+                    .w = p.sCoords.WorldSize.x,
+                    .h = p.sCoords.WorldSize.y,
+                }) catch continue;
+                defer mr.deinit(out_alloc);
+                if (probe_room) |pb| if (pb.level == lid) {
+                    var shadow_nz: usize = 0;
+                    for (d.shadow) |c| {
+                        if (c.raw != 0) shadow_nz += 1;
+                    }
+                    std.debug.print("ROOMINFO {d},{d} ds1={s} floorlayers={d} walllayers={d} shadow_len={d} shadow_nz={d} floors={d} walls={d} shadows={d} upd={d}\n", .{
+                        p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB,
+                        preset.presetDs1Path(pmap) orelse "?",
+                        d.floor_layers.len,              d.wall_layers.len,
+                        d.shadow.len,                    shadow_nz,
+                        mr.n_floors,
+                        mr.n_walls,                      mr.n_shadows,
+                        mr.transition_updated,
+                    });
+                };
+                break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
+            } else if (p.eRoomExFlags.noLos) {
+                const sub_type2, const sub_theme2, const sub_picked2 = t: {
+                    if (p.pRoomExData) |rd| {
+                        const maze: *abi.D2DrlgRoomExDataMazeStrc = @ptrCast(@alignCast(rd));
+                        break :t .{ maze.nSubType, maze.nSubTheme, maze.nSubThemePicked };
+                    }
+                    break :t .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
+                };
+                var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
+                defer mr.deinit(out_alloc);
+                break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
+            } else continue;
+        };
+        errdefer out_alloc.free(tiles);
+        try rbs.append(out_alloc, .{
+            .wpx = p.sCoords.WorldPosition.x,
+            .wpy = p.sCoords.WorldPosition.y,
+            .wtx = p.sCoords.WorldSize.x,
+            .hty = p.sCoords.WorldSize.y,
+            .tiles = tiles,
+            .is_ds1 = roomPMap(p) != null,
+        });
+    }
+    if (rbs.items.len == 0) return;
+
+    // Allocate + zero each room's CollMap (ownership moves to `rooms`).
+    // `floors[i]` tracks, per room tile-cell, whether a FLOOR tile covered it — the
+    // engine stamps Blank.dt1 (solid rock) into every floorless cell, so cells left
+    // uncovered are void-filled below with the solid_fill stand-in.
+    const grids = try out_alloc.alloc([]u8, rbs.items.len);
+    defer out_alloc.free(grids);
+    const floors = try out_alloc.alloc([]bool, rbs.items.len);
+    defer {
+        for (floors) |f| out_alloc.free(f);
+        out_alloc.free(floors);
+    }
+    for (floors) |*f| f.* = &.{};
+    var built: usize = 0;
+    errdefer for (grids[0..built]) |g| out_alloc.free(g);
+    for (rbs.items, 0..) |rb, i| {
+        const gw: usize = @intCast(rb.wtx * SUB);
+        const gh: usize = @intCast(rb.hty * SUB);
+        grids[i] = try out_alloc.alloc(u8, gw * gh);
+        @memset(grids[i], 0);
+        built += 1;
+        floors[i] = try out_alloc.alloc(bool, @intCast(rb.wtx * rb.hty));
+        @memset(floors[i], false);
+    }
+
+    // Faithful AllocRoomCollisionGrid: for each room R, stamp every tile (of R and its
+    // neighbours) whose WORLD origin subtile lands inside R — TileLibrary_SetupCollision's
+    // AreSubtileCoordinatesInsideRoom clip. A tile-origin may lie in more than one room
+    // when rooms overlap (D2's Room2 model is not a strict partition), and the engine
+    // stamps it into each — so this is per-room containment, not a single-owner routing.
+    // Source rooms whose tile bbox cannot reach R are skipped (they contribute nothing).
+    for (rbs.items, 0..) |R, ri| {
+        const gw: usize = @intCast(R.wtx * SUB);
+        const gh: usize = @intCast(R.hty * SUB);
+        const wtxu: usize = @intCast(R.wtx);
+        for (rbs.items) |A| {
+            // bbox reject: A reaches R if A's tile rect EXTENDED by the +1 far-edge
+            // col/row (where its wall tiles may live, kept by collectCollTiles)
+            // overlaps R's rect. The engine's adjacency gather stamps a neighbor's
+            // +1 wall tiles into R when their origin lands inside R's rect; R's own
+            // +1 tiles never stamp into R (AreSubtileCoordinatesInsideRoom is
+            // exclusive at the far edge — mirrored by the per-tile clip below).
+            if (A.wpx + A.wtx + 1 <= R.wpx or A.wpx >= R.wpx + R.wtx) continue;
+            if (A.wpy + A.hty + 1 <= R.wpy or A.wpy >= R.wpy + R.hty) continue;
+            for (A.tiles) |ct| {
+                const otx = ct.nPosX + A.wpx;
+                const oty = ct.nPosY + A.wpy;
+                if (otx < R.wpx or otx >= R.wpx + R.wtx or oty < R.wpy or oty >= R.wpy + R.hty) continue;
+                const rtx: usize = @intCast(otx - R.wpx);
+                const rty: usize = @intCast(oty - R.wpy);
+                // UpdateTileType's bNeedUpdate swap: a seam hit on a Blank(30,0)
+                // FLOOR re-resolves the OWNER's tile against the visiting room's
+                // grid flags, so the owner's solid-rock blank is no longer solid
+                // rock anywhere it stamps.
+                var ct2 = ct;
+                if (ct.is_floor and ct.tile.main == 30) {
+                    if (near_tiles.blankReplacement(otx, oty)) |repl| {
+                        if (repl) |t| ct2.tile = t else continue;
+                    }
+                }
+                if (probe_room) |pb| if (pb.level == lid and (pb.px < 0 or (pb.px == R.wpx * SUB and pb.py == R.wpy * SUB))) {
+                    std.debug.print("PROBE L{d} room({d},{d}) tile({d},{d}) from{s} orient={d} main={d} sub={d} rar={d} nFlags=0x{X} blk=", .{
+                        lid,          R.wpx * SUB,      R.wpy * SUB,     rtx,             rty,
+                        if (A.wpx == R.wpx and A.wpy == R.wpy) "SELF" else "NBR",
+                        ct.tile.orientation, ct.tile.main, ct.tile.sub, ct.tile.rarity, @as(u32, @bitCast(ct.nFlags)),
+                    });
+                    for (ct.tile.flags) |f| std.debug.print("{X:0>2},", .{f});
+                    std.debug.print("\n", .{});
+                };
+                materialize.stampCollTile(grids[ri], gw, gh, rtx * SUB, rty * SUB, ct2);
+                if (ct2.is_floor) floors[ri][rty * wtxu + rtx] = true;
+            }
+        }
+    }
+
+    // Void-fill: any subtile whose tile-cell got no floor tile is engine void —
+    // the always-appended Blank.dt1 (main=30) stamped into uncovered cells. Its sub-index
+    // (hence flags) is tileset-dependent: Arcane Sanctuary (lvl_type 19) is the floating-
+    // platform level whose off-platform gaps use Blank sub=1 = 0x01 (BLOCK_WALK, but
+    // MISSILES PASS across the gaps); every other tileset uses sub=0 = 0x05 (solid rock:
+    // blocks walk AND missiles). Verified byte-exact vs the engine golden (L74 21.5%->100%).
+    // OR (not set-when-0): a no-floor cave/dungeon subtile is solid rock even where a wall
+    // tile partially stamped it — the wall DT1 block sets COLLIDE_BLOCK_PLAYER (0x01) but
+    // leaves COLLIDE_WALL (0x04) clear on its interior subtiles, and the engine covers those
+    // same cells with the solid-rock ceiling/Blank tile, so OR completes the 0x05 that the
+    // partial wall stamp otherwise left as a bare 0x01.
+    // DS1/pMap rooms are excluded: their fill is the faithful ProcessTile blank
+    // branch inside materializeDs1 (LvlPrest FillBlanks -> floor layer 0 -> real
+    // Blank.dt1 tiles), which the engine applies only to INSIDE cells — the
+    // coarse per-cell OR here over-fills exactly where the engine leaves the
+    // bare wall stamp (golden 0x01 vs ours 0x05).
+    const void_flag: u8 = if (tlv.lvl_type == 19) 0x01 else 0x05;
+    for (rbs.items, 0..) |rb, i| {
+        if (rb.is_ds1) continue;
+        const gw: usize = @intCast(rb.wtx * SUB);
+        const wtxu: usize = @intCast(rb.wtx);
+        for (grids[i], 0..) |*cell, ci| {
+            const sx = ci % gw;
+            const sy = ci / gw;
+            if (!floors[i][(sy / SUB) * wtxu + (sx / SUB)]) cell.* |= void_flag;
+        }
+    }
+
+    try rooms.ensureUnusedCapacity(out_alloc, rbs.items.len);
+    for (rbs.items, 0..) |rb, i| {
+        rooms.appendAssumeCapacity(.{
+            .level_id = lid,
+            .px = rb.wpx * SUB,
+            .py = rb.wpy * SUB,
+            .w = rb.wtx * SUB,
+            .h = rb.hty * SUB,
+            .cells = grids[i],
+        });
+        grids[i] = &.{}; // ownership transferred to `rooms`
+    }
+    built = 0; // all grids handed off; errdefer must not free them
+}
+
 /// Same generation + materialization path as `generateActCollisionAll`, but emits
 /// ONE grid per room keyed by absolute world subtile origin (px,py) + levelId, for
 /// byte-comparing against a real-engine collision golden. GATE-SAFE: pure
@@ -1672,210 +1857,7 @@ pub fn generateActRoomCollision(
         const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
         // On-demand like the engine (see generateActCollisionAll note).
         if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
-        linkLevelWarpNodes(pLevel);
-        const tlv = ctx.act.level(lid) orelse continue;
-        const nLevelType: i32 = @intFromEnum(pLevel.nLevelType);
-        tilegen.probe_cur_level = lid;
-
-        // Level DT1 library (LvlTypes File1..32 for this LevelType).
-        var files: [32][]const u8 = undefined;
-        var file_cols: [32]u8 = undefined;
-        const nf = ctx.act.typeFilesCols(tlv.lvl_type, &files, &file_cols);
-        var dts: std.ArrayListUnmanaged(dt1.Dt1) = .empty;
-        defer {
-            for (dts.items) |*d| d.deinit();
-            dts.deinit(out_alloc);
-        }
-        var dts_bits: std.ArrayListUnmanaged(u8) = .empty;
-        defer dts_bits.deinit(out_alloc);
-        loadLevelDts(out_alloc, idx, files[0..nf], file_cols[0..nf], &dts, &dts_bits);
-        var room_dts_buf: [35]dt1.Dt1 = undefined;
-
-        // ── Faithful per-room CollMap build (AllocRoomCollisionGrid 0x64c900). ──
-        // Phase A: materialize every room in the level to its placed FLOOR/WALL/ROOF
-        // tile list (room-local tile coords, incl. the +1 kill-edge). Phase B: for each
-        // room R, zero a dwXSize*dwYSize (=WorldSize*5) grid and stamp every tile whose
-        // WORLD origin subtile falls inside R — that is TileLibrary_SetupCollision's
-        // AreSubtileCoordinatesInsideRoom clip. A room's own tiles fill its interior; a
-        // neighbour's kill-edge tiles (origin just past the neighbour) land on R's shared
-        // border. Each tile-origin belongs to exactly one room, so we route tiles through
-        // a level tile→room index rather than the O(rooms^2) self+neighbour walk (same set).
-        const RoomBuild = struct { wpx: i32, wpy: i32, wtx: i32, hty: i32, tiles: []materialize.CollTile, is_ds1: bool };
-        var rbs: std.ArrayListUnmanaged(RoomBuild) = .empty;
-        defer {
-            for (rbs.items) |rb| out_alloc.free(rb.tiles);
-            rbs.deinit(out_alloc);
-        }
-
-        // Level-wide tile index for the engine's UpdateOrAddTile seam handling: a
-        // room's seam cell whose tile an EARLIER room already owns creates nothing and
-        // rolls nothing here. Rooms are walked in pRoomExFirst order, which is the
-        // order InitLevel builds them, so "earlier" matches the engine.
-        var near_tiles: materialize.NearTileIndex = .{};
-        defer near_tiles.deinit(out_alloc);
-
-        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
-        while (pr) |p| : (pr = p.pRoomExNext) {
-            tilegen.probe_cur_room = .{ p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB };
-            const tiles: []materialize.CollTile = blk: {
-                if (roomPMap(p)) |pmap| {
-                    var d = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
-                    defer d.deinit();
-                    var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap), .{
-                        .index = &near_tiles,
-                        .alloc = out_alloc,
-                        .wx = p.sCoords.WorldPosition.x,
-                        .wy = p.sCoords.WorldPosition.y,
-                        .w = p.sCoords.WorldSize.x,
-                        .h = p.sCoords.WorldSize.y,
-                    }) catch continue;
-                    defer mr.deinit(out_alloc);
-                    if (probe_room) |pb| if (pb.level == lid) {
-                        var shadow_nz: usize = 0;
-                        for (d.shadow) |c| {
-                            if (c.raw != 0) shadow_nz += 1;
-                        }
-                        std.debug.print("ROOMINFO {d},{d} ds1={s} floorlayers={d} walllayers={d} shadow_len={d} shadow_nz={d} floors={d} walls={d} shadows={d} upd={d}\n", .{
-                            p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB,
-                            preset.presetDs1Path(pmap) orelse "?",
-                            d.floor_layers.len,              d.wall_layers.len,
-                            d.shadow.len,                    shadow_nz,
-                            mr.n_floors,
-                            mr.n_walls,                      mr.n_shadows,
-                            mr.transition_updated,
-                        });
-                    };
-                    break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
-                } else if (p.eRoomExFlags.noLos) {
-                    const sub_type2, const sub_theme2, const sub_picked2 = t: {
-                        if (p.pRoomExData) |rd| {
-                            const maze: *abi.D2DrlgRoomExDataMazeStrc = @ptrCast(@alignCast(rd));
-                            break :t .{ maze.nSubType, maze.nSubTheme, maze.nSubThemePicked };
-                        }
-                        break :t .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
-                    };
-                    var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
-                    defer mr.deinit(out_alloc);
-                    break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
-                } else continue;
-            };
-            errdefer out_alloc.free(tiles);
-            try rbs.append(out_alloc, .{
-                .wpx = p.sCoords.WorldPosition.x,
-                .wpy = p.sCoords.WorldPosition.y,
-                .wtx = p.sCoords.WorldSize.x,
-                .hty = p.sCoords.WorldSize.y,
-                .tiles = tiles,
-                .is_ds1 = roomPMap(p) != null,
-            });
-        }
-        if (rbs.items.len == 0) continue;
-
-        // Allocate + zero each room's CollMap (ownership moves to `rooms`).
-        // `floors[i]` tracks, per room tile-cell, whether a FLOOR tile covered it — the
-        // engine stamps Blank.dt1 (solid rock) into every floorless cell, so cells left
-        // uncovered are void-filled below with the solid_fill stand-in.
-        const grids = try out_alloc.alloc([]u8, rbs.items.len);
-        defer out_alloc.free(grids);
-        const floors = try out_alloc.alloc([]bool, rbs.items.len);
-        defer {
-            for (floors) |f| out_alloc.free(f);
-            out_alloc.free(floors);
-        }
-        for (floors) |*f| f.* = &.{};
-        var built: usize = 0;
-        errdefer for (grids[0..built]) |g| out_alloc.free(g);
-        for (rbs.items, 0..) |rb, i| {
-            const gw: usize = @intCast(rb.wtx * SUB);
-            const gh: usize = @intCast(rb.hty * SUB);
-            grids[i] = try out_alloc.alloc(u8, gw * gh);
-            @memset(grids[i], 0);
-            built += 1;
-            floors[i] = try out_alloc.alloc(bool, @intCast(rb.wtx * rb.hty));
-            @memset(floors[i], false);
-        }
-
-        // Faithful AllocRoomCollisionGrid: for each room R, stamp every tile (of R and its
-        // neighbours) whose WORLD origin subtile lands inside R — TileLibrary_SetupCollision's
-        // AreSubtileCoordinatesInsideRoom clip. A tile-origin may lie in more than one room
-        // when rooms overlap (D2's Room2 model is not a strict partition), and the engine
-        // stamps it into each — so this is per-room containment, not a single-owner routing.
-        // Source rooms whose tile bbox cannot reach R are skipped (they contribute nothing).
-        for (rbs.items, 0..) |R, ri| {
-            const gw: usize = @intCast(R.wtx * SUB);
-            const gh: usize = @intCast(R.hty * SUB);
-            const wtxu: usize = @intCast(R.wtx);
-            for (rbs.items) |A| {
-                // bbox reject: A reaches R if A's tile rect EXTENDED by the +1 far-edge
-                // col/row (where its wall tiles may live, kept by collectCollTiles)
-                // overlaps R's rect. The engine's adjacency gather stamps a neighbor's
-                // +1 wall tiles into R when their origin lands inside R's rect; R's own
-                // +1 tiles never stamp into R (AreSubtileCoordinatesInsideRoom is
-                // exclusive at the far edge — mirrored by the per-tile clip below).
-                if (A.wpx + A.wtx + 1 <= R.wpx or A.wpx >= R.wpx + R.wtx) continue;
-                if (A.wpy + A.hty + 1 <= R.wpy or A.wpy >= R.wpy + R.hty) continue;
-                for (A.tiles) |ct| {
-                    const otx = ct.nPosX + A.wpx;
-                    const oty = ct.nPosY + A.wpy;
-                    if (otx < R.wpx or otx >= R.wpx + R.wtx or oty < R.wpy or oty >= R.wpy + R.hty) continue;
-                    const rtx: usize = @intCast(otx - R.wpx);
-                    const rty: usize = @intCast(oty - R.wpy);
-                    if (probe_room) |pb| if (pb.level == lid and (pb.px < 0 or (pb.px == R.wpx * SUB and pb.py == R.wpy * SUB))) {
-                        std.debug.print("PROBE L{d} room({d},{d}) tile({d},{d}) from{s} orient={d} main={d} sub={d} rar={d} nFlags=0x{X} blk=", .{
-                            lid,          R.wpx * SUB,      R.wpy * SUB,     rtx,             rty,
-                            if (A.wpx == R.wpx and A.wpy == R.wpy) "SELF" else "NBR",
-                            ct.tile.orientation, ct.tile.main, ct.tile.sub, ct.tile.rarity, @as(u32, @bitCast(ct.nFlags)),
-                        });
-                        for (ct.tile.flags) |f| std.debug.print("{X:0>2},", .{f});
-                        std.debug.print("\n", .{});
-                    };
-                    materialize.stampCollTile(grids[ri], gw, gh, rtx * SUB, rty * SUB, ct);
-                    if (ct.is_floor) floors[ri][rty * wtxu + rtx] = true;
-                }
-            }
-        }
-
-        // Void-fill: any subtile whose tile-cell got no floor tile is engine void —
-        // the always-appended Blank.dt1 (main=30) stamped into uncovered cells. Its sub-index
-        // (hence flags) is tileset-dependent: Arcane Sanctuary (lvl_type 19) is the floating-
-        // platform level whose off-platform gaps use Blank sub=1 = 0x01 (BLOCK_WALK, but
-        // MISSILES PASS across the gaps); every other tileset uses sub=0 = 0x05 (solid rock:
-        // blocks walk AND missiles). Verified byte-exact vs the engine golden (L74 21.5%->100%).
-        // OR (not set-when-0): a no-floor cave/dungeon subtile is solid rock even where a wall
-        // tile partially stamped it — the wall DT1 block sets COLLIDE_BLOCK_PLAYER (0x01) but
-        // leaves COLLIDE_WALL (0x04) clear on its interior subtiles, and the engine covers those
-        // same cells with the solid-rock ceiling/Blank tile, so OR completes the 0x05 that the
-        // partial wall stamp otherwise left as a bare 0x01.
-        // DS1/pMap rooms are excluded: their fill is the faithful ProcessTile blank
-        // branch inside materializeDs1 (LvlPrest FillBlanks -> floor layer 0 -> real
-        // Blank.dt1 tiles), which the engine applies only to INSIDE cells — the
-        // coarse per-cell OR here over-fills exactly where the engine leaves the
-        // bare wall stamp (golden 0x01 vs ours 0x05).
-        const void_flag: u8 = if (tlv.lvl_type == 19) 0x01 else 0x05;
-        for (rbs.items, 0..) |rb, i| {
-            if (rb.is_ds1) continue;
-            const gw: usize = @intCast(rb.wtx * SUB);
-            const wtxu: usize = @intCast(rb.wtx);
-            for (grids[i], 0..) |*cell, ci| {
-                const sx = ci % gw;
-                const sy = ci / gw;
-                if (!floors[i][(sy / SUB) * wtxu + (sx / SUB)]) cell.* |= void_flag;
-            }
-        }
-
-        try rooms.ensureUnusedCapacity(out_alloc, rbs.items.len);
-        for (rbs.items, 0..) |rb, i| {
-            rooms.appendAssumeCapacity(.{
-                .level_id = lid,
-                .px = rb.wpx * SUB,
-                .py = rb.wpy * SUB,
-                .w = rb.wtx * SUB,
-                .h = rb.hty * SUB,
-                .cells = grids[i],
-            });
-            grids[i] = &.{}; // ownership transferred to `rooms`
-        }
-        built = 0; // all grids handed off; errdefer must not free them
+        try buildLevelRoomColl(out_alloc, ctx, idx, pLevel, lid, &rooms);
     }
 
     return .{
@@ -1935,6 +1917,12 @@ pub var dump_ours_rooms: bool = false;
 /// subtile as `MISM <level> <px> <py> <w> <h> <lx> <ly> <golden0x1F> <ours0x1F>`, for
 /// offline classification of what mechanism each residual cell belongs to.
 pub var dump_mismatch_cells: bool = false;
+
+/// Debug: verify the SHIPPED consumer path (generateActCollisionAll, what the C-ABI
+/// and generateActComposite return) against the golden instead of the per-room
+/// generateActRoomCollision the fidelity tests normally drive. The two are separate
+/// materializers, so this is how the gap between "verified" and "shipped" is measured.
+pub var verify_consumer_path: bool = false;
 
 /// Debug: when set, generateActRoomCollision prints every tile stamped into this one
 /// room (`PROBE` lines: room-relative tile coords, tile identity/rarity, draw nFlags and
@@ -2042,6 +2030,7 @@ pub fn verifyActCollision(
 
     // Generate our side per needed act; key rooms by (level,px,py).
     const OurRoom = struct { w: i32, h: i32, cells: []u8 };
+    _ = &verify_consumer_path;
     var ours = std.AutoHashMapUnmanaged(Key, OurRoom).empty;
     defer {
         var it = ours.valueIterator();
@@ -2051,6 +2040,23 @@ pub fn verifyActCollision(
     {
         var ait = acts_seen.keyIterator();
         while (ait.next()) |ap| {
+            if (verify_consumer_path) {
+                // The shipped C-ABI path (generateActFull / generateActComposite ->
+                // generateActCollisionAll -> materializeLevelColl), keyed the same way
+                // so the identical comparison runs over what consumers actually get.
+                var lr = try generateActCollisionAll(ctx, alloc, ap.*, seed, diff);
+                defer lr.deinit(alloc);
+                for (lr.levels) |lv| {
+                    for (lv.grids) |g| {
+                        const key = Key{ .level = lv.level_id, .px = lv.origin_x * SUB + g.x, .py = lv.origin_y * SUB + g.y };
+                        const cp = try alloc.dupe(u8, g.cells);
+                        const gop = try ours.getOrPut(alloc, key);
+                        if (gop.found_existing) alloc.free(gop.value_ptr.cells);
+                        gop.value_ptr.* = .{ .w = g.w, .h = g.h, .cells = cp };
+                    }
+                }
+                continue;
+            }
             var res = try generateActRoomCollision(ctx, alloc, ap.*, seed, diff);
             defer res.deinit(alloc);
             for (res.rooms) |r| {
