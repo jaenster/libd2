@@ -13,10 +13,10 @@ const lib = @import("lib.zig");
 
 const GOLDEN_GZ = @embedFile("golden/coll_seed1_all.jsonl.gz");
 const GOLDEN_777_GZ = @embedFile("golden/coll_seed777_all.jsonl.gz");
-/// A THIRD per-cell seed. Seeds 1 and 777 are both byte-clean on 127 of 131 levels, so
-/// neither can see the defect that fails 15 maze levels on the cross-seed CRC gate while
-/// they are perfect at seed 1 — seed 2 can (953 of its 1203 wrong cells are one Sewers
-/// room). Captured 2026-08-02 with the same d2probe build as the other two.
+/// A THIRD per-cell seed, and the one that earns its keep: seeds 1 and 777 happen to be
+/// clean on the Sewers rooms whose DS1 variant this port used to roll instead of pin, so
+/// only seed 2 could see that defect per-cell. Captured 2026-08-02 with the same d2probe
+/// build as the other two.
 const GOLDEN_2_GZ = @embedFile("golden/coll_seed2_all.jsonl.gz");
 
 fn decompressGolden(gpa: std.mem.Allocator) ![]u8 {
@@ -66,6 +66,7 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
     // steady-state map the port targets. Measured 11,087,540 (99.99720%) after the
     // seam re-resolve + cross-level gather.
     try std.testing.expect(r.masked_ok >= 11_087_740);
+    try std.testing.expectEqual(r.total_cells, r.walk_ok);
 }
 
 test "coll: all-acts golden (seed 2, maze cross-seed probe)" {
@@ -78,9 +79,12 @@ test "coll: all-acts golden (seed 2, maze cross-seed probe)" {
     std.debug.print("[coll all-acts seed 2] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n", .{ r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok });
     try std.testing.expectEqual(@as(u32, 2), r.seed);
     try std.testing.expectEqual(@as(u32, 0), r.dim_mismatch);
-    // Never regress. Currently 1203 masked / 632 walkable off, nearly all of it one maze
-    // room (L47 Sewers 1) — the substitution-group replay this port does not do.
-    try std.testing.expect(r.masked_ok >= 11_130_700);
+    // Never regress. The bulk used to be one L47 Sewers room whose DS1 variant came from
+    // a roll instead of the engine's pinned File[0] (AllocRoomExAndPickPreset variant 0).
+    try std.testing.expect(r.masked_ok >= 11_131_700);
+    // Walkability is byte-exact on all three per-cell seeds. Any regression here changes
+    // where a player can stand, so it fails hard rather than eating into the masked floor.
+    try std.testing.expectEqual(r.total_cells, r.walk_ok);
 }
 
 test "coll: all-acts golden (seed 777, cross-seed regression)" {
@@ -104,6 +108,7 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
     try std.testing.expectEqual(@as(usize, 0), r.dim_mismatch);
     // Rebuilt (all-rooms-active) golden; 11,157,575 after the seam re-resolve + cross-level gather.
     try std.testing.expect(r.masked_ok >= 11_157_760);
+    try std.testing.expectEqual(r.total_cells, r.walk_ok);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
@@ -158,6 +163,21 @@ test "coll: DUMP ours rooms for diff viz" {
     lib.dump_ours_rooms = true;
     _ = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
     lib.dump_ours_rooms = false;
+}
+
+test "coll: seed-2 single-level focus (probe)" {
+    if (true) return; // opt-in: set LVL below, flip to `if (false)`
+    const LVL = 47;
+    const gpa = std.testing.allocator;
+    const golden = decompressGz(gpa, GOLDEN_2_GZ) catch return;
+    defer gpa.free(golden);
+    const one = try filterToLevels(gpa, golden, LVL, LVL);
+    defer gpa.free(one);
+    var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+    lib.probe_room = .{ .level = LVL, .px = -1, .py = -1 };
+    defer lib.probe_room = null;
+    _ = try lib.verifyActCollision(gpa, &ctx, one, .nightmare, false);
 }
 
 test "coll: single-level focus (probe)" {

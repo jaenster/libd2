@@ -1645,9 +1645,12 @@ fn buildLevelRoomColl(
                     for (d.shadow) |c| {
                         if (c.raw != 0) shadow_nz += 1;
                     }
-                    dprint("ROOMINFO {d},{d} ds1={s} floorlayers={d} walllayers={d} shadow_len={d} shadow_nz={d} floors={d} walls={d} shadows={d} upd={d}\n", .{
+                    const prow = preset.prest(pmap);
+                    dprint("ROOMINFO {d},{d} ds1={s} prest={d} def={d} files={d} sel={d} floorlayers={d} walllayers={d} shadow_len={d} shadow_nz={d} floors={d} walls={d} shadows={d} upd={d}\n", .{
                         p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB,
                         preset.presetDs1Path(pmap) orelse "?",
+                        pmap.nNumber,                    prow.*.Def,
+                        prow.*.Files,                    pmap.nRandomMapFileSelector,
                         d.floor_layers.len,              d.wall_layers.len,
                         d.shadow.len,                    shadow_nz,
                         mr.n_floors,
