@@ -92,6 +92,17 @@ test "owner_id tells friend from foe: hostile-monster / pet / monster-enemy pred
     try testing.expect(!isMonsterEnemy(&pet));
 }
 
+test "submerged monster is untargetable (burrow invulnerability)" {
+    var mon = Unit.init(.monster);
+    mon.set(.maxhp, 10);
+    mon.setLife(10);
+    try testing.expect(isHostileMonster(&mon)); // surfaced -> targetable
+    mon.submerged = true;
+    try testing.expect(!isHostileMonster(&mon)); // underground -> cannot be targeted
+    mon.submerged = false;
+    try testing.expect(isHostileMonster(&mon)); // surfaces again -> targetable
+}
+
 const SliceIter = struct {
     items: []Unit,
     i: usize = 0,
