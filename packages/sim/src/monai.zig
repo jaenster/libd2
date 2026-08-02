@@ -207,6 +207,71 @@ inline fn roll100(seed: *Seed) i32 {
     return @intCast(seed.pick(100));
 }
 
+// --- Pure per-behavior decision predicates -----------------------------------------------------
+//
+// These are the exact decisions the host applies for each behavior class, lifted out of the host so
+// they can be exhaustively unit-tested here (the host calls these — tested == shipped). Distances are
+// SQUARED (matches the host, which never takes a sqrt); ranges are in subtiles.
+
+/// A squared distance is within `radius` subtiles. Shared by stationary/aura/kite/blast checks.
+pub fn withinRadius(dist2: i64, radius: i32) bool {
+    return dist2 <= @as(i64, radius) * radius;
+}
+
+/// A `coward` (Vampire / Panther Woman / Arach) flees when it has a target and its life is under
+/// `flee_below_pct` percent of max. maxhp<=0 (unset) never flees (avoids a divide-by-zero).
+pub fn cowardFlees(life: i32, maxhp: i32, has_target: bool, flee_below_pct: i32) bool {
+    if (!has_target or maxhp <= 0) return false;
+    return @divTrunc(life * 100, maxhp) < flee_below_pct;
+}
+
+/// A skittish-ranged monster back-pedals when the target has closed INSIDE the standoff (strictly
+/// nearer than `standoff`); at or beyond it, it holds/approaches and shoots.
+pub fn kiteBackpedals(target_dist2: i64, standoff: i32) bool {
+    return target_dist2 < @as(i64, standoff) * standoff;
+}
+
+/// A teleporting boss blinks when the target is strictly BEYOND `blink_range` and the cooldown is ready.
+pub fn bossBlinks(target_dist2: i64, blink_range: i32, cooldown_ready: bool) bool {
+    return cooldown_ready and target_dist2 > @as(i64, blink_range) * blink_range;
+}
+
+/// A suicide rusher detonates once the target is within `contact_range`; otherwise it keeps charging.
+pub fn suicideDetonates(target_dist2: i64, contact_range: i32) bool {
+    return target_dist2 <= @as(i64, contact_range) * contact_range;
+}
+
+/// A spawner may emit another minion while it owns fewer than `cap` live ones (cap<=0 = never).
+pub fn spawnerUnderCap(live_count: i32, cap: i32) bool {
+    return cap > 0 and live_count < cap;
+}
+
+/// A seeded percent-chance gate: advance the LCG once and pass when the 0..99 roll is under `chance_pct`
+/// (chance<=0 never passes, chance>=100 always passes). The shared primitive behind every aip roll.
+pub fn rollPasses(seed: *Seed, chance_pct: i32) bool {
+    return roll100(seed) < chance_pct;
+}
+
+/// One tick of the burrower state machine (SandRaider / FrogDemon).
+pub const BurrowAction = enum {
+    /// Submerged and the dive timer has not elapsed — stay under (invulnerable, no action).
+    stay_submerged,
+    /// Submerged and the timer elapsed — surface next to the target and strike.
+    surface_and_strike,
+    /// Surfaced, the surface window elapsed and a target exists — dive again.
+    dive,
+    /// Surfaced and not yet time to dive — fight normally this tick.
+    fight,
+};
+
+/// Decide the burrower's action. `phase_end` is the frame the current phase ends (dive timer while
+/// submerged, surface timer while up). A surfaced burrower only dives when it actually has a target.
+pub fn burrowDecide(submerged: bool, now: u64, phase_end: u64, has_target: bool) BurrowAction {
+    if (submerged) return if (now < phase_end) .stay_submerged else .surface_and_strike;
+    if (has_target and now >= phase_end) return .dive;
+    return .fight;
+}
+
 const testing = std.testing;
 
 test "monai: Script.fromName classifies AI names case-insensitively" {
@@ -302,4 +367,118 @@ test "monai: FallenShaman casts its bolt within aip5 range when the aip2 roll pa
     var s2 = Seed.fromValue(0x7);
     const p2 = decideFallenShaman(&s2, false, true, 20, 0, 100, 0, 8, false, false);
     try testing.expect(!p2.cast_bolt and !p2.approach);
+}
+
+test "monai: FallenShaman revive needs BOTH a found AND valid target" {
+    // found but NOT valid -> no revive (falls past to bolt/approach).
+    var s = Seed.fromValue(0x55);
+    const p = decideFallenShaman(&s, false, true, 3, 100, 0, 0, 8, true, false);
+    try testing.expect(p.summon_minion and !p.revive);
+    // not found at all -> no revive regardless of the roll.
+    var s2 = Seed.fromValue(0x55);
+    const p2 = decideFallenShaman(&s2, false, true, 3, 100, 0, 0, 8, false, true);
+    try testing.expect(!p2.revive);
+}
+
+test "monai: FallenShaman final gate — aip3 approach vs plan-move" {
+    // Nothing else fires (aip1=aip2=0), engaged=false; aip3=100 -> approach; aip3=0 -> idle plan-move.
+    var s = Seed.fromValue(0x2);
+    const approach = decideFallenShaman(&s, false, false, 3, 0, 0, 100, 8, false, false);
+    try testing.expect(approach.approach);
+    var s2 = Seed.fromValue(0x2);
+    const idle = decideFallenShaman(&s2, false, false, 3, 0, 0, 0, 8, false, false);
+    try testing.expect(!idle.approach);
+}
+
+test "monai: withinRadius is inclusive at the boundary" {
+    try testing.expect(withinRadius(0, 5));
+    try testing.expect(withinRadius(25, 5)); // 5^2 exactly -> inside
+    try testing.expect(!withinRadius(26, 5)); // just outside
+    try testing.expect(withinRadius(100, 10));
+    try testing.expect(!withinRadius(101, 10));
+    try testing.expect(!withinRadius(1, 0)); // zero radius: nothing but distance 0
+    try testing.expect(withinRadius(0, 0));
+}
+
+test "monai: coward flees only when wounded AND it has a target" {
+    // 33% threshold: 32/100 flees, 33/100 does not (strict <).
+    try testing.expect(cowardFlees(32, 100, true, 33));
+    try testing.expect(!cowardFlees(33, 100, true, 33));
+    try testing.expect(!cowardFlees(99, 100, true, 33)); // healthy -> fight
+    try testing.expect(!cowardFlees(1, 100, false, 33)); // no target -> never flee
+    try testing.expect(!cowardFlees(0, 0, true, 33)); // unset maxhp -> no divide-by-zero, no flee
+    try testing.expect(cowardFlees(0, 100, true, 33)); // near death -> flee
+    // Scales with maxhp, not absolute life.
+    try testing.expect(cowardFlees(300, 1000, true, 33)); // 30% -> flee
+    try testing.expect(!cowardFlees(400, 1000, true, 33)); // 40% -> fight
+}
+
+test "monai: ranged kite back-pedals strictly inside the standoff" {
+    // standoff 10 -> radius^2 = 100.
+    try testing.expect(kiteBackpedals(0, 10));
+    try testing.expect(kiteBackpedals(99, 10));
+    try testing.expect(!kiteBackpedals(100, 10)); // exactly at standoff -> hold, don't back-pedal
+    try testing.expect(!kiteBackpedals(400, 10)); // far -> approach/shoot
+}
+
+test "monai: boss blink requires out-of-range AND cooldown ready" {
+    // blink_range 26 -> ^2 = 676.
+    try testing.expect(bossBlinks(677, 26, true)); // beyond + ready -> blink
+    try testing.expect(!bossBlinks(676, 26, true)); // exactly at range -> no blink (strict >)
+    try testing.expect(!bossBlinks(1000, 26, false)); // beyond but on cooldown -> no blink
+    try testing.expect(!bossBlinks(100, 26, true)); // in range -> fight, no blink
+}
+
+test "monai: suicide detonates inclusively at contact range" {
+    // contact 3 -> ^2 = 9.
+    try testing.expect(suicideDetonates(0, 3));
+    try testing.expect(suicideDetonates(9, 3)); // exactly contact -> detonate
+    try testing.expect(!suicideDetonates(10, 3)); // just outside -> keep charging
+    try testing.expect(!suicideDetonates(400, 3));
+}
+
+test "monai: spawner cap gate" {
+    try testing.expect(spawnerUnderCap(0, 3));
+    try testing.expect(spawnerUnderCap(2, 3));
+    try testing.expect(!spawnerUnderCap(3, 3)); // at cap -> stop
+    try testing.expect(!spawnerUnderCap(4, 3));
+    try testing.expect(!spawnerUnderCap(0, 0)); // no cap configured -> never spawn
+    try testing.expect(!spawnerUnderCap(0, -1));
+}
+
+test "monai: rollPasses honors 0 and 100 edge chances deterministically" {
+    var s = Seed.fromValue(0xABCD);
+    // chance 0 never passes, chance 100 always passes — regardless of the seed state.
+    var i: usize = 0;
+    while (i < 50) : (i += 1) {
+        try testing.expect(!rollPasses(&s, 0));
+        try testing.expect(rollPasses(&s, 100));
+        try testing.expect(rollPasses(&s, 1000)); // clamps high
+    }
+}
+
+test "monai: rollPasses ~matches its probability over many samples" {
+    var s = Seed.fromValue(0x1);
+    var hits: u32 = 0;
+    const n: u32 = 10000;
+    var i: u32 = 0;
+    while (i < n) : (i += 1) {
+        if (rollPasses(&s, 25)) hits += 1;
+    }
+    // 25% of 10000 = 2500; allow generous slack for the LCG distribution.
+    try testing.expect(hits > 2000 and hits < 3000);
+}
+
+test "monai: burrow state machine cycles submerge -> surface -> fight -> dive" {
+    // Submerged, before the dive timer -> stay under (invulnerable).
+    try testing.expectEqual(BurrowAction.stay_submerged, burrowDecide(true, 10, 100, true));
+    // Submerged, timer elapsed -> surface and strike.
+    try testing.expectEqual(BurrowAction.surface_and_strike, burrowDecide(true, 100, 100, true));
+    try testing.expectEqual(BurrowAction.surface_and_strike, burrowDecide(true, 150, 100, false));
+    // Surfaced, surface window elapsed, has a target -> dive again.
+    try testing.expectEqual(BurrowAction.dive, burrowDecide(false, 200, 100, true));
+    // Surfaced, window elapsed but NO target -> just fight (don't dive at nothing).
+    try testing.expectEqual(BurrowAction.fight, burrowDecide(false, 200, 100, false));
+    // Surfaced, still within the surface window -> fight.
+    try testing.expectEqual(BurrowAction.fight, burrowDecide(false, 50, 100, true));
 }
