@@ -1877,6 +1877,13 @@ fn buildLevelRoomColl(
 
     try rooms.ensureUnusedCapacity(out_alloc, rbs.items.len);
     for (rbs.items, 0..) |rb, i| {
+        if (rb.foreign) {
+            // Belongs to its own level; gathered FROM only. Its grid is never handed to
+            // `rooms`, so free it here (the errdefer is disarmed just below).
+            out_alloc.free(grids[i]);
+            grids[i] = &.{};
+            continue;
+        }
         rooms.appendAssumeCapacity(.{
             .level_id = lid,
             .px = rb.wpx * SUB,
