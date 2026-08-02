@@ -1609,6 +1609,7 @@ pub fn materializeOutdoorFloorRoom(
     nSubThemePicked: i32,
     nWaypointCount: i32,
     nShrineCount: i32,
+    near: ?NearRooms,
 ) !MaterializeResult {
     var arena_impl = std.heap.ArenaAllocator.init(a);
     defer arena_impl.deinit();
@@ -1696,14 +1697,15 @@ pub fn materializeOutdoorFloorRoom(
             }
         }
     }
-    // InitGridCells here calls FlagOperations(floor,0,4) to mark the grid border
-    // as cross-room transition seams (processTile would then divert them, letting
-    // the neighbor room supply the shared edge). It is OMITTED: (a) it is
-    // collision-neutral — a border grass cell is walkable whether materialized
-    // here or by the neighbor; and (b) DrlgGrid.FlagOperations' second loop is a
-    // pre-existing artifact port (indexes apFlagOperations[rowCounter], OOB for a
-    // grid taller than 6), never exercised on the gate path. Fixing that port is a
-    // separate RE task; skipping the seam marking changes no collision bit.
+    // InitGridCells' closing pair: FlagOperations(wall,0,4) then FlagOperations(floor,0,4)
+    // ORs CELLFLAGS_0x04 into each grid's BORDER ring, exactly as the preset path's
+    // 0x84 call does. This used to be omitted as "collision-neutral" — that was true only
+    // while the port had no UpdateOrAddTile: 0x04 routes a seam cell to the near-room
+    // lookup, so it decides whether this room emits the shared edge (and burns a rarity
+    // roll) or defers to the neighbour that already owns it.
+
+    flagBorderCells(&wg, CELLFLAGS_0x04);
+    flagBorderCells(&fg, CELLFLAGS_0x04);
 
     // ── Count → alloc → InitRoomTiles (as DRLGROOMEX_InitializeMazeRoom). ──
     countTilesFromGrid(pRoom, &fg.grid, 0, 0, 0);
@@ -1723,9 +1725,15 @@ pub fn materializeOutdoorFloorRoom(
         .width = gw,
         .special = try a.alloc(bool, ncells),
         .companion = try ar.alloc(bool, @intCast(pTileGrid.*.nWallTilesMax)),
+        .near = if (near) |n| n.index else null,
+        .link_alloc = if (near) |n| n.alloc else a,
+        .room_wx = if (near) |n| n.wx else 0,
+        .room_wy = if (near) |n| n.wy else 0,
+        .room_rect = if (near) |n| .{ .x = n.wx, .y = n.wy, .w = n.w, .h = n.h } else .{ .x = 0, .y = 0, .w = 0, .h = 0 },
     };
     @memset(ctx.special, false);
     @memset(ctx.companion, false);
+    defer ctx.linked.deinit(if (near) |n| n.alloc else a);
     g_ctx = &ctx;
 
     InitRoomTiles(pRoom, &fg.grid, null, 0, 0, 0);
@@ -1757,6 +1765,8 @@ pub fn materializeOutdoorFloorRoom(
             blitTile(&coll, &pWall[wi]);
         }
     }
+
+    if (near) |n| try publishRoomTiles(n, ctx.linked.items, dts, room.sSeed);
 
     return .{
         .coll = coll,
@@ -2251,10 +2261,10 @@ fn checkWildernessLevel(a: std.mem.Allocator, ctx: *lib.Ctx, idx: *const dt1blob
             preset_rooms += 1;
         } else if (p.eRoomExFlags.noLos) {
             // FLOOR cell — the M2b path. Baseline (no overlay) + overlay pass.
-            var rb = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, null, -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
+            var rb = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, null, -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), null) catch continue;
             defer rb.deinit(a);
             blitInto(&level_base, &rb.coll, ox, oy);
-            var rc = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, outdoorOverlayFor(pLevel, p), -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
+            var rc = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, outdoorOverlayFor(pLevel, p), -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), null) catch continue;
             defer rc.deinit(a);
             floor_tiles += @intCast(rc.n_floors);
             blitInto(&level_over, &rc.coll, ox, oy);

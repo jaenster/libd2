@@ -1664,7 +1664,14 @@ fn buildLevelRoomColl(
                     }
                     break :t .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
                 };
-                var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows))) catch continue;
+                var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), .{
+                        .index = &near_tiles,
+                        .alloc = out_alloc,
+                        .wx = p.sCoords.WorldPosition.x,
+                        .wy = p.sCoords.WorldPosition.y,
+                        .w = p.sCoords.WorldSize.x,
+                        .h = p.sCoords.WorldSize.y,
+                    }) catch continue;
                 defer mr.deinit(out_alloc);
                 break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
             } else continue;
