@@ -141,7 +141,7 @@ test "coll: DUMP ours rooms for diff viz" {
 }
 
 test "coll: single-level focus (probe)" {
-    if (true) return; // opt-in: set the level range + probes below, flip to `if (false)`
+    if (false) return; // opt-in: set the level range + probes below, flip to `if (false)`
     const gpa = std.testing.allocator;
     const golden = decompressGolden(gpa) catch return;
     defer gpa.free(golden);
@@ -150,9 +150,9 @@ test "coll: single-level focus (probe)" {
     var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
     defer ctx.deinit();
     // px/py = -1 probes every room of the level.
-    lib.probe_room = .{ .level = 35, .px = -1, .py = -1 };
+    lib.probe_room = .{ .level = 35, .px = 22560, .py = 6620 };
     defer lib.probe_room = null;
-    @import("drlg/tilegen.zig").probe_seq = true;
+    @import("drlg/tilegen.zig").probe_seq = false;
     defer @import("drlg/tilegen.zig").probe_seq = true;
     @import("drlg/tilegen.zig").probe_only_level = 35;
     defer @import("drlg/tilegen.zig").probe_only_level = -1;

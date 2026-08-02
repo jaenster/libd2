@@ -1610,7 +1610,7 @@ fn buildLevelRoomColl(
     // neighbour's kill-edge tiles (origin just past the neighbour) land on R's shared
     // border. Each tile-origin belongs to exactly one room, so we route tiles through
     // a level tile→room index rather than the O(rooms^2) self+neighbour walk (same set).
-    const RoomBuild = struct { wpx: i32, wpy: i32, wtx: i32, hty: i32, tiles: []materialize.CollTile, is_ds1: bool };
+    const RoomBuild = struct { wpx: i32, wpy: i32, wtx: i32, hty: i32, tiles: []materialize.CollTile, is_ds1: bool, room: *abi.D2RoomExStrc };
     var rbs: std.ArrayListUnmanaged(RoomBuild) = .empty;
     defer {
         for (rbs.items) |rb| out_alloc.free(rb.tiles);
@@ -1677,6 +1677,7 @@ fn buildLevelRoomColl(
             .hty = p.sCoords.WorldSize.y,
             .tiles = tiles,
             .is_ds1 = roomPMap(p) != null,
+            .room = p,
         });
     }
     if (rbs.items.len == 0) return;
@@ -1716,12 +1717,14 @@ fn buildLevelRoomColl(
         const gh: usize = @intCast(R.hty * SUB);
         const wtxu: usize = @intCast(R.wtx);
         for (rbs.items) |A| {
-            // bbox reject: A reaches R if A's tile rect EXTENDED by the +1 far-edge
-            // col/row (where its wall tiles may live, kept by collectCollTiles)
-            // overlaps R's rect. The engine's adjacency gather stamps a neighbor's
-            // +1 wall tiles into R when their origin lands inside R's rect; R's own
-            // +1 tiles never stamp into R (AreSubtileCoordinatesInsideRoom is
-            // exclusive at the far edge — mirrored by the per-tile clip below).
+            // A reaches R if A's tile rect EXTENDED by the +1 far-edge col/row (where its
+            // wall tiles may live) overlaps R's. The engine instead gathers from R's OWN
+            // near list (DRLGROOM_GetAdjacentRoomsList), and that set is genuinely narrower
+            // — a room can own a tile sitting exactly on R's origin and still not contribute
+            // it (engine floortile oracle, Catacombs seams). Using our ppDrlgRoomsExNear
+            // here is far worse though (masked 1489 -> 15753): the near lists this port
+            // builds at DRLG time are much narrower than the set the engine gathers from,
+            // so the bbox test stays until the real near-list construction is ported.
             if (A.wpx + A.wtx + 1 <= R.wpx or A.wpx >= R.wpx + R.wtx) continue;
             if (A.wpy + A.hty + 1 <= R.wpy or A.wpy >= R.wpy + R.hty) continue;
             for (A.tiles) |ct| {
@@ -1748,8 +1751,10 @@ fn buildLevelRoomColl(
                     };
                 }
                 if (probe_room) |pb| if (pb.level == lid and (pb.px < 0 or (pb.px == R.wpx * SUB and pb.py == R.wpy * SUB))) {
-                    dprint("PROBE L{d} room({d},{d}) tile({d},{d}) from{s} orient={d} main={d} sub={d} rar={d} nFlags=0x{X} blk=", .{
+                    dprint("PROBE L{d} room({d},{d}) tile({d},{d}) src({d},{d} {d}x{d}) rel({d},{d}) from{s} orient={d} main={d} sub={d} rar={d} nFlags=0x{X} blk=", .{
                         lid,          R.wpx * SUB,      R.wpy * SUB,     rtx,             rty,
+                        A.wpx,        A.wpy,            A.wtx,           A.hty,
+                        otx - A.wpx,  oty - A.wpy,
                         if (A.wpx == R.wpx and A.wpy == R.wpy) "SELF" else "NBR",
                         ct.tile.orientation, ct.tile.main, ct.tile.sub, ct.tile.rarity, @as(u32, @bitCast(ct.nFlags)),
                     });
