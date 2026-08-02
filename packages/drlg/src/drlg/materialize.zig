@@ -596,9 +596,14 @@ pub const MaterializeResult = struct {
 /// Collect a room's FLOOR + WALL + ROOF tile-data (post-InitRoomTiles) into a flat
 /// `CollTile` list — the input to the faithful per-room CollMap stamp. Mirrors the
 /// layer order AllocRoomCollisionGrid stamps (floor, wall, roof); OR is order-free so
-/// order is cosmetic. Wall companions (type-3 second-half tiles) are skipped exactly
-/// as the rasterizer does. Tiles whose art did not resolve are dropped.
-fn collectCollTiles(a: std.mem.Allocator, pTileGrid: [*c]s.D2DrlgTileGridStrc, companion: []const bool, max_tx: i32, max_ty: i32, wall_edge: i32) ![]CollTile {
+/// order is cosmetic. Tiles whose art did not resolve are dropped.
+///
+/// The type-3 wall companion IS included: CreateWallTileData (0x66dc50) writes the
+/// paired type-4 tile into the same pWallTiles array and bumps nWalls, so the engine's
+/// gather stamps it like any other wall. Its DT1 block is not a copy of the type-3's —
+/// e.g. battle.dt1 (3,11,20) is 0x05 while (4,11,20) is 0x07 — so dropping it loses
+/// COLLIDE_BLOCK_MISSILE over the whole wall footprint.
+fn collectCollTiles(a: std.mem.Allocator, pTileGrid: [*c]s.D2DrlgTileGridStrc, max_tx: i32, max_ty: i32, wall_edge: i32) ![]CollTile {
     var list: std.ArrayListUnmanaged(CollTile) = .empty;
     errdefer list.deinit(a);
     const pushArr = struct {
@@ -624,7 +629,7 @@ fn collectCollTiles(a: std.mem.Allocator, pTileGrid: [*c]s.D2DrlgTileGridStrc, c
         }
     }.go;
     try pushArr(&list, a, pTileGrid.*.pFloorTiles, pTileGrid.*.nFloors, null, true, max_tx, max_ty);
-    try pushArr(&list, a, pTileGrid.*.pWallTiles, pTileGrid.*.nWalls, companion, false, max_tx + wall_edge, max_ty + wall_edge);
+    try pushArr(&list, a, pTileGrid.*.pWallTiles, pTileGrid.*.nWalls, null, false, max_tx + wall_edge, max_ty + wall_edge);
     try pushArr(&list, a, pTileGrid.*.pRoofTiles, pTileGrid.*.nShadows, null, false, max_tx, max_ty);
     return list.toOwnedSlice(a);
 }
@@ -847,7 +852,7 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     return .{
         .coll = coll,
         .special = ctx.special,
-        .tiles = try collectCollTiles(a, pTileGrid, ctx.companion, win.size_x, win.size_y, if (window != null) 1 else 0),
+        .tiles = try collectCollTiles(a, pTileGrid, win.size_x, win.size_y, if (window != null) 1 else 0),
         .n_floors = pTileGrid.*.nFloors,
         .n_walls = pTileGrid.*.nWalls,
         .n_shadows = pTileGrid.*.nShadows,
@@ -1471,7 +1476,7 @@ pub fn materializeOutdoorFloorRoom(
     return .{
         .coll = coll,
         .special = ctx.special,
-        .tiles = try collectCollTiles(a, pTileGrid, ctx.companion, ws_x, ws_y, 1),
+        .tiles = try collectCollTiles(a, pTileGrid, ws_x, ws_y, 1),
         .n_floors = pTileGrid.*.nFloors,
         .n_walls = pTileGrid.*.nWalls,
         .n_shadows = pTileGrid.*.nShadows,

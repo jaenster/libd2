@@ -1675,6 +1675,7 @@ pub fn generateActRoomCollision(
         linkLevelWarpNodes(pLevel);
         const tlv = ctx.act.level(lid) orelse continue;
         const nLevelType: i32 = @intFromEnum(pLevel.nLevelType);
+        tilegen.probe_cur_level = lid;
 
         // Level DT1 library (LvlTypes File1..32 for this LevelType).
         var files: [32][]const u8 = undefined;
@@ -1708,12 +1709,20 @@ pub fn generateActRoomCollision(
 
         var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
         while (pr) |p| : (pr = p.pRoomExNext) {
+            tilegen.probe_cur_room = .{ p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB };
             const tiles: []materialize.CollTile = blk: {
                 if (roomPMap(p)) |pmap| {
                     var d = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
                     defer d.deinit();
                     var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap)) catch continue;
                     defer mr.deinit(out_alloc);
+                    if (probe_room) |pb| if (pb.level == lid)
+                        std.debug.print("ROOMINFO {d},{d} floors={d} walls={d} shadows={d} special={d} warp={d} trans={d}\n", .{
+                            p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB,
+                            mr.n_floors,                     mr.n_walls,
+                            mr.n_shadows,                    mr.special_count,
+                            mr.warp_setup_skipped,           mr.transition_skipped,
+                        });
                     break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
                 } else if (p.eRoomExFlags.noLos) {
                     const sub_type2, const sub_theme2, const sub_picked2 = t: {
@@ -1789,6 +1798,15 @@ pub fn generateActRoomCollision(
                     if (otx < R.wpx or otx >= R.wpx + R.wtx or oty < R.wpy or oty >= R.wpy + R.hty) continue;
                     const rtx: usize = @intCast(otx - R.wpx);
                     const rty: usize = @intCast(oty - R.wpy);
+                    if (probe_room) |pb| if (pb.level == lid and (pb.px < 0 or (pb.px == R.wpx * SUB and pb.py == R.wpy * SUB))) {
+                        std.debug.print("PROBE L{d} room({d},{d}) tile({d},{d}) from{s} orient={d} main={d} sub={d} rar={d} nFlags=0x{X} blk=", .{
+                            lid,          R.wpx * SUB,      R.wpy * SUB,     rtx,             rty,
+                            if (A.wpx == R.wpx and A.wpy == R.wpy) "SELF" else "NBR",
+                            ct.tile.orientation, ct.tile.main, ct.tile.sub, ct.tile.rarity, @as(u32, @bitCast(ct.nFlags)),
+                        });
+                        for (ct.tile.flags) |f| std.debug.print("{X:0>2},", .{f});
+                        std.debug.print("\n", .{});
+                    };
                     materialize.stampCollTile(grids[ri], gw, gh, rtx * SUB, rty * SUB, ct);
                     if (ct.is_floor) floors[ri][rty * wtxu + rtx] = true;
                 }
@@ -1890,6 +1908,16 @@ pub const CollVerifyResult = struct {
 /// Debug: when set, verifyActCollision dumps each of OUR rooms (masked-0x1F cells)
 /// as `OURSROOM level px py w h c,c,...` for offline diff visualization vs the golden.
 pub var dump_ours_rooms: bool = false;
+
+/// Debug: when set, verifyActCollision prints one line per masked-0x1F mismatching
+/// subtile as `MISM <level> <px> <py> <w> <h> <lx> <ly> <golden0x1F> <ours0x1F>`, for
+/// offline classification of what mechanism each residual cell belongs to.
+pub var dump_mismatch_cells: bool = false;
+
+/// Debug: when set, generateActRoomCollision prints every tile stamped into this one
+/// room (`PROBE` lines: room-relative tile coords, tile identity/rarity, draw nFlags and
+/// the raw 25-byte DT1 collision block), so a residual cell can be traced to its tile.
+pub var probe_room: ?struct { level: i32, px: i32, py: i32 } = null;
 
 /// per-bit mismatch histogram. `verbose` prints a per-level table + worst rooms.
 /// GATE-SAFE: pure post-generation consumer.
@@ -2072,6 +2100,11 @@ pub fn verifyActCollision(
             } else {
                 room_mism += 1;
                 confusion[gc & 0x1F][oc & 0x1F] += 1;
+                if (dump_mismatch_cells) std.debug.print("MISM {d} {d} {d} {d} {d} {d} {d} {d} {d}\n", .{
+                    g.level, g.px,           g.py,          g.w,      g.h,
+                    idx2 % @as(usize, @intCast(g.w)),        idx2 / @as(usize, @intCast(g.w)),
+                    gc & 0x1F, oc & 0x1F,
+                });
                 var b: u4 = 0;
                 while (b < 5) : (b += 1) {
                     const m = @as(u16, 1) << b;
