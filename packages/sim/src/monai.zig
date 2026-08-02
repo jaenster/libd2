@@ -84,7 +84,8 @@ pub const Script = enum {
         if (inAny(name, &.{ "GreaterMummy", "BloodRaven" })) return .raiser;
         // Lay/spawn own minions up to a cap while fighting (SummonMaster refills its minion1 slots).
         if (inAny(name, &.{ "SandMaggot", "SandMaggotQueen", "VileMother", "Scarab", "Vulture", "FetishShaman", "SummonMaster" })) return .spawner;
-        if (inAny(name, &.{ "Mephisto", "BaalCrab", "BaalCrabClone" })) return .boss_teleport;
+        // Teleporting bosses + their Pandemonium (Uber) counterparts, which share the base mechanics.
+        if (inAny(name, &.{ "Mephisto", "BaalCrab", "BaalCrabClone", "UberMephisto", "UberBaal" })) return .boss_teleport;
         if (eq(name, "Duriel")) return .aura_chill;
         // Submerge/collision-shrink ambushers.
         if (inAny(name, &.{ "SandRaider", "FrogDemon" })) return .burrower;
@@ -102,6 +103,7 @@ pub const Script = enum {
             "Sarcophagus",    "EvilHole",      "Vines",        "MosquitoNest", "FoulCrowNest",
             "MaggotEgg",      "AncientStatue", "FrozenHorror", "Wraith",       "Tentacle",
             "TentacleHead",   "MaggotLarva",   "GenericSpawner", "MinionSpawner", "BaalTentacle",
+            "InvisoSpawner",
         })) return .stationary;
         // Town / neutral NPCs, quest-script walkers and harmless critters — no combat AI.
         if (inAny(name, &.{
