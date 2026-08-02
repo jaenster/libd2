@@ -89,7 +89,11 @@ pub const ElementalDamage = struct {
     /// is the matching EMinLev1..5 / EMaxLev1..5 breakpoints. Returns the value in HitShift
     /// space (caller applies `>> 8`). `clvl` is the effective skill level (hard + item points).
     fn staged(clvl: i32, base: i32, lev: [5]i32, hit_shift: i32) i64 {
-        var l = clvl;
+        // SKILLS_GetDamage is only ever invoked for an ACTIVE skill (level >= 1); the staged
+        // progression's base tier multiplies by (l - 1), so an unlearned skill (level 0 — e.g. a
+        // client casting a skill it never allocated) would drive that term to -1 and make `a`
+        // negative, whose `<< hit_shift` below is illegal. A cast is always at least level 1.
+        var l = @max(clvl, 1);
         var a: i64 = base;
         if (l > 28) {
             a += @as(i64, lev[4]) * (l - 28);
