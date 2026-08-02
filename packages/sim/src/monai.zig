@@ -82,8 +82,8 @@ pub const Script = enum {
         })) return .ranged_kite;
         // Raise the dead: rez nearby corpses (GreaterMummy) / raise zombies (BloodRaven Skill1).
         if (inAny(name, &.{ "GreaterMummy", "BloodRaven" })) return .raiser;
-        // Lay/spawn own minions up to a cap while fighting.
-        if (inAny(name, &.{ "SandMaggot", "SandMaggotQueen", "VileMother", "Scarab", "Vulture", "FetishShaman" })) return .spawner;
+        // Lay/spawn own minions up to a cap while fighting (SummonMaster refills its minion1 slots).
+        if (inAny(name, &.{ "SandMaggot", "SandMaggotQueen", "VileMother", "Scarab", "Vulture", "FetishShaman", "SummonMaster" })) return .spawner;
         if (inAny(name, &.{ "Mephisto", "BaalCrab", "BaalCrabClone" })) return .boss_teleport;
         if (eq(name, "Duriel")) return .aura_chill;
         // Submerge/collision-shrink ambushers.
@@ -101,7 +101,7 @@ pub const Script = enum {
             "Trap-Melee",     "Trap-Nova",     "Trap-Poison",  "BoneWall",     "HellMeteor",
             "Sarcophagus",    "EvilHole",      "Vines",        "MosquitoNest", "FoulCrowNest",
             "MaggotEgg",      "AncientStatue", "FrozenHorror", "Wraith",       "Tentacle",
-            "TentacleHead",   "MaggotLarva",
+            "TentacleHead",   "MaggotLarva",   "GenericSpawner", "MinionSpawner", "BaalTentacle",
         })) return .stationary;
         // Town / neutral NPCs, quest-script walkers and harmless critters — no combat AI.
         if (inAny(name, &.{
@@ -247,6 +247,9 @@ test "monai: Script.fromName classifies AI names case-insensitively" {
     try testing.expectEqual(Script.ally_support, Script.fromName("HighPriest"));
     try testing.expectEqual(Script.passive, Script.fromName("DarkWanderer"));
     try testing.expectEqual(Script.suicide_rush, Script.fromName("SuicideMinion"));
+    try testing.expectEqual(Script.spawner, Script.fromName("SummonMaster"));
+    try testing.expectEqual(Script.stationary, Script.fromName("GenericSpawner"));
+    try testing.expectEqual(Script.stationary, Script.fromName("BaalTentacle"));
     // Summoner is a pure multi-skill caster (no summon/teleport); non-blinking bosses -> generic baseline.
     try testing.expectEqual(Script.generic, Script.fromName("Summoner"));
     try testing.expectEqual(Script.generic, Script.fromName("Diablo"));
