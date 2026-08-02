@@ -1909,6 +1909,10 @@ pub const CollVerifyResult = struct {
     total_cells: u64 = 0,
     exact_ok: u64 = 0,
     masked_ok: u64 = 0,
+    /// Cells whose BLOCK_PLAYER (0x01) bit agrees — the only bit that decides whether a
+    /// unit may stand there, so this is the number a pathing consumer actually cares
+    /// about. The other COLBITs (missile/LOS/leap/alt-floor) never move a walk mask.
+    walk_ok: u64 = 0,
     hist_golden_set_ours_clear: [5]u64 = .{0} ** 5,
     hist_ours_set_golden_clear: [5]u64 = .{0} ** 5,
     higher_bits_golden: u64 = 0,
@@ -2130,6 +2134,7 @@ pub fn verifyActCollision(
                 lvls[li].exact += 1;
                 out.exact_ok += 1;
             }
+            if ((gc & 0x01) == (oc & 0x01)) out.walk_ok += 1;
             if ((gc & 0x1F) == (oc & 0x1F)) {
                 lvls[li].masked += 1;
                 out.masked_ok += 1;
@@ -2185,7 +2190,8 @@ pub fn verifyActCollision(
             dprint("  0x{X:0>2} -> 0x{X:0>2} : {d}\n", .{ bg, bo, bc });
             confusion[bg][bo] = 0;
         }
-        const bitname = [_][]const u8{ "WALL", "VISIBLE", "MISSILE_BAR", "NOPLAYER", "PRESET" };
+        // eCollisionFlags (Ghidra /Diablo2/COLLISION), not the older guessed names.
+        const bitname = [_][]const u8{ "BLOCK_PLAYER", "BLOCK_MISSILE", "WALL", "BLOCK_LEAP", "ALT_FLOOR" };
         dprint("\n=== PER-LEVEL COLLISION MATCH (seed {d}) ===\n", .{seed});
         dprint("  Lvl name                     matched g-only o-only dim  exact%%  masked0x1F%%\n", .{});
         for (0..MAXID) |id| {
