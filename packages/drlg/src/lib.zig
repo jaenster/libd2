@@ -725,6 +725,14 @@ pub fn generateLevelFull(
 /// A rasterized subtile collision grid for one preset DrlgMap, positioned in
 /// world (subtile) coords. `cells[y*w + x]` is the OR of contributing tiles'
 /// subtile flags (dt1.SubtileFlag: 0x01 block-walk, 0x02 block-los).
+/// Debug-dump print that compiles to nothing off-native. The probe/dump paths below
+/// sit inside functions the C ABI reaches, and freestanding wasm has no stderr — a
+/// live `std.debug.print` there drags in std.Io.Threaded (posix getrandom/IOV_MAX)
+/// and breaks the libc-free wasm build.
+inline fn dprint(comptime fmt: []const u8, args: anytype) void {
+    if (comptime @import("builtin").target.os.tag != .freestanding) std.debug.print(fmt, args);
+}
+
 pub const CollGrid = struct { x: i32, y: i32, w: i32, h: i32, cells: []u8 };
 
 pub const CollResult = struct {
@@ -1637,7 +1645,7 @@ fn buildLevelRoomColl(
                     for (d.shadow) |c| {
                         if (c.raw != 0) shadow_nz += 1;
                     }
-                    std.debug.print("ROOMINFO {d},{d} ds1={s} floorlayers={d} walllayers={d} shadow_len={d} shadow_nz={d} floors={d} walls={d} shadows={d} upd={d}\n", .{
+                    dprint("ROOMINFO {d},{d} ds1={s} floorlayers={d} walllayers={d} shadow_len={d} shadow_nz={d} floors={d} walls={d} shadows={d} upd={d}\n", .{
                         p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB,
                         preset.presetDs1Path(pmap) orelse "?",
                         d.floor_layers.len,              d.wall_layers.len,
@@ -1733,13 +1741,13 @@ fn buildLevelRoomColl(
                     }
                 }
                 if (probe_room) |pb| if (pb.level == lid and (pb.px < 0 or (pb.px == R.wpx * SUB and pb.py == R.wpy * SUB))) {
-                    std.debug.print("PROBE L{d} room({d},{d}) tile({d},{d}) from{s} orient={d} main={d} sub={d} rar={d} nFlags=0x{X} blk=", .{
+                    dprint("PROBE L{d} room({d},{d}) tile({d},{d}) from{s} orient={d} main={d} sub={d} rar={d} nFlags=0x{X} blk=", .{
                         lid,          R.wpx * SUB,      R.wpy * SUB,     rtx,             rty,
                         if (A.wpx == R.wpx and A.wpy == R.wpy) "SELF" else "NBR",
                         ct.tile.orientation, ct.tile.main, ct.tile.sub, ct.tile.rarity, @as(u32, @bitCast(ct.nFlags)),
                     });
-                    for (ct.tile.flags) |f| std.debug.print("{X:0>2},", .{f});
-                    std.debug.print("\n", .{});
+                    for (ct.tile.flags) |f| dprint("{X:0>2},", .{f});
+                    dprint("\n", .{});
                 };
                 materialize.stampCollTile(grids[ri], gw, gh, rtx * SUB, rty * SUB, ct2);
                 if (ct2.is_floor) floors[ri][rty * wtxu + rtx] = true;
@@ -2077,9 +2085,9 @@ pub fn verifyActCollision(
     if (dump_ours_rooms) {
         var it = ours.iterator();
         while (it.next()) |e| {
-            std.debug.print("OURSROOM {d} {d} {d} {d} {d} ", .{ e.key_ptr.level, e.key_ptr.px, e.key_ptr.py, e.value_ptr.w, e.value_ptr.h });
-            for (e.value_ptr.cells) |c| std.debug.print("{d},", .{c & 0x1F});
-            std.debug.print("\n", .{});
+            dprint("OURSROOM {d} {d} {d} {d} {d} ", .{ e.key_ptr.level, e.key_ptr.px, e.key_ptr.py, e.value_ptr.w, e.value_ptr.h });
+            for (e.value_ptr.cells) |c| dprint("{d},", .{c & 0x1F});
+            dprint("\n", .{});
         }
     }
 
@@ -2128,7 +2136,7 @@ pub fn verifyActCollision(
             } else {
                 room_mism += 1;
                 confusion[gc & 0x1F][oc & 0x1F] += 1;
-                if (dump_mismatch_cells) std.debug.print("MISM {d} {d} {d} {d} {d} {d} {d} {d} {d}\n", .{
+                if (dump_mismatch_cells) dprint("MISM {d} {d} {d} {d} {d} {d} {d} {d} {d}\n", .{
                     g.level, g.px,           g.py,          g.w,      g.h,
                     idx2 % @as(usize, @intCast(g.w)),        idx2 / @as(usize, @intCast(g.w)),
                     gc & 0x1F, oc & 0x1F,
@@ -2160,7 +2168,7 @@ pub fn verifyActCollision(
 
     if (verbose) {
         // Top masked-0x1F confusion pairs (golden value -> ours value) over all mismatches.
-        std.debug.print("\n=== TOP CONFUSION PAIRS (golden0x1F -> ours0x1F : count) ===\n", .{});
+        dprint("\n=== TOP CONFUSION PAIRS (golden0x1F -> ours0x1F : count) ===\n", .{});
         var shown: usize = 0;
         while (shown < 12) : (shown += 1) {
             var bg: usize = 0;
@@ -2174,12 +2182,12 @@ pub fn verifyActCollision(
                 }
             };
             if (bc == 0) break;
-            std.debug.print("  0x{X:0>2} -> 0x{X:0>2} : {d}\n", .{ bg, bo, bc });
+            dprint("  0x{X:0>2} -> 0x{X:0>2} : {d}\n", .{ bg, bo, bc });
             confusion[bg][bo] = 0;
         }
         const bitname = [_][]const u8{ "WALL", "VISIBLE", "MISSILE_BAR", "NOPLAYER", "PRESET" };
-        std.debug.print("\n=== PER-LEVEL COLLISION MATCH (seed {d}) ===\n", .{seed});
-        std.debug.print("  Lvl name                     matched g-only o-only dim  exact%%  masked0x1F%%\n", .{});
+        dprint("\n=== PER-LEVEL COLLISION MATCH (seed {d}) ===\n", .{seed});
+        dprint("  Lvl name                     matched g-only o-only dim  exact%%  masked0x1F%%\n", .{});
         for (0..MAXID) |id| {
             if (!seen_ids[id]) continue;
             const l = lvls[id];
@@ -2188,26 +2196,26 @@ pub fn verifyActCollision(
             const mp = if (l.total == 0) 0.0 else @as(f64, @floatFromInt(l.masked)) / @as(f64, @floatFromInt(l.total)) * 100.0;
             const lv = ctx.act.level(@intCast(id));
             const nm = if (lv) |x| (if (x.level_name.len != 0) x.level_name else x.name) else "?";
-            std.debug.print("  L{d:0>3} {s:<24} {d:>7} {d:>6} {d:>6} {d:>4}  {d:>6.2}  {d:>6.2}\n", .{ id, nm, l.matched, l.golden_only, l.our_only, l.dim, ep, mp });
+            dprint("  L{d:0>3} {s:<24} {d:>7} {d:>6} {d:>6} {d:>4}  {d:>6.2}  {d:>6.2}\n", .{ id, nm, l.matched, l.golden_only, l.our_only, l.dim, ep, mp });
         }
         const tep = if (out.total_cells == 0) 0.0 else @as(f64, @floatFromInt(out.exact_ok)) / @as(f64, @floatFromInt(out.total_cells)) * 100.0;
         const tmp = if (out.total_cells == 0) 0.0 else @as(f64, @floatFromInt(out.masked_ok)) / @as(f64, @floatFromInt(out.total_cells)) * 100.0;
-        std.debug.print("  TOTAL cells {d}: exact {d:.2}%  masked0x1F {d:.2}%  (matched {d} rooms, {d} dim-mismatch)\n", .{ out.total_cells, tep, tmp, out.matched_rooms, out.dim_mismatch });
-        std.debug.print("=== MISMATCH-BIT HISTOGRAM (masked-0x1F diffs) ===\n", .{});
-        std.debug.print("  bit            golden-set/ours-clear   ours-set/golden-clear\n", .{});
+        dprint("  TOTAL cells {d}: exact {d:.2}%  masked0x1F {d:.2}%  (matched {d} rooms, {d} dim-mismatch)\n", .{ out.total_cells, tep, tmp, out.matched_rooms, out.dim_mismatch });
+        dprint("=== MISMATCH-BIT HISTOGRAM (masked-0x1F diffs) ===\n", .{});
+        dprint("  bit            golden-set/ours-clear   ours-set/golden-clear\n", .{});
         var b: usize = 0;
         while (b < 5) : (b += 1) {
-            std.debug.print("  0x{x:0>2} {s:<12} {d:>18}   {d:>18}\n", .{ @as(u16, 1) << @intCast(b), bitname[b], out.hist_golden_set_ours_clear[b], out.hist_ours_set_golden_clear[b] });
+            dprint("  0x{x:0>2} {s:<12} {d:>18}   {d:>18}\n", .{ @as(u16, 1) << @intCast(b), bitname[b], out.hist_golden_set_ours_clear[b], out.hist_ours_set_golden_clear[b] });
         }
         std.mem.sort(Worst, worst.items, {}, struct {
             fn lt(_: void, a: Worst, c: Worst) bool {
                 return a.mism > c.mism;
             }
         }.lt);
-        std.debug.print("=== 5 WORST ROOMS (masked-0x1F mismatched cells) ===\n", .{});
+        dprint("=== 5 WORST ROOMS (masked-0x1F mismatched cells) ===\n", .{});
         for (worst.items[0..@min(5, worst.items.len)]) |wr| {
             const pctm = if (wr.total == 0) 0.0 else @as(f64, @floatFromInt(wr.mism)) / @as(f64, @floatFromInt(wr.total)) * 100.0;
-            std.debug.print("  L{d} px={d} py={d}: {d}/{d} cells mismatch ({d:.1}%)\n", .{ wr.level, wr.px, wr.py, wr.mism, wr.total, pctm });
+            dprint("  L{d} px={d} py={d}: {d}/{d} cells mismatch ({d:.1}%)\n", .{ wr.level, wr.px, wr.py, wr.mism, wr.total, pctm });
         }
 
         // Spatial dump of the single worst room: per-subtile diff of the masked-0x1F value.
@@ -2228,7 +2236,7 @@ pub fn verifyActCollision(
                 }
             }
             if (gcells) |gc| if (ours.get(gk)) |orm| {
-                std.debug.print("\n=== WORST-ROOM 0x1F DIFF MAP  L{d} px={d} py={d}  {d}x{d} ===\n", .{ wr.level, wr.px, wr.py, gw, gh });
+                dprint("\n=== WORST-ROOM 0x1F DIFF MAP  L{d} px={d} py={d}  {d}x{d} ===\n", .{ wr.level, wr.px, wr.py, gw, gh });
                 var yy: i32 = 0;
                 while (yy < gh) : (yy += 1) {
                     var line: [128]u8 = undefined;
@@ -2247,7 +2255,7 @@ pub fn verifyActCollision(
                             break :blk '?';
                         };
                     }
-                    std.debug.print("{s}\n", .{line[0..@intCast(@min(gw, 128))]});
+                    dprint("{s}\n", .{line[0..@intCast(@min(gw, 128))]});
                 }
 
                 // Tile-resolution 0x10 footprint (each tile = 5x5 subtiles; a tile is "set"
@@ -2255,7 +2263,7 @@ pub fn verifyActCollision(
                 // Reveals per-group tile placement: same size+wrong tile => seed/count bug.
                 const tw: i32 = @divTrunc(gw + 4, 5);
                 const th: i32 = @divTrunc(gh + 4, 5);
-                std.debug.print("--- 0x10 TILE FOOTPRINT (B=both G=golden-only O=ours-only) {d}x{d} tiles ---\n", .{ tw, th });
+                dprint("--- 0x10 TILE FOOTPRINT (B=both G=golden-only O=ours-only) {d}x{d} tiles ---\n", .{ tw, th });
                 var ty: i32 = 0;
                 while (ty < th) : (ty += 1) {
                     var tline: [64]u8 = undefined;
@@ -2278,7 +2286,7 @@ pub fn verifyActCollision(
                         }
                         tline[@intCast(tx)] = if (gset and oset) 'B' else if (gset) @as(u8, 'G') else if (oset) 'O' else '.';
                     }
-                    std.debug.print("{s}\n", .{tline[0..@intCast(@min(tw, 64))]});
+                    dprint("{s}\n", .{tline[0..@intCast(@min(tw, 64))]});
                 }
 
                 // Is the 0x10 layer a UNIFORM SHIFT (coordinate/origin bug) or SCATTERED
@@ -2324,7 +2332,7 @@ pub fn verifyActCollision(
                 const cells_n: u64 = gc.len;
                 const brate = if (best_ov == 0) 0.0 else @as(f64, @floatFromInt(best_match)) / @as(f64, @floatFromInt(best_ov)) * 100.0;
                 const zrate = if (cells_n == 0) 0.0 else @as(f64, @floatFromInt(base_match)) / @as(f64, @floatFromInt(cells_n)) * 100.0;
-                std.debug.print("  0x10-shift: no-shift {d:.1}%  best (dx={d},dy={d}) {d:.1}%  (+{d:.1}pp) — big gain => origin bug, flat => RNG drift\n", .{ zrate, best_dx, best_dy, brate, brate - zrate });
+                dprint("  0x10-shift: no-shift {d:.1}%  best (dx={d},dy={d}) {d:.1}%  (+{d:.1}pp) — big gain => origin bug, flat => RNG drift\n", .{ zrate, best_dx, best_dy, brate, brate - zrate });
             };
         }
     }
@@ -3309,7 +3317,7 @@ test "lib: object population vs town golden (seed 305419896, act 1 L1)" {
             p = ci + 6;
         }
     }
-    std.debug.print("\n[objpop] town golden L1: classId+X+Y {d}/{d}, classId+X {d}/{d}; ours emitted {d}\n", .{ matched_full, total, matched_cx, total, ours.count() });
+    dprint("\n[objpop] town golden L1: classId+X+Y {d}/{d}, classId+X {d}/{d}; ours emitted {d}\n", .{ matched_full, total, matched_cx, total, ours.count() });
     // The town golden is DS1-preset-dominated (Levels.txt ObjGrp is empty for the
     // town, so the ObjGrp populate loop spawns nothing). We reproduce the preset
     // objects: classId + X match near-exactly. The preset-object WORLD-Y uses a
