@@ -58,8 +58,11 @@ pub const Script = enum {
     coward,
     /// Ally support: heals the nearest wounded fellow monster in range each think, then fights via the
     /// generic loop. Overseer @0x5e27a0 (whip-heal), ZakarumPriest @0x5f72d0, OblivionKnight @0x5faf00
-    /// (buff/curse) and Nihlathak @0x5ee5d0 (heal minions) all keep their allies up.
+    /// (buff/curse), Nihlathak @0x5ee5d0 and HighPriest @0x5e0490 all keep their allies up.
     ally_support,
+    /// Suicide rusher: charges the target and DETONATES on contact — a blast that damages everything
+    /// nearby and kills the rusher (SuicideMinion @0x5e1d30 arms a fuse then fires skill 0 = death-burst).
+    suicide_rush,
     /// Non-combat: town folk and neutral critters with no aggression (Idle/None/Npc*/Towner/Vendor).
     /// The host runs no attack loop for these.
     passive,
@@ -75,6 +78,7 @@ pub const Script = enum {
         if (inAny(name, &.{
             "QuillRat",     "QuillMother", "SkeletonBow",  "SuccubusWitch", "CorruptArcher",
             "SkeletonMage", "FingerMage",  "ThornHulk",    "PantherJavelin", "Mosquito",
+            "Imp",          "FetishBlowgun",
         })) return .ranged_kite;
         // Raise the dead: rez nearby corpses (GreaterMummy) / raise zombies (BloodRaven Skill1).
         if (inAny(name, &.{ "GreaterMummy", "BloodRaven" })) return .raiser;
@@ -82,11 +86,13 @@ pub const Script = enum {
         if (inAny(name, &.{ "SandMaggot", "SandMaggotQueen", "VileMother", "Scarab", "Vulture", "FetishShaman" })) return .spawner;
         if (inAny(name, &.{ "Mephisto", "BaalCrab", "BaalCrabClone" })) return .boss_teleport;
         if (eq(name, "Duriel")) return .aura_chill;
-        if (eq(name, "SandRaider")) return .burrower;
+        // Submerge/collision-shrink ambushers.
+        if (inAny(name, &.{ "SandRaider", "FrogDemon" })) return .burrower;
         // Low-life / pack fleers.
-        if (inAny(name, &.{ "Vampire", "PantherWoman" })) return .coward;
+        if (inAny(name, &.{ "Vampire", "PantherWoman", "Arach" })) return .coward;
         // Ally supporters (heal/buff/rez fellow monsters).
-        if (inAny(name, &.{ "Overseer", "ZakarumPriest", "OblivionKnight", "Nihlathak" })) return .ally_support;
+        if (inAny(name, &.{ "Overseer", "ZakarumPriest", "OblivionKnight", "Nihlathak", "HighPriest" })) return .ally_support;
+        if (eq(name, "SuicideMinion")) return .suicide_rush;
         // Emplacements that never move — includes FrozenHorror (ranged cold caster, holds position).
         // Emplacements that never move — they must NOT charge like a generic monster.
         if (inAny(name, &.{
@@ -94,12 +100,14 @@ pub const Script = enum {
             "Totem",          "GargoyleTrap",  "Trap-LeftArrow", "Trap-RightArrow", "Trap-Missile",
             "Trap-Melee",     "Trap-Nova",     "Trap-Poison",  "BoneWall",     "HellMeteor",
             "Sarcophagus",    "EvilHole",      "Vines",        "MosquitoNest", "FoulCrowNest",
-            "MaggotEgg",      "AncientStatue", "FrozenHorror",
+            "MaggotEgg",      "AncientStatue", "FrozenHorror", "Wraith",       "Tentacle",
+            "TentacleHead",   "MaggotLarva",
         })) return .stationary;
-        // Town / neutral NPCs and harmless critters — no combat AI.
+        // Town / neutral NPCs, quest-script walkers and harmless critters — no combat AI.
         if (inAny(name, &.{
             "Idle",   "None",  "Npc",      "NpcStationary", "NpcOutOfTown", "Towner",
             "Vendor", "Navi",  "JarJar",   "TownRogue",     "GoodNpcRanged", "Buffy", "Wussie",
+            "DarkWanderer",
         })) return .passive;
         return .generic;
     }
@@ -230,6 +238,15 @@ test "monai: Script.fromName classifies AI names case-insensitively" {
     try testing.expectEqual(Script.coward, Script.fromName("Vampire"));
     try testing.expectEqual(Script.ally_support, Script.fromName("Overseer"));
     try testing.expectEqual(Script.ally_support, Script.fromName("Nihlathak"));
+    // Wave-2b: more RE-verified reclassifications + suicide rushers.
+    try testing.expectEqual(Script.stationary, Script.fromName("Wraith"));
+    try testing.expectEqual(Script.stationary, Script.fromName("MaggotLarva"));
+    try testing.expectEqual(Script.ranged_kite, Script.fromName("Imp"));
+    try testing.expectEqual(Script.burrower, Script.fromName("FrogDemon"));
+    try testing.expectEqual(Script.coward, Script.fromName("Arach"));
+    try testing.expectEqual(Script.ally_support, Script.fromName("HighPriest"));
+    try testing.expectEqual(Script.passive, Script.fromName("DarkWanderer"));
+    try testing.expectEqual(Script.suicide_rush, Script.fromName("SuicideMinion"));
     // Summoner is a pure multi-skill caster (no summon/teleport); non-blinking bosses -> generic baseline.
     try testing.expectEqual(Script.generic, Script.fromName("Summoner"));
     try testing.expectEqual(Script.generic, Script.fromName("Diablo"));
