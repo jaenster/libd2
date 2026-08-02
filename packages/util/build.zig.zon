@@ -1,0 +1,17 @@
+.{
+    .name = .d2_util,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xee46248b81bdbb6c,
+
+    // Cross-cutting primitives that are not part of any single domain model: the
+    // D2GS wire Huffman codec and its packet framing. No dependencies on purpose —
+    // anything here must stay usable from every other package (and from wasm).
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
