@@ -113,8 +113,8 @@ pub fn info(op: u8) Info {
         0x22 => .{ .name = "SkillQuantity", .cat = .skill },
         0x23 => .{ .name = "SelectSkill", .cat = .skill },
         0x26 => .{ .name = "ChatMessage", .cat = .chat },
-        0x27 => .{ .name = "OverheadText", .cat = .chat },
-        0x28 => .{ .name = "NpcInteract", .cat = .misc },
+        0x27 => .{ .name = "NpcInfo", .cat = .misc },
+        0x28 => .{ .name = "PlayerQuestInfo", .cat = .misc },
         0x47, 0x48 => .{ .name = "RecalcEquippedItems", .cat = .misc },
         0x4c => .{ .name = "PlayerCast", .cat = .skill },
         0x4d => .{ .name = "PlayerCastTarget", .cat = .skill },
@@ -718,25 +718,50 @@ pub const ObjectState = struct {
     }
 };
 
-/// 0x28 NpcInteract (S->C) — opens the NPC interaction menu client-side after the client
-/// interacts with a town NPC (SERVER_InteractOrPick @0x548b00 UNIT_MONSTER branch ->
-/// NPC_BeginInteractionFromUnit; close is CloseNPCInteract @0x4b3f10). Fixed 103-byte frame
-/// (SC_SIZE[0x28]). The exact field layout is NOT yet reverse-engineered — Ghidra session
-/// 62fbfe69 (npc_interact @0x54B930) token expired — so this is a size-faithful stub: encode()
-/// zero-fills the payload behind the opcode rather than guessing byte offsets. `npc_guid` is
-/// carried on the struct for callers/tests but is not yet written to the wire.
-/// TODO @0x54B930: RE the 103-byte layout (npc unit type + guid offset + menu/window id).
+/// 0x27 NpcInfo (S->C) — NET_D2GS_SERVER_Send_0x27_NpcInfo @0x53c8d0, from NPC_BeginInteraction
+/// @0x572c10. THIS is the packet that opens the NPC talk/trade dialog on the client. 40-byte frame
+/// (SC_SIZE[0x27]): `[nId u8][eUnitType u8][nUnitGUID u32][nMessageCount u8][pad u8][aMessages 32]`.
+/// nMessageCount 0 opens the menu with no gossip lines (the dialogue entry list is a follow-up).
+pub const NpcInfo = struct {
+    pub const OPCODE: u8 = 0x27;
+    pub const SIZE: usize = 40;
+
+    unit_type: u8 = 1, // eD2UnitType of the NPC (monster = 1)
+    npc_guid: u32 = 0,
+    message_count: u8 = 0,
+
+    pub fn encode(self: NpcInfo, out: []u8) []u8 {
+        std.debug.assert(out.len >= SIZE);
+        @memset(out[0..SIZE], 0);
+        out[0] = OPCODE;
+        out[1] = self.unit_type;
+        std.mem.writeInt(u32, out[2..6], self.npc_guid, .little);
+        out[6] = self.message_count;
+        return out[0..SIZE];
+    }
+};
+
+/// 0x28 PlayerQuestInfo (S->C) — NET_D2GS_SERVER_Send_0x28_PlayerQuestInfo @0x53d670. Sent AFTER 0x27
+/// in the NPC-interaction sequence; carries the player's quest bit buffer so the quest log is right
+/// during the dialog. 103-byte frame (SC_SIZE[0x28]): `[nId u8][nUpdateType u8][nUnitGUID u32]
+/// [nActionType u8][szQuestBits 96]`. The 96-byte quest buffer is left zero (no quests flagged) —
+/// the menu itself opens on 0x27; populating quest bits is a follow-up. Kept the name NpcInteract for
+/// callers, but this is the quest-info half of the sequence.
 pub const NpcInteract = struct {
     pub const OPCODE: u8 = 0x28;
     pub const SIZE: usize = 103;
 
     npc_guid: u32 = 0,
+    update_type: u8 = 1, // 1 = NPC interaction trigger
+    action_type: u8 = 0,
 
     pub fn encode(self: NpcInteract, out: []u8) []u8 {
         std.debug.assert(out.len >= SIZE);
         @memset(out[0..SIZE], 0);
         out[0] = OPCODE;
-        _ = self.npc_guid; // TODO: write at the RE'd offset once the 0x28 layout is known
+        out[1] = self.update_type;
+        std.mem.writeInt(u32, out[2..6], self.npc_guid, .little);
+        out[6] = self.action_type;
         return out[0..SIZE];
     }
 };
