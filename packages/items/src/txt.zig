@@ -75,6 +75,16 @@ pub const Table = struct {
         }
         return null;
     }
+
+    /// First row whose string column `name` equals `value` (case-insensitive), or null.
+    pub fn findByStr(self: *const Table, name: []const u8, value: []const u8) ?usize {
+        const c = self.cols.get(name) orelse return null;
+        for (self.rows, 0..) |r, i| {
+            if (c >= r.len) continue;
+            if (std.ascii.eqlIgnoreCase(r[c], value)) return i;
+        }
+        return null;
+    }
 };
 
 fn trimCR(s: []const u8) []const u8 {

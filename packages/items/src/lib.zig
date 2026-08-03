@@ -19,6 +19,7 @@ pub const itemtype = @import("itemtype.zig");
 pub const quality = @import("quality.zig");
 pub const treasure = @import("treasure.zig");
 pub const affix = @import("affix.zig");
+pub const properties = @import("properties.zig");
 pub const sockets = @import("sockets.zig");
 pub const item = @import("item.zig");
 pub const dc6 = @import("dc6.zig");
