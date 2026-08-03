@@ -376,7 +376,21 @@ pub fn writeItem(w: *BitWriter, it: *const Item) void {
         extended = true;
     }
 
-    // (misc/none base type: no armor/weapon fixed stats — a documented scope limit)
+    // Base-type fixed stats (inverse of the parse armor/weapon branch): armor writes armorclass(31)
+    // then durability; weapons write durability; a stackable base writes a 9-bit quantity (discarded on
+    // read). These live OUTSIDE the mod stat list and are skipped there. A host item without base stats
+    // in its list writes their default (0), which round-trips as a valid 0-value base.
+    if (types.lookup(it.codeSlice())) |t| {
+        switch (t.cat) {
+            .armor => {
+                writeBaseStat(w, 31, statValueOf(it, 31)); // armorclass
+                writeDurability(w, it);
+            },
+            .weapon => writeDurability(w, it),
+            .misc => {},
+        }
+        if (t.stackable) w.write(0, 9);
+    }
 
     if (it.flags & flag.SOCKETED != 0) {
         const sb = (isc.get(194) orelse return).save_bits; // item_numsockets
@@ -388,9 +402,40 @@ pub fn writeItem(w: *BitWriter, it: *const Item) void {
     if (it.version > 0x54 and it.quality == .set) w.write(0, 5); // set partial-list mask (no partials)
 
     var s: usize = 0;
-    while (s < it.n_stats) : (s += 1) writeStat(w, it.stats[s]);
+    while (s < it.n_stats) : (s += 1) {
+        const id = it.stats[s].id;
+        if (id == 31 or id == 72 or id == 73) continue; // base stats — already written in the base section
+        writeStat(w, it.stats[s]);
+    }
     w.write(isc.STAT_LIST_TERMINATOR, 9); // base list terminator
     if (extended) w.write(isc.STAT_LIST_TERMINATOR, 9); // empty runeword extended list
+}
+
+/// The value of stat `id` on the item, or 0 when absent.
+fn statValueOf(it: *const Item, id: u16) i32 {
+    var i: usize = 0;
+    while (i < it.n_stats) : (i += 1) {
+        if (it.stats[i].id == id) return it.stats[i].value;
+    }
+    return 0;
+}
+
+/// Write a base-section fixed stat (no 9-bit id prefix): optional param bits (0), then the value bits.
+/// Inverse of addGeneric's field read (id known from position, not the stream).
+fn writeBaseStat(w: *BitWriter, id: u16, value: i32) void {
+    const row = isc.get(id) orelse return;
+    if (row.save_param_bits > 0) w.write(0, @intCast(row.save_param_bits));
+    const raw: i32 = (value >> @intCast(row.valshift)) +% row.save_add;
+    w.write(@bitCast(raw), @intCast(row.save_bits));
+}
+
+/// Inverse of appendDurability: write maxdurability(73); if its RAW value is non-zero, write durability(72).
+fn writeDurability(w: *BitWriter, it: *const Item) void {
+    const row = isc.get(73) orelse return;
+    const maxdur_val = statValueOf(it, 73);
+    const raw: i32 = (maxdur_val >> @intCast(row.valshift)) +% row.save_add;
+    w.write(@bitCast(raw), @intCast(row.save_bits));
+    if (raw != 0) writeBaseStat(w, 72, statValueOf(it, 72));
 }
 
 /// Serialize `it` into `bytes` (creating the BitWriter), returning the number of bytes written.
@@ -454,6 +499,30 @@ test "writeItem round-trips a unique amulet (equipped) with two stats" {
     try std.testing.expectEqual(@as(i32, 20), got.stats[0].value);
     try std.testing.expectEqual(@as(u16, 2), got.stats[1].id);
     try std.testing.expectEqual(@as(i32, 15), got.stats[1].value);
+}
+
+test "writeItem round-trips an armor item with base defense + durability, mods intact" {
+    var buf = [_]u8{0} ** 64;
+    // "hbl" = leather boots (armor). Base stats: armorclass(31) + maxdurability(73)/durability(72).
+    var it = Item{ .flags = flag.IDENTIFIED, .version = 0x60, .dest = 3, .on_ground = true, .x = 7, .y = 8, .ilvl = 30, .quality = .magic, .prefix = 3, .suffix = 0 };
+    it.code = .{ 'h', 'b', 'l', 0 };
+    it.code_len = 3;
+    it.stats[0] = .{ .id = 31, .value = 25 }; // base armorclass
+    it.stats[1] = .{ .id = 73, .value = 12 }; // maxdurability
+    it.stats[2] = .{ .id = 72, .value = 12 }; // current durability
+    it.stats[3] = .{ .id = 0, .value = 9 }; // +9 strength (a real mod)
+    it.n_stats = 4;
+    var w = BitWriter.init(&buf);
+    writeItem(&w, &it);
+
+    var r = BitReader.init(&buf);
+    const got = parse(&r);
+    try std.testing.expectEqual(Quality.magic, got.quality);
+    try std.testing.expectEqual(@as(u16, 3), got.prefix);
+    // Base defense + durability recovered from the base section, and the strength mod from the stat list.
+    try std.testing.expectEqual(@as(i32, 25), statValueOf(&got, 31));
+    try std.testing.expectEqual(@as(i32, 12), statValueOf(&got, 73));
+    try std.testing.expectEqual(@as(i32, 9), statValueOf(&got, 0));
 }
 
 test "writeItem round-trips a set item (the 5-bit set mask path)" {
