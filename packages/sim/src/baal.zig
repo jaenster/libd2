@@ -109,7 +109,41 @@ pub fn selectAction(ctx: Context, seed: *Seed) Action {
     return .maul;
 }
 
+/// Baal's Throne-of-Destruction minion waves (AI_Function1_BaalThrone @0x5ef320). Five superunique
+/// wave bosses (BAALWAVES_UniqueHardcodedIndex @0x6e3528 — "Baal Subject 1-5" = Colenzo / Achmel /
+/// Bartuc / Ventar / Lister) spawn one at a time, each only after the previous wave is cleared; after
+/// the fifth the throne yields Baal himself (the engine transforms the throne entity to BaalCrab).
+pub const NUM_WAVES = 5;
+
+/// What the throne should do this think, given the current wave cursor (0..NUM_WAVES), whether any wave
+/// monster is still alive, and whether Baal has spawned.
+pub const WaveAction = union(enum) {
+    wait, // the current wave is still alive — do nothing
+    spawn_wave: u8, // the room is clear — spawn wave N (0-based)
+    spawn_baal, // all waves cleared — bring out Baal
+    done, // Baal is out; the sequence is finished
+};
+
+pub fn nextWaveAction(wave: u8, wave_alive: bool, baal_spawned: bool) WaveAction {
+    if (wave_alive) return .wait; // never advance while the current wave lives
+    if (wave < NUM_WAVES) return .{ .spawn_wave = wave };
+    if (!baal_spawned) return .spawn_baal;
+    return .done;
+}
+
 const testing = std.testing;
+
+test "baal waves: advance only on a clear room, then Baal after the fifth" {
+    // A live wave blocks progress regardless of cursor.
+    try testing.expectEqual(WaveAction.wait, nextWaveAction(0, true, false));
+    try testing.expectEqual(WaveAction.wait, nextWaveAction(4, true, false));
+    // A clear room spawns the wave at the cursor.
+    try testing.expectEqual(WaveAction{ .spawn_wave = 0 }, nextWaveAction(0, false, false));
+    try testing.expectEqual(WaveAction{ .spawn_wave = 4 }, nextWaveAction(4, false, false));
+    // After all five waves, Baal comes out once.
+    try testing.expectEqual(WaveAction.spawn_baal, nextWaveAction(5, false, false));
+    try testing.expectEqual(WaveAction.done, nextWaveAction(5, false, true));
+}
 
 test "baal weights: Maul scales with target's missing life; clone caps at 2" {
     const full = actionWeights(.{ .target_life_pct = 100, .dist = 10, .clones_spawned = 0, .target_visible = true, .normal_difficulty = false });
