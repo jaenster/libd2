@@ -172,14 +172,19 @@ pub const MAX_PATH_POINTS: usize = 77;
 // Collision view over grid.zig
 // =============================================================================
 
-/// Collision shapes accepted by CheckCollision_BlockPlayer_Type (0x64d910),
-/// eD2CollisionShapeType. Only `none` (single subtile, the default 1-wide unit) is
-/// modelled; the multi-subtile shapes are a documented follow-up.
+/// Collision shapes accepted by CheckCollision_BlockPlayer_Type (0x64d910), eD2CollisionShapeType.
+/// `none` = single subtile; `small_cross` = the 5-cell plus (CheckCollision_BlockPlayer_Cross @0x64d4e0);
+/// `big_box` = the 3x3 bounding box (CheckCollision_BlockPlayer_BoundingBox1 @0x64d7c0). Each blocks if
+/// ANY sampled cell blocks (OR-accumulation).
 pub const CollisionShape = enum(u8) {
     none = 0, // COLLISION_PATTERN_NONE → single subtile
-    small_cross = 1, // COLLISION_PATTERN_SMALL_* → 5-subtile cross (TODO)
-    big_box = 3, // COLLISION_PATTERN_BIG_* → bounding box (TODO)
+    small_cross = 1, // COLLISION_PATTERN_SMALL_* → 5-subtile plus (center + 4 cardinals)
+    big_box = 3, // COLLISION_PATTERN_BIG_* → 3x3 bounding box (9 cells)
 };
+
+/// The 5-cell plus sampled by the SMALL collision pattern: center + the 4 cardinal neighbors (no
+/// diagonals) — CheckCollision_BlockPlayer_Cross @0x64d4e0.
+const CROSS_OFFSETS = [_][2]i32{ .{ 0, 0 }, .{ -1, 0 }, .{ 1, 0 }, .{ 0, -1 }, .{ 0, 1 } };
 
 /// A walkability view over a subtile collision grid. Coords are LOCAL subtiles
 /// [0,w)×[0,h). Build one from a level's generated collision via lib.buildPathGrid
@@ -200,11 +205,29 @@ pub const CollisionView = struct {
     pub fn collides(self: CollisionView, x: i32, y: i32, shape: CollisionShape) bool {
         return switch (shape) {
             .none => self.blockedSubtile(x, y),
-            // Cross / box: block if ANY sampled subtile blocks. Ported shape TODO —
-            // fall back to the single-subtile primitive so callers still get a
-            // conservative-but-consistent answer until the exact offsets are wired.
-            .small_cross, .big_box => self.blockedSubtile(x, y),
+            .small_cross => self.blockedCross(x, y),
+            .big_box => self.blockedBox(x, y),
         };
+    }
+
+    /// SMALL pattern: block if the center or any of the 4 cardinal neighbors block (5-cell plus).
+    inline fn blockedCross(self: CollisionView, x: i32, y: i32) bool {
+        for (CROSS_OFFSETS) |o| {
+            if (self.blockedSubtile(x + o[0], y + o[1])) return true;
+        }
+        return false;
+    }
+
+    /// BIG pattern: block if any cell of the 3x3 box around (x,y) blocks.
+    inline fn blockedBox(self: CollisionView, x: i32, y: i32) bool {
+        var dy: i32 = -1;
+        while (dy <= 1) : (dy += 1) {
+            var dx: i32 = -1;
+            while (dx <= 1) : (dx += 1) {
+                if (self.blockedSubtile(x + dx, y + dy)) return true;
+            }
+        }
+        return false;
     }
 
     inline fn blockedSubtile(self: CollisionView, x: i32, y: i32) bool {
@@ -1081,4 +1104,49 @@ test "calculatePath: dispatches A* and detours a blocked target" {
     defer a.free(path);
     _ = try assertContiguousWalkable(tg.view, path);
     try testing.expect(path.len >= 1);
+}
+
+test "collision shapes: cross samples the 4 cardinals, box the full 3x3" {
+    const a = testing.allocator;
+    // A wall directly RIGHT of center (2,2): the single cell is open, but the cross (cardinal +1,0)
+    // and the box both see it.
+    {
+        var tg = try parseAscii(a,
+            \\.....
+            \\.....
+            \\...#.
+            \\.....
+            \\.....
+        );
+        defer tg.deinit(a);
+        try testing.expect(!tg.view.collides(2, 2, .none));
+        try testing.expect(tg.view.collides(2, 2, .small_cross));
+        try testing.expect(tg.view.collides(2, 2, .big_box));
+    }
+    // A wall on the DIAGONAL (3,3): the cross misses it (no diagonals), the box catches it.
+    {
+        var tg = try parseAscii(a,
+            \\.....
+            \\.....
+            \\.....
+            \\...#.
+            \\.....
+        );
+        defer tg.deinit(a);
+        try testing.expect(!tg.view.collides(2, 2, .small_cross));
+        try testing.expect(tg.view.collides(2, 2, .big_box));
+    }
+    // A wall two cells away (4,2): neither shape reaches it.
+    {
+        var tg = try parseAscii(a,
+            \\.....
+            \\.....
+            \\....#
+            \\.....
+            \\.....
+        );
+        defer tg.deinit(a);
+        try testing.expect(!tg.view.collides(2, 2, .small_cross));
+        try testing.expect(!tg.view.collides(2, 2, .big_box));
+    }
 }
