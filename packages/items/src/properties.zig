@@ -69,6 +69,38 @@ pub fn applyProperty(
     }
 }
 
+/// Roll all of a unique item's rolled stats (ApplyRuneAndGemStats(3) @0x65fec0): iterate the UniqueItems
+/// row's 12 prop slots (propN/minN/maxN), applying each populated property. Empty slots roll nothing (no
+/// seed advance), matching the engine's failed-lookup no-op. `unique_id` is the 1-based row (from
+/// affix.rollUniqueItem). `parN` is not threaded yet — it feeds the skill/charge funcs, a follow-up.
+pub fn rollUniqueStats(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), seed: *rng.Seed, t: *const tables.Tables, unique_id: u16) !void {
+    if (unique_id == 0) return;
+    try rollTableProps(gpa, out, seed, t, &t.unique_items, unique_id - 1, 12);
+}
+
+/// Roll a set item's own rolled stats (ApplyRuneAndGemStats(4) @0x65fec0): the SetItems row's 9 prop
+/// slots. The partial-set `aprop` bonuses (worn-piece-count gated) and the full-set Sets.txt bonuses are
+/// applied on EQUIP, not here — a follow-up tied to the equipment model.
+pub fn rollSetStats(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), seed: *rng.Seed, t: *const tables.Tables, set_id: u16) !void {
+    if (set_id == 0) return;
+    try rollTableProps(gpa, out, seed, t, &t.set_items, set_id - 1, 9);
+}
+
+fn rollTableProps(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), seed: *rng.Seed, t: *const tables.Tables, tbl: *const @import("txt.zig").Table, row: usize, nslots: usize) !void {
+    if (row >= tbl.rowCount()) return;
+    var pbuf: [8]u8 = undefined;
+    var lobuf: [8]u8 = undefined;
+    var hibuf: [8]u8 = undefined;
+    var n: usize = 1;
+    while (n <= nslots) : (n += 1) {
+        const prop = tbl.str(row, std.fmt.bufPrint(&pbuf, "prop{d}", .{n}) catch unreachable);
+        if (prop.len == 0) continue; // empty slot -> no property, no roll
+        const min: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&lobuf, "min{d}", .{n}) catch unreachable));
+        const max: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&hibuf, "max{d}", .{n}) catch unreachable));
+        try applyProperty(gpa, out, seed, t, prop, min, max);
+    }
+}
+
 const testing = std.testing;
 
 test "rollValue: min==max returns min without advancing the seed" {
@@ -102,6 +134,33 @@ test "statId resolves known ItemStatCost stats" {
     try testing.expect(statId(&t, "strength") != null);
     try testing.expect(statId(&t, "maxhp") != null);
     try testing.expect(statId(&t, "not-a-stat") == null);
+}
+
+test "rollUniqueStats: deterministic, and real uniques produce rolled stats" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    var a: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer a.deinit(testing.allocator);
+    var b: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer b.deinit(testing.allocator);
+
+    var any_stats = false;
+    for (0..t.unique_items.rowCount()) |row| {
+        if (t.unique_items.int(row, "enabled") == 0) continue;
+        a.clearRetainingCapacity();
+        b.clearRetainingCapacity();
+        var s1 = rng.Seed.init(0x42, 0x29a);
+        var s2 = rng.Seed.init(0x42, 0x29a);
+        try rollUniqueStats(testing.allocator, &a, &s1, &t, @intCast(row + 1));
+        try rollUniqueStats(testing.allocator, &b, &s2, &t, @intCast(row + 1));
+        try testing.expectEqual(a.items.len, b.items.len); // same seed -> same roll
+        for (a.items, b.items) |x, y| {
+            try testing.expectEqual(x.stat, y.stat);
+            try testing.expectEqual(x.value, y.value);
+        }
+        if (a.items.len > 0) any_stats = true;
+    }
+    try testing.expect(any_stats); // the assembly resolves at least some uniques' properties
 }
 
 test "applyProperty: a simple +stat property rolls one stat in range" {
