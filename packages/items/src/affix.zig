@@ -204,6 +204,56 @@ pub fn rollSetItem(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.Tab
     return pool.items[pool.items.len - 1].id;
 }
 
+/// Runeword detection (ITEMS_CheckForRuneword): given a base item's inserted rune item-codes in socket
+/// order and its item types, find the Runes.txt runeword whose rune SEQUENCE matches exactly (count +
+/// codes, in order) and whose itype-include / etype-exclude allows this base. Only `complete` (enabled)
+/// runewords are considered. Returns the 1-based Runes.txt row, or null. Pure detection — applying the
+/// runeword's props (T1Code.. with param/min/max) is deferred like the unique/set property values.
+pub fn detectRuneword(gpa: std.mem.Allocator, t: *const tables.Tables, item_types: *const itemtype.TypeSet, rune_codes: []const []const u8) !?u16 {
+    _ = gpa;
+    if (rune_codes.len == 0 or rune_codes.len > 6) return null;
+    const rt = &t.runes;
+    var rbuf: [8]u8 = undefined;
+    var itbuf: [8]u8 = undefined;
+    var etbuf: [8]u8 = undefined;
+    for (0..rt.rowCount()) |row| {
+        if (rt.int(row, "complete") == 0) continue;
+
+        // Rune sequence: count the row's non-empty RuneN and require an exact, in-order code match.
+        var need: usize = 0;
+        while (need < 6) : (need += 1) {
+            const col = std.fmt.bufPrint(&rbuf, "Rune{d}", .{need + 1}) catch unreachable;
+            if (rt.str(row, col).len == 0) break;
+        }
+        if (need != rune_codes.len) continue;
+        var seq_ok = true;
+        for (0..need) |k| {
+            const col = std.fmt.bufPrint(&rbuf, "Rune{d}", .{k + 1}) catch unreachable;
+            if (!codeEq(rt.str(row, col), rune_codes[k])) {
+                seq_ok = false;
+                break;
+            }
+        }
+        if (!seq_ok) continue;
+
+        // itype-include / etype-exclude gate (same match core as affixes).
+        var itypes: [6][]const u8 = undefined;
+        inline for (0..6) |i| {
+            const col = std.fmt.bufPrint(&itbuf, "itype{d}", .{i + 1}) catch unreachable;
+            itypes[i] = rt.str(row, col);
+        }
+        var etypes: [3][]const u8 = undefined;
+        inline for (0..3) |i| {
+            const col = std.fmt.bufPrint(&etbuf, "etype{d}", .{i + 1}) catch unreachable;
+            etypes[i] = rt.str(row, col);
+        }
+        if (!itemtype.affixMatchesTypes(item_types, &itypes, &etypes)) continue;
+
+        return @intCast(row + 1);
+    }
+    return null;
+}
+
 pub const MagicResult = struct { prefix: AffixResult = .{}, suffix: AffixResult = .{} };
 
 /// ITEM_RollMagicPrefixSuffix: prefix first, then suffix. Both independent
@@ -411,6 +461,52 @@ test "set select: deterministic, matches the base code and respects ilvl" {
     const sid = try rollSetItem(testing.allocator, &s, &t, probe_code, probe_lvl + 50, true);
     try testing.expect(sid != 0);
     try testing.expect(codeEq(st.str(sid - 1, "item"), probe_code));
+}
+
+test "runeword detection: exact rune sequence + itype match, order-sensitive" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    const rt = &t.runes;
+    const bases = [_][]const u8{ "hax", "cap", "buc", "lbb", "clb", "wnd", "tsp", "lsd", "spr", "gsd" };
+
+    // Find the first complete >=2-rune runeword that some candidate base can legally hold.
+    var found = false;
+    var rbuf: [8]u8 = undefined;
+    for (0..rt.rowCount()) |row| {
+        if (rt.int(row, "complete") == 0) continue;
+        var runes: [6][]const u8 = undefined;
+        var n: usize = 0;
+        while (n < 6) : (n += 1) {
+            const col = std.fmt.bufPrint(&rbuf, "Rune{d}", .{n + 1}) catch unreachable;
+            const rc = rt.str(row, col);
+            if (rc.len == 0) break;
+            runes[n] = rc;
+        }
+        if (n < 2) continue;
+
+        for (bases) |base| {
+            var types = try itemtype.typesForItem(testing.allocator, &t, base);
+            defer types.deinit(testing.allocator);
+            const hit = try detectRuneword(testing.allocator, &t, &types, runes[0..n]);
+            if (hit == null) continue;
+            // The correct sequence resolves to THIS runeword (first complete match for the base).
+            try testing.expect(hit.? != 0);
+            // A reversed sequence (when the runes differ) must not resolve to the same row.
+            if (!codeEq(runes[0], runes[n - 1])) {
+                var rev: [6][]const u8 = undefined;
+                for (0..n) |k| rev[k] = runes[n - 1 - k];
+                const rhit = try detectRuneword(testing.allocator, &t, &types, rev[0..n]);
+                try testing.expect(rhit == null or rhit.? != hit.?);
+            }
+            // A wrong count never matches this row.
+            const short = try detectRuneword(testing.allocator, &t, &types, runes[0 .. n - 1]);
+            try testing.expect(short == null or short.? != hit.?);
+            found = true;
+            break;
+        }
+        if (found) break;
+    }
+    try testing.expect(found);
 }
 
 test "rare affixes: deterministic, respects 3/type cap and no dup group" {
