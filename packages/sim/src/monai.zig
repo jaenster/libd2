@@ -58,8 +58,13 @@ pub const Script = enum {
     coward,
     /// Ally support: heals the nearest wounded fellow monster in range each think, then fights via the
     /// generic loop. Overseer @0x5e27a0 (whip-heal), ZakarumPriest @0x5f72d0, OblivionKnight @0x5faf00
-    /// (buff/curse), Nihlathak @0x5ee5d0 and HighPriest @0x5e0490 all keep their allies up.
+    /// (buff/curse) and HighPriest @0x5e0490 all keep their allies up.
     ally_support,
+    /// Nihlathak @0x5ee5d0 — his signature is CORPSE EXPLOSION: he casts Skill3 (srvdofunc 127) on a
+    /// nearby monster corpse to blast the player, gated by a roll < aip3, BEFORE falling back to the
+    /// ally-support heal (Skill2, roll < aip5) and the generic cast/melee loop. The decision order in
+    /// the binary is Skill1-cast, gap-close, corpse-explode, close-range nova (Skill4), heal/spawn.
+    nihlathak,
     /// Suicide rusher: charges the target and DETONATES on contact — a blast that damages everything
     /// nearby and kills the rusher (SuicideMinion @0x5e1d30 arms a fuse then fires skill 0 = death-burst).
     suicide_rush,
@@ -91,8 +96,11 @@ pub const Script = enum {
         if (inAny(name, &.{ "SandRaider", "FrogDemon" })) return .burrower;
         // Low-life / pack fleers.
         if (inAny(name, &.{ "Vampire", "PantherWoman", "Arach" })) return .coward;
+        // Nihlathak's signature corpse explosion (falls back to the ally heal) is distinct enough to
+        // carve out from the plain supporters below.
+        if (eq(name, "Nihlathak")) return .nihlathak;
         // Ally supporters (heal/buff/rez fellow monsters).
-        if (inAny(name, &.{ "Overseer", "ZakarumPriest", "OblivionKnight", "Nihlathak", "HighPriest" })) return .ally_support;
+        if (inAny(name, &.{ "Overseer", "ZakarumPriest", "OblivionKnight", "HighPriest" })) return .ally_support;
         if (eq(name, "SuicideMinion")) return .suicide_rush;
         // Emplacements that never move — includes FrozenHorror (ranged cold caster, holds position).
         // Emplacements that never move — they must NOT charge like a generic monster.
@@ -252,6 +260,16 @@ pub fn rollPasses(seed: *Seed, chance_pct: i32) bool {
     return roll100(seed) < chance_pct;
 }
 
+/// Nihlathak's corpse-explosion gate (AI_Function1_Nihlathak @0x5ee5d0, step 3): he detonates a
+/// nearby monster corpse only when one exists AND a fresh roll < aip3 passes. The roll advances the
+/// seed exactly once whether or not a corpse is present is NOT faithful — the binary rolls only after
+/// confirming Skill3 is set, so the host passes `has_corpse` (Skill3 presence is implied) and we roll
+/// here; callers must not roll again.
+pub fn nihlathakCorpseExplodes(has_corpse: bool, seed: *Seed, chance_pct: i32) bool {
+    if (!has_corpse) return false;
+    return rollPasses(seed, chance_pct);
+}
+
 /// One tick of the burrower state machine (SandRaider / FrogDemon).
 pub const BurrowAction = enum {
     /// Submerged and the dive timer has not elapsed — stay under (invulnerable, no action).
@@ -304,7 +322,7 @@ test "monai: Script.fromName classifies AI names case-insensitively" {
     try testing.expectEqual(Script.raiser, Script.fromName("BloodRaven"));
     try testing.expectEqual(Script.coward, Script.fromName("Vampire"));
     try testing.expectEqual(Script.ally_support, Script.fromName("Overseer"));
-    try testing.expectEqual(Script.ally_support, Script.fromName("Nihlathak"));
+    try testing.expectEqual(Script.nihlathak, Script.fromName("Nihlathak"));
     // Wave-2b: more RE-verified reclassifications + suicide rushers.
     try testing.expectEqual(Script.stationary, Script.fromName("Wraith"));
     try testing.expectEqual(Script.stationary, Script.fromName("MaggotLarva"));
@@ -467,6 +485,17 @@ test "monai: rollPasses ~matches its probability over many samples" {
     }
     // 25% of 10000 = 2500; allow generous slack for the LCG distribution.
     try testing.expect(hits > 2000 and hits < 3000);
+}
+
+test "monai: Nihlathak corpse-explodes only with a corpse present and a passing aip3 roll" {
+    var s = Seed.fromValue(0x5EE5);
+    // No corpse -> never fires, and must NOT consume a roll (a later roll still sees the same state).
+    var i: usize = 0;
+    while (i < 20) : (i += 1) try testing.expect(!nihlathakCorpseExplodes(false, &s, 100));
+    // Corpse present with a 100% chance always fires; with 0% never.
+    try testing.expect(nihlathakCorpseExplodes(true, &s, 100));
+    var s2 = Seed.fromValue(0x5EE5);
+    try testing.expect(!nihlathakCorpseExplodes(true, &s2, 0));
 }
 
 test "monai: burrow state machine cycles submerge -> surface -> fight -> dive" {
