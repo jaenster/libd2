@@ -393,6 +393,13 @@ pub fn writeItem(w: *BitWriter, it: *const Item) void {
     if (extended) w.write(isc.STAT_LIST_TERMINATOR, 9); // empty runeword extended list
 }
 
+/// Serialize `it` into `bytes` (creating the BitWriter), returning the number of bytes written.
+pub fn writeItemInto(bytes: []u8, it: *const Item) usize {
+    var w = BitWriter.init(bytes);
+    writeItem(&w, it);
+    return w.byteLen();
+}
+
 /// Encode one generic stat (id, optional param, then the value bits) — the inverse of addGeneric.
 /// The host's mods come from single-stat property funcs, so no grouped min/max damage ids appear here.
 fn writeStat(w: *BitWriter, s: Stat) void {
