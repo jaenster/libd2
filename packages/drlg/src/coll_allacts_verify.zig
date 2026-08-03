@@ -159,15 +159,33 @@ fn filterToLevels(gpa: std.mem.Allocator, golden: []const u8, min: i64, max: i64
 }
 
 test "coll: SHIPPED consumer path (generateActCollisionAll) vs golden" {
+    // What an external consumer actually calls — the C-ABI / library entry point, not the
+    // per-room path the other gates drive. Checked on several seeds so "holds up as a lib"
+    // means the same thing cross-seed that it does for the per-room builder.
     const gpa = std.testing.allocator;
-    const golden = decompressGolden(gpa) catch return;
-    defer gpa.free(golden);
+    for ([_][]const u8{ GOLDEN_GZ, GOLDEN_2_GZ, GOLDEN_17_GZ }) |gz| {
+        const g = decompressGz(gpa, gz) catch continue;
+        defer gpa.free(g);
+        var c = lib.Ctx.init(std.heap.page_allocator) catch return;
+        defer c.deinit();
+        lib.verify_consumer_path = true;
+        defer lib.verify_consumer_path = false;
+        const rr = try lib.verifyActCollision(gpa, &c, g, .nightmare, false);
+        std.debug.print("[coll CONSUMER seed {d}] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n", .{ rr.seed, rr.total_cells, rr.total_cells - rr.walk_ok, rr.total_cells - rr.masked_ok, rr.total_cells - rr.exact_ok });
+        try std.testing.expectEqual(@as(u32, 0), rr.dim_mismatch);
+        try std.testing.expectEqual(rr.total_cells, rr.walk_ok);
+        try std.testing.expectEqual(rr.total_cells, rr.masked_ok);
+        try std.testing.expectEqual(rr.total_cells, rr.exact_ok);
+    }
+
+    const gpa2 = std.testing.allocator;
+    const golden = decompressGolden(gpa2) catch return;
+    defer gpa2.free(golden);
     var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
     defer ctx.deinit();
     lib.verify_consumer_path = true;
     defer lib.verify_consumer_path = false;
-    const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
-    std.debug.print("[coll CONSUMER seed 1] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n", .{ r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok });
+    const r = try lib.verifyActCollision(gpa2, &ctx, golden, .nightmare, false);
     // The C-ABI path must not drift from the per-room path the goldens verify — it is
     // the same builder now, so it has to score identically, EXACT included (the older
     // materializer differed by 1038 masked / 1479 exact cells).
