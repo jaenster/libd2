@@ -151,10 +151,8 @@ test "coll: masked-CRC holdout across seeds (Act 1, Nightmare)" {
     std.debug.print("  {d} levels byte-exact on all {d} seeds\n", .{ perfect, nseeds });
 
     try std.testing.expect(grand_total > 0);
-    // Cross-seed floor. A fix tuned to seed 1 cannot hold here, so this is the gate that
-    // makes "works on any seed" mean something. Raise it as mechanisms close.
-    // Absolute count, not a percentage: at this fidelity a whole level regressing across
-    // every seed still rounds to the same percent. 3273/3275 — the two holdouts are L56
-    // and L67, one seed each (17 and 18).
-    try std.testing.expect(grand_match >= 3273);
+    // Cross-seed gate. A fix tuned to seed 1 cannot hold here, so this is the one that makes
+    // "works on any seed" mean something — and it is now EQUALITY: every per-level checksum
+    // of every level on every seed matches the engine. Nothing to raise, nothing to concede.
+    try std.testing.expectEqual(grand_total, grand_match);
 }

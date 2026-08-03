@@ -18,8 +18,9 @@ const GOLDEN_777_GZ = @embedFile("golden/coll_seed777_all.jsonl.gz");
 /// only seed 2 could see that defect per-cell. Captured 2026-08-02 with the same d2probe
 /// build as the other two.
 const GOLDEN_2_GZ = @embedFile("golden/coll_seed2_all.jsonl.gz");
-/// The two seeds the 25-seed CRC holdout still flags — L56 on one, L67 on the other.
-/// Captured per-cell so the residual can be read as coordinates instead of a checksum.
+/// Two more per-cell seeds. They were the last two the 25-seed CRC holdout flagged (L56 on
+/// one, L67 on the other) — captured to read the residual as coordinates instead of a
+/// checksum, and kept as gates now that they are byte-exact.
 const GOLDEN_17_GZ = @embedFile("golden/coll_seed17_all.jsonl.gz");
 const GOLDEN_18_GZ = @embedFile("golden/coll_seed18_all.jsonl.gz");
 
@@ -115,9 +116,8 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
     try std.testing.expectEqual(r.total_cells, r.exact_ok);
 }
 
-test "coll: all-acts golden (seeds 17 + 18, the CRC holdouts)" {
+test "coll: all-acts golden (seeds 17 + 18, the former CRC holdouts)" {
     const gpa = std.testing.allocator;
-    var worst: u64 = 0;
     for ([_][]const u8{ GOLDEN_17_GZ, GOLDEN_18_GZ }) |gz| {
         const golden = decompressGz(gpa, gz) catch continue;
         defer gpa.free(golden);
@@ -128,13 +128,10 @@ test "coll: all-acts golden (seeds 17 + 18, the CRC holdouts)" {
         const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
         std.debug.print("[coll all-acts seed {d}] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n", .{ r.seed, r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok });
         try std.testing.expectEqual(@as(u32, 0), r.dim_mismatch);
-        worst = @max(worst, r.total_cells - r.masked_ok);
+        try std.testing.expectEqual(r.total_cells, r.walk_ok);
+        try std.testing.expectEqual(r.total_cells, r.masked_ok);
+        try std.testing.expectEqual(r.total_cells, r.exact_ok);
     }
-    // 4 subtiles each, and the same defect both times: the engine keeps a second type-2
-    // wall tile on a shared seam cell that this port's FindTileInNearRooms hit swallows,
-    // which drops one rarity roll and picks the wrong variant of (12,1,0). Held at the
-    // measured count so a regression cannot hide behind a rounded percentage.
-    try std.testing.expect(worst <= 4);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in

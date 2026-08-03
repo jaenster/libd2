@@ -687,6 +687,21 @@ fn updateOrAddTile(pRoom: [*c]s.D2RoomExStrc, nTileType: i32, nX: i32, nY: i32, 
     // AddTileData: warp types validate the cell is inside the room first.
     if ((nTileType == 0xb or nTileType == 10) and DrlgRoom.AreXYInsideCoordinates(&pRoom.*.sCoords, nX, nY) == 0) return;
     const e = tilegen.getTileLibraryEntry(pRoom, nTileType, @bitCast(nFlags));
+    // AddTileData ends in SetupWarpTile for the warp types, and that leaves the room's
+    // NON-FLOOR map-link chain holding only the warp tile — every wall linked before it
+    // stops being reachable from a neighbour's FindTileInNearRooms. Measured in the engine
+    // (d2probe findat): a room with 5 AddTileData walls and two warps among them ends with a
+    // wall chain of exactly 2, while its floor chain keeps all 32.
+    if ((nTileType == 0xb or nTileType == 10) and g_ctx.near != null) {
+        var kept: usize = 0;
+        for (g_ctx.linked.items) |t| {
+            if (t.n_tile_type == 0) {
+                g_ctx.linked.items[kept] = t;
+                kept += 1;
+            }
+        }
+        g_ctx.linked.shrinkRetainingCapacity(kept);
+    }
     if (g_ctx.near != null) g_ctx.linked.append(g_ctx.link_alloc, .{
         .wx = g_ctx.room_wx + nX,
         .wy = g_ctx.room_wy + nY,
