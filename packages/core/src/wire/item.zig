@@ -313,6 +313,160 @@ fn writeHeader(w: *BitWriter, flags: u32, code: []const u8, x: u16, y: u16) void
     while (i < 4) : (i += 1) w.write(if (i < code.len) code[i] else ' ', 8);
 }
 
+/// Serialize an item to the WIRE bit-stream (isSave=0 — the S->C 0x9C payload), the inverse of `parse`.
+/// Scoped to the forms the standalone server currently produces: a MISC-base item (ring/amulet/charm/
+/// jewel — no armor/weapon base-type fixed stats) of any quality, with a single-stat stat list. Round-
+/// trips with `parse` for those items. DEFERRED (documented): armor/weapon base stats (armorclass/
+/// durability), grouped min/max damage stats, the set partial-list bonuses (mask bits >0), and the
+/// ear/personalization blocks. `writeItemInto` returns the byte length written.
+pub fn writeItem(w: *BitWriter, it: *const Item) void {
+    w.write(it.flags, 32);
+    w.write(it.version, 10);
+    w.write(it.dest, 3);
+    if (it.dest == 3 or it.dest == 5) {
+        w.write(it.x, 16);
+        w.write(it.y, 16);
+    } else {
+        w.write(it.body_loc, 4);
+        w.write(0, 4); // grid col
+        w.write(0, 4); // grid row
+        w.write(0, 3); // inventory page
+    }
+    var i: usize = 0;
+    while (i < 4) : (i += 1) w.write(if (i < it.code_len) it.code[i] else ' ', 8);
+
+    if (it.compact or it.crude) return;
+
+    w.write(0, 3); // param field
+    w.write(it.ilvl, 7);
+    w.write(@intFromEnum(it.quality), 4);
+    w.write(0, 1); // no variant
+    w.write(0, 1); // no automagic
+
+    const ident = it.identified();
+    switch (@intFromEnum(it.quality)) {
+        1, 3 => w.write(0, 3), // low/superior file index (not ident-gated)
+        4 => if (ident) {
+            w.write(it.prefix, 11);
+            w.write(it.suffix, 11);
+        },
+        5 => if (ident) w.write(it.set_id, 12),
+        6, 8 => { // rare / crafted: name prefix+suffix, then 3 empty prefix/suffix affix slots
+            if (ident) {
+                w.write(0, 8);
+                w.write(0, 8);
+            }
+            var k: usize = 0;
+            while (k < 3) : (k += 1) {
+                w.write(0, 1);
+                w.write(0, 1);
+            }
+        },
+        7 => if (ident) w.write(it.unique_id, 12),
+        9 => if (ident) {
+            w.write(0, 8);
+            w.write(0, 8);
+        },
+        else => {},
+    }
+
+    var extended = false;
+    if (it.flags & flag.RUNEWORD != 0) {
+        w.write(it.runeword_id, 16);
+        extended = true;
+    }
+
+    // (misc/none base type: no armor/weapon fixed stats — a documented scope limit)
+
+    if (it.flags & flag.SOCKETED != 0) {
+        const sb = (isc.get(194) orelse return).save_bits; // item_numsockets
+        w.write(it.sockets, @intCast(sb));
+    }
+
+    if (!ident) return;
+
+    if (it.version > 0x54 and it.quality == .set) w.write(0, 5); // set partial-list mask (no partials)
+
+    var s: usize = 0;
+    while (s < it.n_stats) : (s += 1) writeStat(w, it.stats[s]);
+    w.write(isc.STAT_LIST_TERMINATOR, 9); // base list terminator
+    if (extended) w.write(isc.STAT_LIST_TERMINATOR, 9); // empty runeword extended list
+}
+
+/// Encode one generic stat (id, optional param, then the value bits) — the inverse of addGeneric.
+/// The host's mods come from single-stat property funcs, so no grouped min/max damage ids appear here.
+fn writeStat(w: *BitWriter, s: Stat) void {
+    const row = isc.get(s.id) orelse return;
+    w.write(s.id, 9);
+    if (row.save_param_bits > 0) w.write(s.param & 0xFFFF, @intCast(row.save_param_bits));
+    const raw: i32 = (s.value >> @intCast(row.valshift)) +% row.save_add;
+    w.write(@bitCast(raw), @intCast(row.save_bits));
+}
+
+test "writeItem round-trips a magic ring through parse" {
+    var buf = [_]u8{0} ** 64;
+    var it = Item{ .flags = flag.IDENTIFIED, .version = 0x60, .dest = 3, .on_ground = true, .x = 100, .y = 200, .ilvl = 50, .quality = .magic, .prefix = 5, .suffix = 7 };
+    it.code = .{ 'r', 'i', 'n', 0 };
+    it.code_len = 3;
+    it.stats[0] = .{ .id = 0, .value = 10 }; // +10 strength
+    it.n_stats = 1;
+    var w = BitWriter.init(&buf);
+    writeItem(&w, &it);
+
+    var r = BitReader.init(&buf);
+    const got = parse(&r);
+    try std.testing.expectEqual(Quality.magic, got.quality);
+    try std.testing.expect(got.on_ground and got.x == 100 and got.y == 200);
+    try std.testing.expectEqualStrings("rin", got.codeSlice());
+    try std.testing.expectEqual(@as(u8, 50), got.ilvl);
+    try std.testing.expectEqual(@as(u16, 5), got.prefix);
+    try std.testing.expectEqual(@as(u16, 7), got.suffix);
+    try std.testing.expectEqual(@as(u8, 1), got.n_stats);
+    try std.testing.expectEqual(@as(u16, 0), got.stats[0].id);
+    try std.testing.expectEqual(@as(i32, 10), got.stats[0].value);
+}
+
+test "writeItem round-trips a unique amulet (equipped) with two stats" {
+    var buf = [_]u8{0} ** 64;
+    var it = Item{ .flags = flag.IDENTIFIED, .version = 0x60, .dest = 1, .body_loc = 2, .ilvl = 80, .quality = .unique, .unique_id = 123 };
+    it.code = .{ 'a', 'm', 'u', 0 };
+    it.code_len = 3;
+    it.stats[0] = .{ .id = 0, .value = 20 }; // +20 strength (valshift 0)
+    it.stats[1] = .{ .id = 2, .value = 15 }; // +15 dexterity (valshift 0)
+    it.n_stats = 2;
+    var w = BitWriter.init(&buf);
+    writeItem(&w, &it);
+
+    var r = BitReader.init(&buf);
+    const got = parse(&r);
+    try std.testing.expectEqual(Quality.unique, got.quality);
+    try std.testing.expectEqual(@as(u16, 123), got.unique_id);
+    try std.testing.expectEqual(@as(u8, 2), got.body_loc);
+    try std.testing.expect(!got.on_ground);
+    try std.testing.expectEqual(@as(u8, 2), got.n_stats);
+    try std.testing.expectEqual(@as(i32, 20), got.stats[0].value);
+    try std.testing.expectEqual(@as(u16, 2), got.stats[1].id);
+    try std.testing.expectEqual(@as(i32, 15), got.stats[1].value);
+}
+
+test "writeItem round-trips a set item (the 5-bit set mask path)" {
+    var buf = [_]u8{0} ** 64;
+    var it = Item{ .flags = flag.IDENTIFIED, .version = 0x60, .dest = 3, .on_ground = true, .x = 1, .y = 2, .ilvl = 40, .quality = .set, .set_id = 55 };
+    it.code = .{ 'r', 'i', 'n', 0 };
+    it.code_len = 3;
+    it.stats[0] = .{ .id = 0, .value = 5 };
+    it.n_stats = 1;
+    var w = BitWriter.init(&buf);
+    writeItem(&w, &it);
+
+    var r = BitReader.init(&buf);
+    const got = parse(&r);
+    try std.testing.expectEqual(Quality.set, got.quality);
+    try std.testing.expectEqual(@as(u16, 55), got.set_id);
+    try std.testing.expectEqual(@as(u8, 1), got.n_stats);
+    try std.testing.expectEqual(@as(i32, 5), got.stats[0].value);
+}
+
 test "parse identified magic ring with a stat" {
     var buf = [_]u8{0} ** 64;
     var w = BitWriter.init(&buf);
