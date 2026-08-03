@@ -22,6 +22,8 @@ pub const Op = enum(u8) {
     right_skill_on_entity = 0x0D, // D2GSPacketClt0x0D (9)
     interact_with_entity = 0x13, // D2GSPacketClt0x13_InteractWithEntity (9)
     pick_up_item = 0x16, // D2GSPacketClt0x16_PickUpItem (13)  <- SCMD_0x16 pick/interact-ext
+    equip_item = 0x1A, // D2GSPacketClt0x1A ItemToBody (9)   <- equip: item GUID -> body slot @0x54ad90
+    unequip_item = 0x1C, // D2GSPacketClt0x1C BodyToInventory (3) <- unequip a body slot @0x54aec0
     select_skill = 0x3C, // D2GSPacketClt0x3C_SetSkill (9)  <- picks the hand's active skill
     chat_message = 0x15, // D2GSPacketClt0x15_ChatMessage (variable)
     _,
@@ -254,6 +256,53 @@ pub const PickUpItem = struct {
     }
 };
 
+/// 0x1A ItemToBody — D2GSPacketClt0x1A (equip). PlayerMsg handler @0x54ad90: `[nCmd u8][dwItemGUID u32]
+/// [bodyLoc u8][pad u8[3]]` (9 bytes). The engine reads only the low byte of the body-location field and
+/// requires the item on the cursor; it validates `bodyLoc-1 <= 9` (eD2BodyLoc 1..10) then
+/// SERVER_EquipItemToBodyLoc. `pad` is don't-care.
+pub const EquipItem = struct {
+    pub const OPCODE: u8 = @intFromEnum(Op.equip_item);
+    pub const SIZE: usize = 9;
+
+    guid: u32 = 0, // dwItemGUID
+    body_loc: u8 = 0, // eD2BodyLoc target slot (1..10)
+
+    pub fn encode(self: EquipItem, out: []u8) []u8 {
+        std.debug.assert(out.len >= SIZE);
+        @memset(out[0..SIZE], 0);
+        out[0] = OPCODE;
+        std.mem.writeInt(u32, out[1..5], self.guid, .little);
+        out[5] = self.body_loc;
+        return out[0..SIZE];
+    }
+    pub fn decode(buf: []const u8) DecodeError!EquipItem {
+        if (buf.len < SIZE) return error.ShortBuffer;
+        if (buf[0] != OPCODE) return error.WrongOpcode;
+        return .{ .guid = std.mem.readInt(u32, buf[1..5], .little), .body_loc = buf[5] };
+    }
+};
+
+/// 0x1C BodyToInventory — D2GSPacketClt0x1C (unequip). PlayerMsg handler @0x54aec0: `[nCmd u8]
+/// [bodyLoc u16]` (3 bytes). Validates `bodyLoc-1 < 10` then moves the equipped item back to inventory.
+pub const UnequipItem = struct {
+    pub const OPCODE: u8 = @intFromEnum(Op.unequip_item);
+    pub const SIZE: usize = 3;
+
+    body_loc: u16 = 0, // eD2BodyLoc source slot (1..10)
+
+    pub fn encode(self: UnequipItem, out: []u8) []u8 {
+        std.debug.assert(out.len >= SIZE);
+        out[0] = OPCODE;
+        std.mem.writeInt(u16, out[1..3], self.body_loc, .little);
+        return out[0..SIZE];
+    }
+    pub fn decode(buf: []const u8) DecodeError!UnequipItem {
+        if (buf.len < SIZE) return error.ShortBuffer;
+        if (buf[0] != OPCODE) return error.WrongOpcode;
+        return .{ .body_loc = std.mem.readInt(u16, buf[1..3], .little) };
+    }
+};
+
 /// 0x15 ChatMessage — D2GSPacketClt0x15_ChatMessage. Fixed 4-byte header then the message
 /// string (max 256) followed by the target name string (max 16), each NUL-terminated. An empty
 /// target => broadcast to the game; a non-empty target => whisper. Wire size is variable:
@@ -350,6 +399,26 @@ test "PickUpItem 0x16 round-trips byte-exact (13 bytes)" {
     try std.testing.expectEqual(@as(usize, 13), wire.len);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x16, 4, 0, 0, 0, 0xBE, 0xBA, 0xFE, 0xCA, 1, 0, 0, 0 }, wire);
     try std.testing.expectEqual(p, try PickUpItem.decode(wire));
+}
+
+test "EquipItem 0x1A + UnequipItem 0x1C round-trip byte-exact" {
+    var buf: [16]u8 = undefined;
+    const eq = EquipItem{ .guid = 0xDEADBEEF, .body_loc = 3 }; // torso
+    const we = eq.encode(&buf);
+    try std.testing.expectEqual(@as(u8, 0x1A), we[0]);
+    try std.testing.expectEqual(@as(usize, 9), we.len);
+    const de = try EquipItem.decode(we);
+    try std.testing.expectEqual(@as(u32, 0xDEADBEEF), de.guid);
+    try std.testing.expectEqual(@as(u8, 3), de.body_loc);
+    // wire size matches the engine's C->S size table.
+    try std.testing.expectEqual(@as(?usize, 9), sizeOf(we));
+
+    const un = UnequipItem{ .body_loc = 4 }; // right-arm / weapon
+    const wu = un.encode(&buf);
+    try std.testing.expectEqual(@as(u8, 0x1C), wu[0]);
+    try std.testing.expectEqual(@as(usize, 3), wu.len);
+    try std.testing.expectEqual(@as(u16, 4), (try UnequipItem.decode(wu)).body_loc);
+    try std.testing.expectEqual(@as(?usize, 3), sizeOf(wu));
 }
 
 test "SelectSkill 0x3C round-trips with the left-hand bit" {
