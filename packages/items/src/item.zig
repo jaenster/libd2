@@ -122,8 +122,10 @@ pub fn rollDrop(
         });
         d.quality = q;
 
-        // Affixes/sockets roll off the item's own MOD seed (separate stream).
-        var item_seed = rng.Seed.init(opts.item_seed_base +% @as(u32, @intCast(i)), 0x29a);
+        // Affixes/sockets roll off the item's own MOD seed (separate stream). Record its low word so the
+        // mod values can be reproduced later (properties.rollDropStats) when the item is equipped.
+        d.item_seed = opts.item_seed_base +% @as(u32, @intCast(i));
+        var item_seed = rng.Seed.init(d.item_seed, 0x29a);
         try applyAffixes(gpa, &item_seed, t, &d, flags, opts);
 
         try drops.append(gpa, d);
