@@ -1297,19 +1297,18 @@ fn compositeLevelRaw(alloc: std.mem.Allocator, lc: LevelColl) !?RawLevelComposit
         }
     }
 
-    // Any subtile no room covered is the DBM OOB fill. Un-floored IN-ROOM cells
-    // carry our internal synthetic blank marker (0x20 — NOT an engine bit): the
-    // runtime CollMap has no walkable void inside a room, an un-floored cell is
-    // solid rock = block-walk + block-missile (0x05). Emit that engine-faithful
-    // value here so the raw grid matches the runtime CollMap (DBM) exactly; the
-    // CompState composite keeps reading the internal 0x20 for its own void logic.
-    const solid = collision.Colbit.block_walk | collision.Colbit.wall;
+    // Any subtile no room covered is the DBM OOB fill. In-room cells are emitted VERBATIM.
+    //
+    // This used to rewrite COLLIDE_BLANK (0x20) cells to solid rock (block_walk|wall) on the
+    // belief that 0x20 was an internal synthetic marker and "the runtime CollMap has no
+    // walkable void inside a room". Both halves are false: 0x20 is a real eCollisionFlags bit
+    // that the engine's own CollMap carries, and plenty of those cells are walkable. Measured
+    // against the engine at seed 1033089920 act 1, the rewrite corrupted 9975 cells — 5373
+    // `0x25->0x05`, 3258 `0x21->0x05`, and 818 `0x20->0x05` that turned a WALKABLE cell into
+    // solid rock. The per-room grids feeding this composite are byte-exact including 0x20, so
+    // there is nothing to synthesize: pass the cell through.
     for (cells) |*c| {
-        if (c.* == 0xFFFF) {
-            c.* = RAW_OOB_FILL;
-        } else if (c.* & collision.Colbit.blank != 0) {
-            c.* = (c.* & ~collision.Colbit.blank) | solid;
-        }
+        if (c.* == 0xFFFF) c.* = RAW_OOB_FILL;
     }
 
     return .{ .level_id = lc.level_id, .w = W, .h = H, .unresolved = lc.unresolved, .cells = cells };

@@ -161,6 +161,68 @@ test "coll: BLIND holdout seed (never used to develop anything)" {
     }
 }
 
+test "coll: composite raw grid must not alter the per-room cells" {
+    // The whole-level composite is what drlg-server serves (generateActFull ->
+    // compositeLevelRaw) and what the DBM consumers read, but nothing verified it: every
+    // collision gate here checks the PER-ROOM grids. A rewrite living only in the composite
+    // could therefore corrupt the served map while all of them stayed green — which is
+    // exactly what happened (COLLIDE_BLANK 0x20 was being rewritten to solid rock, turning
+    // walkable cells into walls). Invariant: for a subtile exactly one room covers, the
+    // composite must reproduce that room's cell verbatim.
+    const gpa = std.testing.allocator;
+    var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+    const seed: u32 = 1033089920;
+    var act_no: i32 = 0;
+    while (act_no < 5) : (act_no += 1) {
+        var per = lib.generateActCollisionAll(&ctx, gpa, act_no, seed, .nightmare) catch continue;
+        defer per.deinit(gpa);
+        var raw = try lib.generateActCompositeRaw(&ctx, gpa, act_no, seed, .nightmare);
+        defer raw.deinit(gpa);
+        for (per.levels) |lc| {
+            var comp: ?lib.RawLevelComposite = null;
+            for (raw.levels) |r| {
+                if (r.level_id == lc.level_id) comp = r;
+            }
+            const c = comp orelse continue;
+            const cw: i32 = @intCast(c.w);
+            const ch: i32 = @intCast(c.h);
+            // Coverage count, so overlapping rooms (which the composite ORs) are excluded.
+            const cover = try gpa.alloc(u8, c.w * c.h);
+            defer gpa.free(cover);
+            @memset(cover, 0);
+            for (lc.grids) |g| {
+                var y: i32 = 0;
+                while (y < g.h) : (y += 1) {
+                    var x: i32 = 0;
+                    while (x < g.w) : (x += 1) {
+                        const dx = g.x + x;
+                        const dy = g.y + y;
+                        if (dx < 0 or dy < 0 or dx >= cw or dy >= ch) continue;
+                        const di: usize = @intCast(dy * cw + dx);
+                        if (cover[di] < 2) cover[di] += 1;
+                    }
+                }
+            }
+            for (lc.grids) |g| {
+                var y: i32 = 0;
+                while (y < g.h) : (y += 1) {
+                    var x: i32 = 0;
+                    while (x < g.w) : (x += 1) {
+                        const dx = g.x + x;
+                        const dy = g.y + y;
+                        if (dx < 0 or dy < 0 or dx >= cw or dy >= ch) continue;
+                        const di: usize = @intCast(dy * cw + dx);
+                        if (cover[di] != 1) continue;
+                        const want: u16 = g.cells[@intCast(y * g.w + x)];
+                        try std.testing.expectEqual(want, c.cells[di]);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
 /// [min,max], keeping the drlg_seed header — lets the per-act tests reuse the one
 /// compressed golden instead of a separate uncompressed file per act.
