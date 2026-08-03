@@ -26,6 +26,7 @@ pub const select = @import("select.zig");
 pub const ai = @import("ai.zig");
 pub const monai = @import("monai.zig");
 pub const shrines = @import("shrines.zig");
+pub const baal = @import("baal.zig");
 pub const character = @import("character.zig");
 pub const derive = @import("derive.zig");
 pub const difficulty = @import("difficulty.zig");
