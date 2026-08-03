@@ -8,6 +8,11 @@ pub const Table = struct {
     cols: std.StringHashMapUnmanaged(usize) = .{},
     rows: [][]const []const u8 = &.{},
     arena: std.heap.ArenaAllocator,
+    /// Lazily-built (column -> integer value -> first matching row) memo for findByInt.
+    /// Without it that lookup linear-scans EVERY row and parseInt's the cell each time,
+    /// which put std.fmt.parseInt at the top of the drlg-server profile: the DRLG resolves
+    /// rows by Def / LevelId / Id thousands of times per act, against tables of 100-800 rows.
+    int_idx: std.StringHashMapUnmanaged(std.AutoHashMapUnmanaged(i64, usize)) = .{},
 
     pub fn parse(gpa: std.mem.Allocator, src: []const u8) !Table {
         var arena = std.heap.ArenaAllocator.init(gpa);
@@ -66,8 +71,31 @@ pub const Table = struct {
     }
 
     /// Find the first row whose integer column `name` equals `value`, else null.
+    /// O(1) after the first call per column; the memo is built once into the table's own
+    /// arena. `const` on the outside because every caller holds the table immutably — the
+    /// index is pure derived state, so building it does not change what the table means.
     pub fn findByInt(self: *const Table, name: []const u8, value: i64) ?usize {
         const c = self.cols.get(name) orelse return null;
+        const mut: *Table = @constCast(self);
+        const a = mut.arena.allocator();
+        const gop = mut.int_idx.getOrPut(a, name) catch return self.scanByInt(c, value);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{};
+            // First row wins, exactly as the old linear scan returned the first match.
+            for (self.rows, 0..) |r, i| {
+                if (c >= r.len) continue;
+                const v = std.fmt.parseInt(i64, r[c], 10) catch continue;
+                _ = gop.value_ptr.getOrPutValue(a, v, i) catch {
+                    _ = mut.int_idx.remove(name);
+                    return self.scanByInt(c, value);
+                };
+            }
+        }
+        return gop.value_ptr.get(value);
+    }
+
+    /// The original linear scan, kept as the fallback when the memo cannot be allocated.
+    fn scanByInt(self: *const Table, c: usize, value: i64) ?usize {
         for (self.rows, 0..) |r, i| {
             if (c >= r.len) continue;
             const v = std.fmt.parseInt(i64, r[c], 10) catch continue;
