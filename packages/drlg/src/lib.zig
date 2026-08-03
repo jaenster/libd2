@@ -1765,6 +1765,29 @@ fn buildLevelRoomColl(
 
     if (rbs.items.len == 0) return;
 
+    if (dump_room_tiles == 0 or dump_room_tiles == lid) {
+        for (rbs.items) |rb| {
+            for (rb.tiles) |ct| {
+                // Report the tile the stamp loop will actually use, i.e. after the seam
+                // re-resolve — that is what the engine's own arrays hold by dump time.
+                var eff = ct;
+                if (ct.is_floor and ct.tile.main == 30) {
+                    if (near_tiles.blankReplacement(ct.nPosX + rb.wpx, ct.nPosY + rb.wpy)) |sw| {
+                        if (sw.ox == rb.wpx and sw.oy == rb.wpy) {
+                            eff.tile = sw.tile orelse materialize.zeroCollisionTile();
+                            eff.nFlags = sw.n_flags;
+                        }
+                    }
+                }
+                dprint("OURTILE {d} {s} {d} {d} {d} {d} {X} {d} {d} {d}\n", .{
+                    lid,           if (ct.is_floor) "F" else "W", rb.wpx * SUB, rb.wpy * SUB,
+                    ct.nPosX,      ct.nPosY,                      @as(u32, @bitCast(eff.nFlags)),
+                    eff.tile.main, eff.tile.sub,                  eff.tile.orientation,
+                });
+            }
+        }
+    }
+
     // Allocate + zero each room's CollMap (ownership moves to `rooms`).
     // `floors[i]` tracks, per room tile-cell, whether a FLOOR tile covered it — the
     // engine stamps Blank.dt1 (solid rock) into every floorless cell, so cells left
@@ -2033,6 +2056,12 @@ pub const CollVerifyResult = struct {
 /// Debug: when set, verifyActCollision dumps each of OUR rooms (masked-0x1F cells)
 /// as `OURSROOM level px py w h c,c,...` for offline diff visualization vs the golden.
 pub var dump_ours_rooms: bool = false;
+
+/// Debug: emit `OURTILE <level> <F|W> <rx> <ry> <px> <py> <nFlags> <main> <sub> <orient>` for
+/// every room tile of the given level (0 = all levels, -1 = off), in the same shape as
+/// d2probe's `--roomdump` `roomtile` records, so the engine's final per-room tile arrays can
+/// be diffed against this port's 1:1.
+pub var dump_room_tiles: i32 = -1;
 
 /// Debug: when set, verifyActCollision prints one line per masked-0x1F mismatching
 /// subtile as `MISM <level> <px> <py> <w> <h> <lx> <ly> <golden0x1F> <ours0x1F>`, for

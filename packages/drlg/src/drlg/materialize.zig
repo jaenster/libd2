@@ -86,6 +86,13 @@ const CELLFLAGS_0x80000000: i32 = @bitCast(@as(u32, 0x80000000));
 /// therefore emit the seam tile exactly once, and the receiving room's seed
 /// stream stays aligned. The caller populates this after each room is done
 /// (FindTileInNearRooms skips the searching room itself).
+/// Debug-dump print that compiles to nothing off-native — freestanding wasm has no
+/// stderr, and a live std.debug.print here would drag std.Io.Threaded into the
+/// libc-free build (see tilegen.zig's copy).
+inline fn dprint(comptime fmt: []const u8, args: anytype) void {
+    if (comptime @import("builtin").target.os.tag != .freestanding) std.debug.print(fmt, args);
+}
+
 pub const NearTileIndex = struct {
     /// One already-built room, kept alive past its own materialization: the engine's
     /// UpdateTileType re-resolve rolls on the OWNER room's seed and resolves in the
@@ -188,6 +195,14 @@ pub const NearTileIndex = struct {
         return self.blank_replaced.get(key(wx, wy, true));
     }
 
+    /// Debug: trace every add/find/swap touching this one world tile cell.
+    pub var probe_cell: ?struct { x: i32, y: i32 } = null;
+
+    fn probing(wx: i32, wy: i32) bool {
+        const p = probe_cell orelse return false;
+        return p.x == wx and p.y == wy;
+    }
+
     pub fn add(self: *NearTileIndex, a: std.mem.Allocator, wx: i32, wy: i32, n_tile_type: i32, n_flags: i32, owner: Rect, is_blank: bool, owner_idx: usize) !void {
         // Companions (type 4) are never matched by FindTileAtPosition, so they are
         // not owners either. First writer wins: the engine walks a room's tile list
@@ -195,6 +210,7 @@ pub const NearTileIndex = struct {
         if (n_tile_type == 4) return;
         const gop = try self.map.getOrPut(a, key(wx, wy, n_tile_type == 0));
         if (!gop.found_existing) gop.value_ptr.* = .{ .n_tile_type = n_tile_type, .n_flags = n_flags, .ox = owner.x, .oy = owner.y, .ow = owner.w, .oh = owner.h, .is_blank = is_blank, .owner_idx = owner_idx };
+        if (probing(wx, wy)) dprint("PCELL add tt={d} nflags=0x{X} owner=({d},{d} {d}x{d}) blank={} taken={}\n", .{ n_tile_type, @as(u32, @bitCast(n_flags)), owner.x, owner.y, owner.w, owner.h, is_blank, gop.found_existing });
     }
 
     /// FindTileAtPosition's match: same world cell, same link class, owner type != 4,
@@ -208,7 +224,12 @@ pub const NearTileIndex = struct {
     }
 
     pub fn find(self: *const NearTileIndex, wx: i32, wy: i32, n_tile_type: i32, gf: i32, searcher: Rect) bool {
-        const e = self.map.get(key(wx, wy, n_tile_type == 0)) orelse return false;
+        const ep = @constCast(self).map.getPtr(key(wx, wy, n_tile_type == 0)) orelse {
+            if (probing(wx, wy)) dprint("PCELL find tt={d} gf=0x{X} searcher=({d},{d} {d}x{d}) -> MISS\n", .{ n_tile_type, @as(u32, @bitCast(gf)), searcher.x, searcher.y, searcher.w, searcher.h });
+            return false;
+        };
+        const e = ep.*;
+        if (probing(wx, wy)) dprint("PCELL find tt={d} gf=0x{X} searcher=({d},{d} {d}x{d}) held={d} heldflags=0x{X} owner=({d},{d} {d}x{d}) blank={}\n", .{ n_tile_type, @as(u32, @bitCast(gf)), searcher.x, searcher.y, searcher.w, searcher.h, e.n_tile_type, @as(u32, @bitCast(e.n_flags)), e.ox, e.oy, e.ow, e.oh, e.is_blank });
         // FindTileInNearRooms only walks ppDrlgRoomsExNear, so an owner that is not a
         // neighbour of the searching room is invisible. Rooms are "near" when their
         // tile rects touch (the shared seam is one tile wide).
@@ -228,13 +249,23 @@ pub const NearTileIndex = struct {
             if (resolveLayer(n_tile_type, e.n_tile_type, e.n_flags, gf, searcher, e.ox, e.oy, wx, wy)) |layer| {
                 var td: s.D2DrlgTileDataStrc = std.mem.zeroes(s.D2DrlgTileDataStrc);
                 tilegen.setWallTileFlags(&td, layer, @bitCast(gf));
+                const swapped = mut.reresolveOnOwner(e.owner_idx, layer, gf);
                 mut.markBlankReplaced(wx, wy, .{
-                    .tile = mut.reresolveOnOwner(e.owner_idx, layer, gf),
+                    .tile = swapped,
                     .n_flags = td.nFlags,
                     .ox = e.ox,
                     .oy = e.oy,
                 });
-            }
+                // UpdateTileType mutates the owner's tile in place, so every LATER
+                // FindTileInNearRooms hit on this cell sees the updated type/flags — most
+                // importantly the pin bit (nFlags 0x1), which stops a second seam neighbour
+                // from re-typing it back. Without this write-back the last visitor wins and
+                // a re-typed blank reverts to solid rock.
+                ep.n_tile_type = layer;
+                ep.n_flags = td.nFlags;
+                ep.is_blank = layer == 0 and swapped != null and swapped.?.main == 30 and swapped.?.sub == 0;
+                if (probing(wx, wy)) dprint("PCELL swap layer={d} newflags=0x{X} entry={?} owner=({d},{d})\n", .{ layer, @as(u32, @bitCast(td.nFlags)), if (swapped) |t| t.main else null, e.ox, e.oy });
+            } else if (probing(wx, wy)) dprint("PCELL swap SKIPPED (resolveLayer null)\n", .{});
         }
         if (e.n_tile_type == 4) return false;
         if (e.n_tile_type != 0xd and (gf & CELLFLAGS_0x8000000) != 0) return false;
