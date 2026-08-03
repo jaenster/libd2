@@ -380,6 +380,32 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return;
     }
 
+    // Verify a d2probe collision capture from a RUNTIME path, so an arbitrary seed can be
+    // spot-checked without rebuilding: `d2-drlg collverify <coll_log/seed_N.jsonl>`.
+    if (std.mem.eql(u8, cmd, "collverify")) {
+        const path = args.next() orelse {
+            std.debug.print("usage: d2-drlg collverify <golden.jsonl>\n", .{});
+            return;
+        };
+        var threaded = std.Io.Threaded.init_single_threaded;
+        const io = threaded.io();
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30)) catch |e| {
+            std.debug.print("collverify: cannot read {s}: {s}\n", .{ path, @errorName(e) });
+            return;
+        };
+        defer gpa.free(bytes);
+        var ctx = try drlglib.Ctx.init(gpa);
+        defer ctx.deinit();
+        const r = try drlglib.verifyActCollision(gpa, &ctx, bytes, .nightmare, false);
+        std.debug.print("seed {d}: rooms={d} cells={d} | walkable off {d} | masked off {d} | exact off {d} | dim_mismatch {d}\n", .{
+            r.seed,        r.matched_rooms,           r.total_cells,
+            r.total_cells - r.walk_ok,                r.total_cells - r.masked_ok,
+            r.total_cells - r.exact_ok,               r.dim_mismatch,
+        });
+        if (r.total_cells != r.exact_ok or r.dim_mismatch != 0) std.process.exit(1);
+        return;
+    }
+
     if (std.mem.eql(u8, cmd, "colldump")) {
         const tilegen = @import("drlg/tilegen.zig");
         const act_no = std.fmt.parseInt(i32, args.next() orelse "0", 10) catch 0;
