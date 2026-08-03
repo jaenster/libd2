@@ -1779,11 +1779,13 @@ fn buildLevelRoomColl(
                         }
                     }
                 }
-                dprint("OURTILE {d} {s} {d} {d} {d} {d} {X} {d} {d} {d}\n", .{
+                dprint("OURTILE {d} {s} {d} {d} {d} {d} {X} {d} {d} {d} ", .{
                     lid,           if (ct.is_floor) "F" else "W", rb.wpx * SUB, rb.wpy * SUB,
                     ct.nPosX,      ct.nPosY,                      @as(u32, @bitCast(eff.nFlags)),
                     eff.tile.main, eff.tile.sub,                  eff.tile.orientation,
                 });
+                for (eff.tile.flags) |f| dprint("{X:0>2}", .{f});
+                dprint(" {d}\n", .{eff.tile.rarity});
             }
         }
     }
