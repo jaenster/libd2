@@ -10,6 +10,7 @@ test {
     _ = @import("quality.zig");
     _ = @import("treasure.zig");
     _ = @import("affix.zig");
+    _ = @import("properties.zig");
     _ = @import("sockets.zig");
     _ = @import("item.zig");
     _ = @import("dc6.zig");

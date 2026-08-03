@@ -23,6 +23,7 @@ pub const Tables = struct {
     unique_items: txt.Table,
     set_items: txt.Table,
     runes: txt.Table,
+    properties: txt.Table,
 
     /// TreasureClass name -> row index (built once at load).
     tc_by_name: std.StringHashMapUnmanaged(usize) = .{},
@@ -52,6 +53,7 @@ pub const Tables = struct {
             .unique_items = try txt.Table.parse(gpa, d2data.file("UniqueItems")),
             .set_items = try txt.Table.parse(gpa, d2data.file("SetItems")),
             .runes = try txt.Table.parse(gpa, d2data.file("Runes")),
+            .properties = try txt.Table.parse(gpa, d2data.file("Properties")),
             .arena = std.heap.ArenaAllocator.init(gpa),
         };
         const a = t.arena.allocator();
@@ -94,6 +96,7 @@ pub const Tables = struct {
         self.unique_items.deinit();
         self.set_items.deinit();
         self.runes.deinit();
+        self.properties.deinit();
         self.arena.deinit();
     }
 
