@@ -58,8 +58,6 @@ pub var probe_cur_cell: [2]i32 = .{ -1, -1 };
 /// Debug: dump the whole rarity ladder (candidates, sum, roll, order) for every lookup
 /// of this (main, sub) identity — how a variant pick that disagrees with the engine gets
 /// traced back to the candidate SET vs the candidate ORDER. -1 disables.
-pub var g_lookup_calls: u64 = 0;
-pub var g_lookup_scanned: u64 = 0;
 pub var probe_pick_main: i32 = -1;
 pub var probe_pick_sub: i32 = -1;
 
@@ -139,9 +137,17 @@ fn lookupTilesInAllProjects(
 ) usize {
     const lib = libFromRoom(pRoomEx);
     var n: usize = 0;
-    g_lookup_calls += 1;
     for (lib.dts) |*d| {
-        g_lookup_scanned += d.tiles.len;
+        if (d.index) |ix| {
+            // Indexed path: the identity's members are already stored in the reverse
+            // record order the scan below produces, so the candidate list is identical.
+            for (ix.lookup(nTileType, nMain, nSub)) |ti| {
+                if (n >= nMax) return n;
+                results[n] = &d.tiles[ti];
+                n += 1;
+            }
+            continue;
+        }
         var i: usize = d.tiles.len;
         while (i > 0) {
             i -= 1;
