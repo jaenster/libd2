@@ -170,7 +170,7 @@ pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i3
     defer arena.deinit();
     const a = arena.allocator();
 
-    const result = try lib.generateActFull(ctx, a, act_no, seed, diff, deflate_fn);
+    const result = try lib.generateActFull(ctx, a, act_no, seed, diff, deflate_fn, include_walk);
 
     var out = try std.Io.Writer.Allocating.initCapacity(alloc, 1 << 16);
     errdefer out.deinit();
@@ -199,7 +199,7 @@ pub fn renderLevelJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_n
     // A level belongs to exactly one act; render it in that act (the whole-act oracle) so
     // both the geometry and the emitted "act" field match, regardless of the caller's hint.
     const eff_act = lib.levelActNo(ctx, level_id) orelse act_no;
-    const lf = try lib.generateLevelFull(ctx, a, eff_act, seed, level_id, diff, deflate_fn);
+    const lf = try lib.generateLevelFull(ctx, a, eff_act, seed, level_id, diff, deflate_fn, include_walk);
 
     var out = try std.Io.Writer.Allocating.initCapacity(alloc, 1 << 14);
     errdefer out.deinit();

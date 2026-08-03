@@ -424,19 +424,30 @@ fn deflateLevelColl(
     pLevel: *abi.D2DrlgLevelStrc,
     lid: i32,
     deflate_fn: ?DeflateFn,
+    want_walk: bool,
 ) !struct { w: i32, h: i32, deflated: []u8, walk_deflated: []u8 } {
     if (try materializeLevelColl(sa, ctx, idx, pLevel, lid)) |lc| {
         if (try compositeLevelRaw(sa, lc)) |rc| {
-            const src = try sa.alloc(u8, rc.cells.len * 2);
-            // Walk grid: 1 byte/cell (0=blocked, 1=walkable) from the SAME raw cells, in the
-            // same streaming pass — cheap. Deflated with the injected deflate_fn like collision.
-            const walk = try sa.alloc(u8, rc.cells.len);
-            for (rc.cells, 0..) |cell, i| {
-                std.mem.writeInt(u16, src[i * 2 ..][0..2], cell, .little);
-                walk[i] = @intFromBool(collision.walkable(cell));
-            }
+            // The CollMap is already a u16 array; on a little-endian host its wire form is
+            // the same bytes, so deflate straight out of it instead of copying the whole
+            // level into a second buffer first.
+            const src: []const u8 = if (@import("builtin").cpu.arch.endian() == .little)
+                std.mem.sliceAsBytes(rc.cells)
+            else blk: {
+                const tmp = try sa.alloc(u8, rc.cells.len * 2);
+                for (rc.cells, 0..) |cell, i| std.mem.writeInt(u16, tmp[i * 2 ..][0..2], cell, .little);
+                break :blk tmp;
+            };
             const deflated = if (deflate_fn) |df| try df(out_alloc, src) else try deflateZlib(out_alloc, src);
-            const walk_deflated = if (deflate_fn) |df| try df(out_alloc, walk) else try deflateZlib(out_alloc, walk);
+            // Walk grid: 1 byte/cell (0=blocked, 1=walkable). Only the `?walk=` responses
+            // carry it, and it used to be built AND deflated for every request regardless —
+            // a whole extra level-sized grid through zlib, then discarded by the serializer.
+            var walk_deflated: []u8 = &.{};
+            if (want_walk) {
+                const walk = try sa.alloc(u8, rc.cells.len);
+                for (rc.cells, 0..) |cell, i| walk[i] = @intFromBool(collision.walkable(cell));
+                walk_deflated = if (deflate_fn) |df| try df(out_alloc, walk) else try deflateZlib(out_alloc, walk);
+            }
             return .{ .w = @intCast(rc.w), .h = @intCast(rc.h), .deflated = deflated, .walk_deflated = walk_deflated };
         }
     }
@@ -450,6 +461,7 @@ fn deflateLevelColl(
 /// DBM object is byte-identical whichever generator produced it (modulo cross-level SEAM
 /// adjacents, which only `generateActFull`'s Pass 3 can add). `act` supplies the placement flag.
 fn collectLevelFull(
+    want_walk: bool,
     out_alloc: std.mem.Allocator,
     sa: std.mem.Allocator,
     ctx: *Ctx,
@@ -483,7 +495,7 @@ fn collectLevelFull(
     const adjacents = try out_alloc.dupe(LevelAdjacent, try collectLevelAdjacents(sa, pLevel));
     errdefer out_alloc.free(adjacents);
 
-    const coll = try deflateLevelColl(out_alloc, sa, ctx, idx, pLevel, lid, deflate_fn);
+    const coll = try deflateLevelColl(out_alloc, sa, ctx, idx, pLevel, lid, deflate_fn, want_walk);
     errdefer if (coll.deflated.len != 0) out_alloc.free(coll.deflated);
     errdefer if (coll.walk_deflated.len != 0) out_alloc.free(coll.walk_deflated);
 
@@ -532,6 +544,9 @@ pub fn generateActFull(
     seed: u32,
     diff: Difficulty,
     deflate_fn: ?DeflateFn,
+    /// Build the per-level walk grid too. Off by default: it is a second level-sized
+    /// buffer through zlib that only `?walk=` responses ever read.
+    want_walk: bool,
 ) !ActFullResult {
     var pool = fog.PoolManager.init(ctx.gpa);
     defer pool.deinit();
@@ -601,7 +616,7 @@ pub fn generateActFull(
         // warp-DESTINATION levels early, and a second InitLevel would regenerate and
         // corrupt them (same guard as generateActCollisionAll).
         if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
-        try out.append(out_alloc, try collectLevelFull(out_alloc, sa, ctx, idx, &act, pLevel, lid, deflate_fn));
+        try out.append(out_alloc, try collectLevelFull(want_walk, out_alloc, sa, ctx, idx, &act, pLevel, lid, deflate_fn));
     }
 
     // Pass 3: cross-level SEAM adjacency. Every level's rooms are now placed, so the
@@ -661,6 +676,7 @@ pub fn generateLevelFull(
     level_id: i32,
     diff: Difficulty,
     deflate_fn: ?DeflateFn,
+    want_walk: bool,
 ) !LevelFull {
     // Generate the level in its OWN act's placement context (not the caller's hint): Pass 1
     // places only this act's levels' world coords, so a level whose act != act_no_hint would
@@ -717,7 +733,7 @@ pub fn generateLevelFull(
     // Pass 2 for the target level ONLY (no Pass 3 seam adjacents — see the doc caveat).
     const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(level_id));
     drlg.InitLevel(pLevel);
-    return try collectLevelFull(out_alloc, scratch.allocator(), ctx, idx, &act, pLevel, level_id, deflate_fn);
+    return try collectLevelFull(want_walk, out_alloc, scratch.allocator(), ctx, idx, &act, pLevel, level_id, deflate_fn);
 }
 
 // ---- collision maps --------------------------------------------------------
@@ -3154,7 +3170,8 @@ test "lib: walk grid derives cell-for-cell from the raw CollMap (Cold Plains, se
     // One whole-act generation carries both the deflated raw u16 CollMap and the deflated
     // 1-byte-per-cell walk grid per level. Verify the walk grid is EXACTLY the d2bs walkable
     // mask applied to the raw CollMap — proving it is path-ready and free of drift.
-    var result = try generateActFull(&ctx, gpa, 0, 0, .normal, null);
+    // want_walk = true: this test is ABOUT the walk grid, so it has to ask for one.
+    var result = try generateActFull(&ctx, gpa, 0, 0, .normal, null, true);
     defer result.deinit(gpa);
 
     var checked_l3 = false;
