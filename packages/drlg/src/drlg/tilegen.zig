@@ -55,6 +55,12 @@ pub var probe_cur_level: i32 = -1;
 pub var probe_cur_room: [2]i32 = .{ -1, -1 };
 pub var probe_cur_cell: [2]i32 = .{ -1, -1 };
 
+/// Debug: dump the whole rarity ladder (candidates, sum, roll, order) for every lookup
+/// of this (main, sub) identity — how a variant pick that disagrees with the engine gets
+/// traced back to the candidate SET vs the candidate ORDER. -1 disables.
+pub var probe_pick_main: i32 = -1;
+pub var probe_pick_sub: i32 = -1;
+
 /// Debug-dump print that compiles to nothing off-native. The probe/dump paths below
 /// sit inside functions the C ABI reaches, and freestanding wasm has no stderr — a
 /// live `std.debug.print` there drags in std.Io.Threaded (posix getrandom/IOV_MAX)
@@ -219,6 +225,32 @@ pub fn getTileLibraryEntry(pRoomEx: [*c]s.D2RoomExStrc, nTileType: i32, nGridFla
             // 64-bit state; wrong variant wins for non-power-of-two sums).
             nRandom = @as(u32, @bitCast(next.nSeedLow)) % nRaritySum;
         }
+    }
+
+    if (probe_pick_main >= 0 and nMainIndex == probe_pick_main and nSub == probe_pick_sub) {
+        dprint("PICK room({d},{d}) cell({d},{d}) type={d} gf=0x{X} sum={d} rnd={d} cands={d}:", .{
+            probe_cur_room[0], probe_cur_room[1], probe_cur_cell[0], probe_cur_cell[1],
+            nTileType,         nGridFlags,        nRaritySum,        nRandom,          nCount,
+        });
+        const lib = libFromRoom(pRoomEx);
+        var i: usize = 0;
+        while (i < nCount) : (i += 1) {
+            const t = aTileResults[i].?;
+            var fidx: usize = 0;
+            var ridx: usize = 0;
+            for (lib.dts, 0..) |*d, di| {
+                for (d.tiles, 0..) |*c, ci| if (c == t) {
+                    fidx = di;
+                    ridx = ci;
+                };
+            }
+            dprint(" [f{d}#{d} rar={d} blkxor={d}]", .{ fidx, ridx, t.rarity, blk: {
+                var acc: u32 = 0;
+                for (t.flags) |f| acc += f;
+                break :blk acc;
+            } });
+        }
+        dprint(" files={d}\n", .{lib.dts.len});
     }
 
     // Walk the rarity ladder to the selected entry (recon 1426-1442).
