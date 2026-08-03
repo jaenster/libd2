@@ -43,13 +43,126 @@ pub const Tile = struct {
     }
 };
 
+/// Identity index over one DT1's tiles, mirroring what the engine builds at load time:
+/// D2CMP FINDTILE hashes (orientation, main, sub) into 256 bucket chains
+/// (FINDTILE_ComputeHash / AddTileToChain 0x60cea0) so a lookup is a probe, not a scan.
+/// This port used to walk every tile of every DT1 per resolution — 45.3M record compares
+/// to generate one act.
+///
+/// Layout is CSR-style and allocation-light: one open-addressed bucket array, one entry
+/// array, one flat item array. `items` holds tile indices in REVERSE record order within
+/// each identity, because the engine's chains are push-front over records 0..N-1 and the
+/// resulting candidate order decides which rarity variant a roll lands on. Preserving it
+/// is what keeps the byte-exact collision gates green.
+pub const TileIndex = struct {
+    const Entry = struct { o: i32, m: i32, s: i32, start: u32, len: u32 };
+
+    buckets: []u32, // 1-based index into entries; 0 = empty
+    entries: []Entry,
+    items: []u32,
+    mask: u32,
+
+    /// Fibonacci multiply-shift over the packed identity. Injective packing is not required:
+    /// every probe re-compares the full (o, m, s) triple, so a collision only costs a step.
+    inline fn hash(o: i32, m: i32, s: i32) u32 {
+        const k: u64 = (@as(u64, @as(u32, @bitCast(o))) *% 0x9E3779B1) ^
+            (@as(u64, @as(u32, @bitCast(m))) *% 0x85EBCA6B) ^
+            (@as(u64, @as(u32, @bitCast(s))) *% 0xC2B2AE35);
+        return @truncate((k *% 0x9E3779B97F4A7C15) >> 40);
+    }
+
+    pub fn build(a: std.mem.Allocator, tiles: []const Tile) !TileIndex {
+        // Distinct identities <= tile count; size the open-addressed table to >=2x for
+        // load factor, rounded to a power of two so the probe is a mask not a modulo.
+        var cap: u32 = 16;
+        while (cap < tiles.len * 2 + 2) cap <<= 1;
+
+        const buckets = try a.alloc(u32, cap);
+        errdefer a.free(buckets);
+        @memset(buckets, 0);
+
+        var entries = try std.ArrayListUnmanaged(Entry).initCapacity(a, @min(tiles.len + 1, 1024));
+        errdefer entries.deinit(a);
+
+        const mask = cap - 1;
+        // Pass 1: intern each identity and count its members.
+        for (tiles) |*t| {
+            var i = hash(t.orientation, t.main, t.sub) & mask;
+            while (true) : (i = (i + 1) & mask) {
+                const slot = buckets[i];
+                if (slot == 0) {
+                    try entries.append(a, .{ .o = t.orientation, .m = t.main, .s = t.sub, .start = 0, .len = 1 });
+                    buckets[i] = @intCast(entries.items.len);
+                    break;
+                }
+                const e = &entries.items[slot - 1];
+                if (e.o == t.orientation and e.m == t.main and e.s == t.sub) {
+                    e.len += 1;
+                    break;
+                }
+            }
+        }
+        // Pass 2: prefix sums -> each identity's slice start.
+        var acc: u32 = 0;
+        for (entries.items) |*e| {
+            e.start = acc;
+            acc += e.len;
+            e.len = 0; // reused as a fill cursor
+        }
+        const items = try a.alloc(u32, acc);
+        errdefer a.free(items);
+        // Pass 3: fill in REVERSE record order, reproducing the engine's push-front chains.
+        var n: usize = tiles.len;
+        while (n > 0) {
+            n -= 1;
+            const t = &tiles[n];
+            var i = hash(t.orientation, t.main, t.sub) & mask;
+            while (true) : (i = (i + 1) & mask) {
+                const e = &entries.items[buckets[i] - 1];
+                if (e.o == t.orientation and e.m == t.main and e.s == t.sub) {
+                    items[e.start + e.len] = @intCast(n);
+                    e.len += 1;
+                    break;
+                }
+            }
+        }
+        return .{ .buckets = buckets, .entries = try entries.toOwnedSlice(a), .items = items, .mask = mask };
+    }
+
+    /// Tile indices sharing this identity, in the engine's candidate order. Empty if none.
+    pub inline fn lookup(self: *const TileIndex, o: i32, m: i32, s: i32) []const u32 {
+        var i = hash(o, m, s) & self.mask;
+        while (true) : (i = (i + 1) & self.mask) {
+            const slot = self.buckets[i];
+            if (slot == 0) return &.{};
+            const e = &self.entries[slot - 1];
+            if (e.o == o and e.m == m and e.s == s) return self.items[e.start .. e.start + e.len];
+        }
+    }
+
+    pub fn deinit(self: *TileIndex, a: std.mem.Allocator) void {
+        a.free(self.buckets);
+        a.free(self.entries);
+        a.free(self.items);
+    }
+};
+
 pub const Dt1 = struct {
     allocator: std.mem.Allocator,
     version_major: i32,
     version_minor: i32,
     tiles: []Tile,
+    /// Built once per unpacked file. Shallow copies of this struct (the per-room masked
+    /// views) inherit the pointer, so the index is paid for once per level, not per room.
+    index: ?*const TileIndex = null,
 
     pub fn deinit(self: *Dt1) void {
+        if (self.index) |ix| {
+            const mut: *TileIndex = @constCast(ix);
+            mut.deinit(self.allocator);
+            self.allocator.destroy(mut);
+            self.index = null;
+        }
         self.allocator.free(self.tiles);
     }
 

@@ -57,5 +57,14 @@ pub fn unpack(a: std.mem.Allocator, rec: []const u8) !dt1.Dt1 {
         @memcpy(&t.flags, rec[pos + 16 ..][0..25]);
         pos += 16 + 25;
     }
-    return .{ .allocator = a, .version_major = 0, .version_minor = 0, .tiles = tiles };
+    // Index it here so every masked per-room copy of this struct inherits the pointer.
+    // Best-effort: a failure just leaves index null and the caller falls back to scanning.
+    var out = dt1.Dt1{ .allocator = a, .version_major = 0, .version_minor = 0, .tiles = tiles };
+    if (a.create(dt1.TileIndex)) |slot| {
+        if (dt1.TileIndex.build(a, tiles)) |ix| {
+            slot.* = ix;
+            out.index = slot;
+        } else |_| a.destroy(slot);
+    } else |_| {}
+    return out;
 }

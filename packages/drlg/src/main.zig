@@ -417,7 +417,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         var res = try drlglib.generateActCollisionAll(&ctx, gpa, act_no, seed, .normal);
         defer res.deinit(gpa);
         std.debug.print("act {d} seed {d}: {d} levels (fallback={d} null={d})\n", .{ act_no, seed, res.levels.len, tilegen.g_lookup_fallback, tilegen.g_lookup_null });
-        std.debug.print("  tile lookups: {d} calls, {d} tile records scanned ({d} per call)\n", .{ tilegen.g_lookup_calls, tilegen.g_lookup_scanned, if (tilegen.g_lookup_calls == 0) 0 else tilegen.g_lookup_scanned / tilegen.g_lookup_calls });
         for (res.levels) |l| {
             var total: usize = 0;
             var blocked: usize = 0;
