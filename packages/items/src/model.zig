@@ -42,6 +42,9 @@ pub const Drop = struct {
     sockets: u8 = 0,
     quantity: i32 = 0, // gold amount / quiver count
     item_level: i32 = 0,
+    /// The low word of this drop's per-item MOD seed (high = 666), so its rolled mod values can be
+    /// reproduced later via rng.Seed.fromValue(item_seed) + properties.rollDropStats. Set at generation.
+    item_seed: u32 = 0,
 
     pub fn code(self: *const Drop) []const u8 {
         var n: usize = 0;
