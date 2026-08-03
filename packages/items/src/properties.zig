@@ -101,6 +101,45 @@ fn rollTableProps(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledSta
     }
 }
 
+/// Roll the stats of one magic/rare affix (a MagicPrefix/MagicSuffix row): each affix carries up to 3
+/// mods (mod1code/mod1min/mod1max…). `affix_id` is the 1-based row (from affix.roll*). Empty mod slots
+/// roll nothing. `modNparam` (skill/charge/by-time funcs) is not threaded yet — a follow-up.
+pub fn rollAffixStats(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), seed: *rng.Seed, t: *const tables.Tables, tbl: *const @import("txt.zig").Table, affix_id: u16) !void {
+    if (affix_id == 0 or affix_id - 1 >= tbl.rowCount()) return;
+    const row = affix_id - 1;
+    var cbuf: [8]u8 = undefined;
+    var lobuf: [8]u8 = undefined;
+    var hibuf: [8]u8 = undefined;
+    var n: usize = 1;
+    while (n <= 3) : (n += 1) {
+        const code = tbl.str(row, std.fmt.bufPrint(&cbuf, "mod{d}code", .{n}) catch unreachable);
+        if (code.len == 0) continue;
+        const min: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&lobuf, "mod{d}min", .{n}) catch unreachable));
+        const max: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&hibuf, "mod{d}max", .{n}) catch unreachable));
+        try applyProperty(gpa, out, seed, t, code, min, max);
+    }
+}
+
+/// Assemble ALL of a rolled drop's mod stats from its selected affixes/unique/set — the one call the
+/// item bitstream + equip stat-application consume. Dispatches on the drop's quality: magic -> prefix +
+/// suffix; rare -> its up-to-3 prefixes + suffixes; unique -> UniqueItems props; set -> SetItems props.
+/// Normal/low/superior carry no mod stats. Caller owns `out`.
+pub fn rollDropStats(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), seed: *rng.Seed, t: *const tables.Tables, d: *const @import("model.zig").Drop) !void {
+    switch (d.quality) {
+        .magic => {
+            try rollAffixStats(gpa, out, seed, t, &t.magic_prefix, d.prefix_id);
+            try rollAffixStats(gpa, out, seed, t, &t.magic_suffix, d.suffix_id);
+        },
+        .rare => {
+            for (d.rare_prefix_ids) |id| try rollAffixStats(gpa, out, seed, t, &t.magic_prefix, id);
+            for (d.rare_suffix_ids) |id| try rollAffixStats(gpa, out, seed, t, &t.magic_suffix, id);
+        },
+        .unique => try rollUniqueStats(gpa, out, seed, t, d.unique_id),
+        .set => try rollSetStats(gpa, out, seed, t, d.set_id),
+        else => {},
+    }
+}
+
 const testing = std.testing;
 
 test "rollValue: min==max returns min without advancing the seed" {
@@ -134,6 +173,41 @@ test "statId resolves known ItemStatCost stats" {
     try testing.expect(statId(&t, "strength") != null);
     try testing.expect(statId(&t, "maxhp") != null);
     try testing.expect(statId(&t, "not-a-stat") == null);
+}
+
+test "rollAffixStats + rollDropStats: deterministic; a magic drop rolls its affix stats" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    var a: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer a.deinit(testing.allocator);
+    var b: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer b.deinit(testing.allocator);
+
+    var good_prefix: u16 = 0;
+    for (0..t.magic_prefix.rowCount()) |row| {
+        a.clearRetainingCapacity();
+        b.clearRetainingCapacity();
+        var s1 = rng.Seed.init(0x9, 0x29a);
+        var s2 = rng.Seed.init(0x9, 0x29a);
+        try rollAffixStats(testing.allocator, &a, &s1, &t, &t.magic_prefix, @intCast(row + 1));
+        try rollAffixStats(testing.allocator, &b, &s2, &t, &t.magic_prefix, @intCast(row + 1));
+        try testing.expectEqual(a.items.len, b.items.len);
+        for (a.items, b.items) |x, y| {
+            try testing.expectEqual(x.stat, y.stat);
+            try testing.expectEqual(x.value, y.value);
+        }
+        if (a.items.len > 0 and good_prefix == 0) good_prefix = @intCast(row + 1);
+    }
+    try testing.expect(good_prefix != 0);
+
+    // A magic drop carrying that prefix routes through rollDropStats and yields its stat(s).
+    const model = @import("model.zig");
+    var d = model.Drop{ .kind = .item, .quality = .magic, .item_level = 60 };
+    d.prefix_id = good_prefix;
+    a.clearRetainingCapacity();
+    var s = rng.Seed.init(0x9, 0x29a);
+    try rollDropStats(testing.allocator, &a, &s, &t, &d);
+    try testing.expect(a.items.len > 0);
 }
 
 test "rollUniqueStats: deterministic, and real uniques produce rolled stats" {
