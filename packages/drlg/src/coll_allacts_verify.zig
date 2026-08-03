@@ -57,16 +57,16 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
         .{ r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok, pct },
     );
     try std.testing.expect(r.matched_rooms > 0);
-    // Lock overall all-acts fidelity; raise as mechanisms close. Never regress.
-    // Both goldens are ALL-ROOMS-ACTIVE REBUILT captures (2026-07-08): the engine
-    // builds each room's CollMap once at activation, seeing only the neighbors
-    // active at that moment, so a plain activate+dump walk bakes the activation
-    // ORDER into the capture (645 cells / 36 rooms at seed 1). The capture now
+    // BYTE-EXACT against the engine. The goldens are ALL-ROOMS-ACTIVE REBUILT captures
+    // (2026-07-08): the engine builds each room's CollMap once at activation, seeing only
+    // the neighbors active at that moment, so a plain activate+dump walk bakes the
+    // activation ORDER into the capture (645 cells / 36 rooms at seed 1). The capture
     // frees + re-allocs every room's grid after the full level walk, giving the
-    // steady-state map the port targets. Measured 11,087,540 (99.99720%) after the
-    // seam re-resolve + cross-level gather.
-    try std.testing.expect(r.masked_ok >= 11_087_740);
+    // steady-state map the port targets. Equality, not a floor — there is nothing left to
+    // concede, so any drift at all is a regression.
     try std.testing.expectEqual(r.total_cells, r.walk_ok);
+    try std.testing.expectEqual(r.total_cells, r.masked_ok);
+    try std.testing.expectEqual(r.total_cells, r.exact_ok);
 }
 
 test "coll: all-acts golden (seed 2, maze cross-seed probe)" {
@@ -79,12 +79,11 @@ test "coll: all-acts golden (seed 2, maze cross-seed probe)" {
     std.debug.print("[coll all-acts seed 2] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n", .{ r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok });
     try std.testing.expectEqual(@as(u32, 2), r.seed);
     try std.testing.expectEqual(@as(u32, 0), r.dim_mismatch);
-    // Never regress. The bulk used to be one L47 Sewers room whose DS1 variant came from
-    // a roll instead of the engine's pinned File[0] (AllocRoomExAndPickPreset variant 0).
-    try std.testing.expect(r.masked_ok >= 11_131_700);
-    // Walkability is byte-exact on all three per-cell seeds. Any regression here changes
-    // where a player can stand, so it fails hard rather than eating into the masked floor.
+    // Byte-exact. The bulk used to be one L47 Sewers room whose DS1 variant came from a
+    // roll instead of the engine's pinned File[0] (AllocRoomExAndPickPreset variant 0).
     try std.testing.expectEqual(r.total_cells, r.walk_ok);
+    try std.testing.expectEqual(r.total_cells, r.masked_ok);
+    try std.testing.expectEqual(r.total_cells, r.exact_ok);
 }
 
 test "coll: all-acts golden (seed 777, cross-seed regression)" {
@@ -106,9 +105,10 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
     try std.testing.expectEqual(@as(u32, 777), r.seed);
     try std.testing.expect(r.matched_rooms > 0);
     try std.testing.expectEqual(@as(usize, 0), r.dim_mismatch);
-    // Rebuilt (all-rooms-active) golden; 11,157,575 after the seam re-resolve + cross-level gather.
-    try std.testing.expect(r.masked_ok >= 11_157_760);
+    // Rebuilt (all-rooms-active) golden, byte-exact.
     try std.testing.expectEqual(r.total_cells, r.walk_ok);
+    try std.testing.expectEqual(r.total_cells, r.masked_ok);
+    try std.testing.expectEqual(r.total_cells, r.exact_ok);
 }
 
 /// Filter a decompressed all-acts golden to just the rooms whose levelId is in
@@ -149,8 +149,24 @@ test "coll: SHIPPED consumer path (generateActCollisionAll) vs golden" {
     // the same builder now, so it has to score identically, EXACT included (the older
     // materializer differed by 1038 masked / 1479 exact cells).
     try std.testing.expectEqual(@as(u32, 0), r.dim_mismatch);
-    try std.testing.expect(r.masked_ok >= 11_087_740);
-    try std.testing.expect(r.exact_ok >= 11_087_740);
+    try std.testing.expectEqual(r.total_cells, r.walk_ok);
+    try std.testing.expectEqual(r.total_cells, r.masked_ok);
+    try std.testing.expectEqual(r.total_cells, r.exact_ok);
+}
+
+test "coll: DUMP our room tile arrays (vs d2probe --roomdump)" {
+    if (true) return; // opt-in: set LVL, flip to `if (false)`, diff OURTILE vs the probe's roomtile
+    const LVL = 34;
+    const gpa = std.testing.allocator;
+    const golden = decompressGolden(gpa) catch return;
+    defer gpa.free(golden);
+    const one = try filterToLevels(gpa, golden, LVL, LVL);
+    defer gpa.free(one);
+    var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+    defer ctx.deinit();
+    lib.dump_room_tiles = LVL;
+    defer lib.dump_room_tiles = -1;
+    _ = try lib.verifyActCollision(gpa, &ctx, one, .nightmare, false);
 }
 
 test "coll: DUMP ours rooms for diff viz" {
@@ -224,6 +240,7 @@ test "coll: Act-1 from all-acts golden (seed 1, per-cell floor)" {
     defer ctx.deinit();
     const r = try lib.verifyActCollision(gpa, &ctx, act1, .nightmare, false);
     try std.testing.expectEqual(@as(u32, 1), r.seed);
-    // Precise Act-1 tracker. Never regress; raise as fidelity climbs.
-    try std.testing.expect(r.masked_ok >= 2_220_600);
+    // Precise Act-1 tracker: byte-exact, like the all-acts gates it slices.
+    try std.testing.expectEqual(r.total_cells, r.masked_ok);
+    try std.testing.expectEqual(r.total_cells, r.exact_ok);
 }

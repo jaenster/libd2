@@ -153,8 +153,8 @@ test "coll: masked-CRC holdout across seeds (Act 1, Nightmare)" {
     try std.testing.expect(grand_total > 0);
     // Cross-seed floor. A fix tuned to seed 1 cannot hold here, so this is the gate that
     // makes "works on any seed" mean something. Raise it as mechanisms close.
-    try std.testing.expect(grand_match * 100 / grand_total >= 96);
-    // Absolute count too: the percentage is coarse enough that a whole level regressing
-    // across every seed can hide inside one point of it.
-    try std.testing.expect(grand_match >= 3166);
+    // Absolute count, not a percentage: at this fidelity a whole level regressing across
+    // every seed still rounds to the same percent. 3273/3275 — the two holdouts are L56
+    // and L67, one seed each (17 and 18).
+    try std.testing.expect(grand_match >= 3273);
 }
