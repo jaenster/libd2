@@ -23,6 +23,14 @@ const GOLDEN_2_GZ = @embedFile("golden/coll_seed2_all.jsonl.gz");
 /// checksum, and kept as gates now that they are byte-exact.
 const GOLDEN_17_GZ = @embedFile("golden/coll_seed17_all.jsonl.gz");
 const GOLDEN_18_GZ = @embedFile("golden/coll_seed18_all.jsonl.gz");
+/// A BLIND holdout: seed 1033089920, drawn at random from /dev/urandom AFTER collision went
+/// byte-exact, captured once, and never looked at while developing anything. Nothing in this
+/// port has ever been tuned against it, so it is the only gate here that can answer "does this
+/// generalise" rather than "does this still pass".
+const GOLDEN_HOLDOUT_GZ = @embedFile("golden/coll_seed_holdout.jsonl.gz");
+/// Second blind draw (seed 2097937279), same rules — two independent draws rather than one, so
+/// a single lucky seed cannot be mistaken for generalisation.
+const GOLDEN_HOLDOUT2_GZ = @embedFile("golden/coll_seed_holdout2.jsonl.gz");
 
 fn decompressGolden(gpa: std.mem.Allocator) ![]u8 {
     return decompressGz(gpa, GOLDEN_GZ);
@@ -127,6 +135,25 @@ test "coll: all-acts golden (seeds 17 + 18, the former CRC holdouts)" {
         defer lib.dump_mismatch_cells = false;
         const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
         std.debug.print("[coll all-acts seed {d}] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n", .{ r.seed, r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok });
+        try std.testing.expectEqual(@as(u32, 0), r.dim_mismatch);
+        try std.testing.expectEqual(r.total_cells, r.walk_ok);
+        try std.testing.expectEqual(r.total_cells, r.masked_ok);
+        try std.testing.expectEqual(r.total_cells, r.exact_ok);
+    }
+}
+
+test "coll: BLIND holdout seed (never used to develop anything)" {
+    const gpa = std.testing.allocator;
+    for ([_][]const u8{ GOLDEN_HOLDOUT_GZ, GOLDEN_HOLDOUT2_GZ }) |gz| {
+        const golden = decompressGz(gpa, gz) catch continue;
+        defer gpa.free(golden);
+        var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
+        defer ctx.deinit();
+        lib.dump_mismatch_cells = true;
+        defer lib.dump_mismatch_cells = false;
+        const r = try lib.verifyActCollision(gpa, &ctx, golden, .nightmare, false);
+        std.debug.print("[coll HOLDOUT seed {d}] cells={d} | walkable off {d} | masked off {d} | exact off {d}\n", .{ r.seed, r.total_cells, r.total_cells - r.walk_ok, r.total_cells - r.masked_ok, r.total_cells - r.exact_ok });
+        try std.testing.expect(r.matched_rooms > 0);
         try std.testing.expectEqual(@as(u32, 0), r.dim_mismatch);
         try std.testing.expectEqual(r.total_cells, r.walk_ok);
         try std.testing.expectEqual(r.total_cells, r.masked_ok);
