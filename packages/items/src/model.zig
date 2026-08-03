@@ -34,6 +34,11 @@ pub const Drop = struct {
     suffix_id: u16 = 0, // magic/first-affix suffix
     rare_prefix_ids: [3]u16 = .{ 0, 0, 0 },
     rare_suffix_ids: [3]u16 = .{ 0, 0, 0 },
+    /// 1-based UniqueItems.txt / SetItems.txt row of the selected special item (0 = none), the
+    /// unique/set analogue of prefix_id — the SELECTION; per-property value rolls are deferred like
+    /// the magic/rare affix values (the library models selection, the bitstream layer rolls values).
+    unique_id: u16 = 0,
+    set_id: u16 = 0,
     sockets: u8 = 0,
     quantity: i32 = 0, // gold amount / quiver count
     item_level: i32 = 0,

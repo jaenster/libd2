@@ -132,6 +132,78 @@ pub fn rollMagicAffix(
     return .{ .id = last.id, .group = last.group };
 }
 
+/// Case-insensitive 4-char item-code equality (base `code` vs a table cell), ignoring trailing spaces.
+fn codeEq(a: []const u8, b: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(trimTrailingSpace(a), trimTrailingSpace(b));
+}
+
+fn trimTrailingSpace(s: []const u8) []const u8 {
+    var n = s.len;
+    while (n > 0 and s[n - 1] == ' ') n -= 1;
+    return s[0..n];
+}
+
+/// ITEM_RollUniqueItem @0x5566b0 — select the specific UniqueItems.txt row for a base `code` that rolled
+/// unique quality. Candidates: `enabled` set, the classic/expansion `version` gate, `code` == base code,
+/// and `lvl` <= ilvl. Weighted by `rarity` (0 -> 1); the pick is `rollBetween(0, sum+1)` then a
+/// subtract-walk — the exact primitive the magic/rare rollers use. Returns the 1-based row, or 0 when no
+/// unique qualifies (the caller downgrades the quality). The ladder gate (flags&8) and the one-per-game
+/// dropped-bitmask (player struct +0x1b24) need player context the pure roll lacks, so every eligible
+/// unique is included and none is marked dropped — documented residuals vs the engine.
+pub fn rollUniqueItem(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.Tables, code: []const u8, ilvl: i32, is_expansion: bool) !u16 {
+    const ut = &t.unique_items;
+    var pool: std.ArrayListUnmanaged(Cand) = .empty;
+    defer pool.deinit(gpa);
+    var sum: i32 = 0;
+    for (0..ut.rowCount()) |row| {
+        if (ut.int(row, "enabled") == 0) continue;
+        const version = ut.int(row, "version");
+        if (!(version < 100 or is_expansion)) continue;
+        if (!codeEq(ut.str(row, "code"), code)) continue;
+        if (@as(i32, @intCast(ut.int(row, "lvl"))) > ilvl) continue;
+        var w: i32 = @intCast(ut.int(row, "rarity"));
+        if (w <= 0) w = 1;
+        sum += w;
+        try pool.append(gpa, .{ .id = @intCast(row + 1), .group = -1, .weight = w });
+    }
+    if (pool.items.len == 0) return 0;
+    var r = seed.rollBetween(0, sum + 1);
+    for (pool.items) |c| {
+        r -= c.weight;
+        if (r < 0) return c.id;
+    }
+    return pool.items[pool.items.len - 1].id;
+}
+
+/// ITEMMOD_GenerateSetItem @0x5c25c0 — select the specific SetItems.txt row for a base `code` that rolled
+/// set quality. Candidates: the classic/expansion `version` gate, `item` (base code) == code, `lvl` <=
+/// ilvl; weighted by `rarity` (0 -> 1), same rollBetween walk. Sets have NO one-per-game bitmask (they
+/// repeat). Returns the 1-based row, or 0 when none qualifies (caller downgrades). Ladder gate not
+/// modelled (all eligible sets included).
+pub fn rollSetItem(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.Tables, code: []const u8, ilvl: i32, is_expansion: bool) !u16 {
+    const st = &t.set_items;
+    var pool: std.ArrayListUnmanaged(Cand) = .empty;
+    defer pool.deinit(gpa);
+    var sum: i32 = 0;
+    for (0..st.rowCount()) |row| {
+        const version = st.int(row, "version");
+        if (!(version < 100 or is_expansion)) continue;
+        if (!codeEq(st.str(row, "item"), code)) continue;
+        if (@as(i32, @intCast(st.int(row, "lvl"))) > ilvl) continue;
+        var w: i32 = @intCast(st.int(row, "rarity"));
+        if (w <= 0) w = 1;
+        sum += w;
+        try pool.append(gpa, .{ .id = @intCast(row + 1), .group = -1, .weight = w });
+    }
+    if (pool.items.len == 0) return 0;
+    var r = seed.rollBetween(0, sum + 1);
+    for (pool.items) |c| {
+        r -= c.weight;
+        if (r < 0) return c.id;
+    }
+    return pool.items[pool.items.len - 1].id;
+}
+
 pub const MagicResult = struct { prefix: AffixResult = .{}, suffix: AffixResult = .{} };
 
 /// ITEM_RollMagicPrefixSuffix: prefix first, then suffix. Both independent
@@ -291,6 +363,54 @@ test "magic affix: over many seeds at least one prefix and one suffix land, vali
         }
     }
     try testing.expect(got_prefix and got_suffix);
+}
+
+test "unique select: deterministic, matches the base code and respects ilvl" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    // A Cap ("cap") has several uniques; at a generous ilvl at least one qualifies.
+    var s1 = rng.Seed.init(0x555, 0x29a);
+    var s2 = rng.Seed.init(0x555, 0x29a);
+    const a = try rollUniqueItem(testing.allocator, &s1, &t, "cap", 40, true);
+    const b = try rollUniqueItem(testing.allocator, &s2, &t, "cap", 40, true);
+    try testing.expectEqual(a, b); // deterministic
+    try testing.expect(a != 0);
+    // The chosen unique really is a Cap unique within the item level.
+    try testing.expect(codeEq(t.unique_items.str(a - 1, "code"), "cap"));
+    try testing.expect(@as(i32, @intCast(t.unique_items.int(a - 1, "lvl"))) <= 40);
+}
+
+test "unique select: no unique below its level; a code with no uniques returns 0" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    // ilvl 0 -> nothing qualifies (every unique has lvl >= 1).
+    var s = rng.Seed.init(0x9, 0x29a);
+    try testing.expectEqual(@as(u16, 0), try rollUniqueItem(testing.allocator, &s, &t, "cap", 0, true));
+    // A nonsense base code has no uniques.
+    var s2 = rng.Seed.init(0x9, 0x29a);
+    try testing.expectEqual(@as(u16, 0), try rollUniqueItem(testing.allocator, &s2, &t, "zzz", 99, true));
+}
+
+test "set select: deterministic, matches the base code and respects ilvl" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    // Find any base code that has a set item, then assert the roll lands on that code.
+    const st = &t.set_items;
+    var probe_code: []const u8 = "";
+    var probe_lvl: i32 = 0;
+    for (0..st.rowCount()) |row| {
+        const c = st.str(row, "item");
+        if (c.len != 0) {
+            probe_code = c;
+            probe_lvl = @intCast(st.int(row, "lvl"));
+            break;
+        }
+    }
+    if (probe_code.len == 0) return; // no set data (shouldn't happen)
+    var s = rng.Seed.init(0x321, 0x29a);
+    const sid = try rollSetItem(testing.allocator, &s, &t, probe_code, probe_lvl + 50, true);
+    try testing.expect(sid != 0);
+    try testing.expect(codeEq(st.str(sid - 1, "item"), probe_code));
 }
 
 test "rare affixes: deterministic, respects 3/type cap and no dup group" {

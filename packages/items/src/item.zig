@@ -157,9 +157,27 @@ pub fn applyAffixes(
             for (r.prefixes, 0..) |a, k| d.rare_prefix_ids[k] = a.id;
             for (r.suffixes, 0..) |a, k| d.rare_suffix_ids[k] = a.id;
         },
-        // TODO(follow-up): set (ITEMMOD_ApplySetAffixes), unique (ITEM_RollUniqueItem
-        // 0x5566b0), crafted, runeword. Currently left without affixes.
-        .set, .unique, .crafted, .tempered => {},
+        .unique => {
+            // ITEM_RollUniqueItem @0x5566b0 -> the specific unique; on none, the engine downgrades
+            // (case 7 fallback rare -> magic -> superior -> normal). We take the first step (rare).
+            const uid = try affix.rollUniqueItem(gpa, item_seed, t, d.code(), d.item_level, opts.is_expansion);
+            if (uid != 0) {
+                d.unique_id = uid;
+            } else {
+                d.quality = .rare;
+                const r = try affix.rollRareAffixes(gpa, item_seed, t, &types, d.item_level, flags.qlvl, flags.magic_lvl, opts.is_expansion);
+                for (r.prefixes, 0..) |a, k| d.rare_prefix_ids[k] = a.id;
+                for (r.suffixes, 0..) |a, k| d.rare_suffix_ids[k] = a.id;
+            }
+        },
+        .set => {
+            // ITEMMOD_GenerateSetItem @0x5c25c0 -> the specific set item; on none, downgrade to normal.
+            const sid = try affix.rollSetItem(gpa, item_seed, t, d.code(), d.item_level, opts.is_expansion);
+            if (sid != 0) d.set_id = sid else d.quality = .normal;
+        },
+        // TODO(follow-up): crafted (QualityItems.txt) + runeword detection/apply; per-property value
+        // rolls (UniqueItems/SetItems prop1..N min/max) are deferred like the magic/rare affix values.
+        .crafted, .tempered => {},
         else => {},
     }
 
