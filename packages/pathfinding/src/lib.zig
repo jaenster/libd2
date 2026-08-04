@@ -70,6 +70,9 @@ pub const PassMap = grid.PassMap;
 /// Subtiles per DS1 tile. Positions in this package are subtiles; rooms are tiles.
 pub const SUBTILES_PER_TILE = grid.SUBTILES_PER_TILE;
 
+/// The furthest a single movement command may target — walk, run or cast alike. See grid.zig.
+pub const ENGINE_MAX_COMMAND_RANGE = grid.ENGINE_MAX_COMMAND_RANGE;
+
 test {
     _ = @import("tests.zig");
     _ = grid;

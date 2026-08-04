@@ -22,6 +22,21 @@ const collision = @import("d2-core").collision;
 
 pub const SUBTILES_PER_TILE: i32 = 5;
 
+/// The furthest a single movement COMMAND may target, in subtiles, measured Chebyshev (per axis).
+///
+/// This is not a teleport rule — it is the packet layer, and it gates every "do this at x,y"
+/// command alike: `SCMD_0x01_WalkToLocation` (0x5497e0), `SCMD_0x03_RunToLocation` (0x5498d0) and
+/// the skill-on-location handlers all route through `CheckIfInrangeAndReassign` (0x5496f0), which
+/// calls `CheckIfCoordsAreInRange(pUnit, 0x32, x, y)` (0x548ef0, `MOV EBX,0x32` at 0x549742).
+///
+/// Over the limit the command is DROPPED — the handler returns before doing anything — and the
+/// server sends `0x15` ReassignPlayer to snap the client back to where it thinks you are. So a
+/// mover that emits a waypoint 100 subtiles away does not walk there slowly; it does not move at
+/// all, and it desyncs. Emitted waypoints must respect this.
+///
+/// (It is roughly the screen radius, which is why a human clicking can never exceed it.)
+pub const ENGINE_MAX_COMMAND_RANGE: i32 = 50;
+
 pub const Point = struct { x: i32, y: i32 };
 
 /// The passability bitset packs one subtile per bit. Both helpers divide by a power-of-two
