@@ -113,6 +113,28 @@ external tooling rather than a test that simply fails.
 Most of all, the failure mode is wrong. C++ undefined behaviour is silent, and here the silent
 failure is a map that is *nearly* right, the exact bug this project cannot afford to ship.
 
+## It is what makes the other languages' packages possible
+
+The core exports a C ABI and manages its own memory, so a binding has nothing to negotiate
+with. There is no runtime to embed, no garbage collector to interoperate with, no ownership
+model to translate, and no object graph that has to survive a round trip. A package in another
+language is a thin layer over exported functions, which means it can be idiomatic on its own
+terms instead of a lowest common denominator of everyone's.
+
+That is why the packages look nothing alike, and should not. The .NET one hands back records
+that the GC collects like anything else. The npm one is freestanding WebAssembly, so it runs in
+a browser with no native addon and no build step. The Rust one is borrow-checked, and freeing
+the generated act is the borrow ending rather than a call anyone has to remember, with the
+compiler rejecting a program that drops the tables while a map still reads from them.
+
+The Rust case is the sharp version of the point. The borrow checker is the reason not to write
+this port in Rust, because rule 1 needs to reproduce an unsafe memory model before it is
+allowed to improve it. At the boundary that constraint is simply gone: everything crossing it
+is owned data or a handle with one owner, which is exactly the shape a borrow checker is good
+at. The same analysis that would fight the port protects the people consuming it. A core that
+imposed a runtime, a collector, or an ownership discipline of its own could not have offered
+either.
+
 ## One toolchain, every target
 
 `zig build` cross-compiles the whole matrix from any host, with no cross-toolchain to install:

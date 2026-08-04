@@ -92,10 +92,14 @@ npm install @jaenster/d2drlg
 ```
 
 ```ts
-import { shrines } from '@jaenster/d2drlg';
+import { render, levelShrines } from '@jaenster/d2drlg';
 
 // Cold Plains (level 3) for seed 1337. The wasm loads lazily on first call, so no setup.
-const s = await shrines(1337, 3);
+const map = await render(1337, 0, 0);
+const coldPlains = map.levels.find(l => l.levelNo === 3)!;
+
+// Shrines are already among the level's presets, so this is a filter, not a second pass.
+const s = levelShrines(coldPlains);
 console.log(`${s.length} shrines/wells:`);
 for (const sh of s)
   console.log(`  ${sh.isWell ? 'well ' : 'shrine'} class ${sh.classId} at tile (${sh.tileX}, ${sh.tileY})`);
@@ -119,6 +123,7 @@ itself. `item` has the same shape, as `@jaenster/d2item`.
 - [C++](docs/usage/cpp.md)
 - [C#](docs/usage/csharp.md)
 - [Node (WebAssembly)](docs/usage/node.md)
+- [Rust](docs/usage/rust.md)
 - [Zig](docs/usage/zig.md)
 
 Where to get the artifacts:
