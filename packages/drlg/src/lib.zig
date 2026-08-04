@@ -43,7 +43,7 @@ const dtables = @import("drlg/tables.zig");
 const dpool = @import("drlg/pool.zig");
 const tables = @import("tables.zig");
 const presettables = @import("drlg/presettables.zig");
-const fog = @import("d2-fog").memory;
+const fog = @import("d2-core").memory;
 const act_mod = @import("act.zig");
 const collision = @import("collision.zig");
 const dt1 = @import("d2-formats").dt1;
@@ -63,7 +63,7 @@ pub const prof = @import("prof.zig");
 /// not depend on it from outside the monorepo. Generation logic stays in drlg.
 pub const gen = struct {
     pub const abi = @import("drlg/structs.zig");
-    pub const fog = @import("d2-fog").memory;
+    pub const fog = @import("d2-core").memory;
     pub const dpool = @import("drlg/pool.zig");
     pub const dtables = @import("drlg/tables.zig");
     pub const act = @import("act.zig");

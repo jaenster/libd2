@@ -9,13 +9,14 @@ sub-package module, so an external Zig 0.16 project can add libd2 **once** and
 
 | module | package | notes |
 |-|-|-|
-| `d2-core` | packages/core | Stat/Item model foundation (seed-RNG, Stat/StatList, ISC, wire decoder) |
+| `d2-core` | packages/core | Stat/Item model foundation (seed-RNG, Stat/StatList, ISC, wire decoder, Fog::Memory pool) |
 | `d2-data` | packages/data | the authoritative 1.14d excel tables + TSV reader |
 | `d2-sim` | packages/sim | faithful runtime game-simulation port (combat/skills/monsters) |
 | `d2-items` | packages/items | faithful item-generation (drop) port |
 | `d2-drlg` | packages/drlg | faithful DRLG map generator + collision |
-| `d2-formats` | packages/formats | pure DS1/DT1 parsers |
-| `d2-fog` | packages/fog | Fog::Memory pool allocator |
+| `d2-formats` | packages/formats | pure DS1/DT1 parsers + the fixed `.d2s` save header |
+| `d2-save` | packages/save | the `.d2s` character save sections, read and write |
+| `d2-util` | packages/util | D2GS Huffman packet codec + wire framing |
 
 ## build.zig.zon
 
@@ -47,7 +48,7 @@ const libd2 = b.dependency("libd2", .{ .target = target, .optimize = optimize })
 exe.root_module.addImport("d2-sim", libd2.module("d2-sim"));
 exe.root_module.addImport("d2-data", libd2.module("d2-data"));
 exe.root_module.addImport("d2-core", libd2.module("d2-core"));
-// ...and d2-items / d2-drlg / d2-formats / d2-fog as needed.
+// ...and d2-items / d2-drlg / d2-formats as needed.
 ```
 
 Inter-package imports (e.g. `d2-sim` depending on `d2-core` + `d2-data`) are
