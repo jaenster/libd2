@@ -55,7 +55,12 @@ written in Zig at all: [docs/WHY-ZIG.md](docs/WHY-ZIG.md).
 From anything else, use the **C ABI**: an `export fn` surface compiled to native shared +
 static libs with a C header, plus a **WebAssembly** build, so the same artifacts work from
 any language with a C FFI. Two packages ship that today, `drlg` and `item`, and they are the
-ones the language guides below use.
+ones the language guides below use. For .NET there is a package that wraps it, so nothing about
+the C boundary shows through:
+
+```sh
+dotnet add package LibD2.Drlg
+```
 
 ### Try it without installing anything
 
@@ -117,6 +122,8 @@ itself. `item` has the same shape, as `@jaenster/d2item`.
 - [Zig](docs/usage/zig.md)
 
 Where to get the artifacts:
+- **.NET**: `LibD2.Drlg` on NuGet. Carries the native binary for every platform, so there is
+  nothing to place by hand.
 - **Native libs + headers**: attached to the package's GitHub Release
   (`<pkg>-vX.Y.Z`), one archive per target: linux / macos / windows × x64 / arm64.
 - **WebAssembly**: published to npm as `@jaenster/d2<pkg>` (e.g. `@jaenster/d2drlg`),
