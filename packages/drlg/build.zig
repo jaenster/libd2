@@ -81,8 +81,35 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addImport("d2-core", core_mod);
     tests.root_module.addImport("d2-data", data_mod);
     const run_tests = b.addRunArtifact(tests);
-    const test_step = b.step("test", "Run unit tests");
+    const test_step = b.step("test", "Run unit tests + the golden verification gate");
     test_step.dependOn(&run_tests.step);
+
+    const unit_step = b.step("test-unit", "Run only the unit tests (seconds — the edit/build loop)");
+    unit_step.dependOn(&b.addRunArtifact(tests).step);
+
+    // The golden harnesses regenerate whole acts per test, so they are pinned to ReleaseFast
+    // whatever -Doptimize says: in Debug the same run takes minutes and can be OOM-killed. They
+    // are a separate artifact because one test binary cannot hold two optimize modes.
+    const verify_tests = b.addTest(.{
+        .filters = if (test_filter) |f| &.{f} else &.{},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/verify_tests.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    verify_tests.root_module.addOptions("build_options", opts);
+    verify_tests.root_module.addImport("d2-formats", formats.module("d2-formats"));
+    verify_tests.root_module.addImport("d2-core", core_mod);
+    verify_tests.root_module.addImport("d2-data", data_mod);
+    const run_verify = b.addRunArtifact(verify_tests);
+    // Serialized behind the unit run: both binaries are memory-hungry and building/running them
+    // concurrently is what pushes this package over the edge on a laptop.
+    run_verify.step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_verify.step);
+
+    const verify_step = b.step("verify", "Run only the golden verification gate (always ReleaseFast)");
+    verify_step.dependOn(&b.addRunArtifact(verify_tests).step);
 
     // C-ABI shim: consumable from C/C++/C#/Node as native shared+static libs, or as
     // a wasm reactor module. The generator is libc-free (smp_allocator + page_allocator),
@@ -113,7 +140,14 @@ pub fn build(b: *std.Build) void {
             wasm.rdynamic = true;
             b.installArtifact(wasm);
         } else {
-            const static_lib = b.addLibrary(.{ .name = "d2drlg", .linkage = .static, .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, core_mod, data_mod) });
+            // A static library ends up inside somebody else's binary, and on Linux those link
+            // as PIE by default, which cannot take a non-PIC object: the link fails with
+            // "relocation R_X86_64_32 cannot be used against local symbol". The shared library
+            // gets PIC implicitly; the static one has to ask.
+            const static_mod = CapiMod.make(b, target, capi_optimize, opts, fmod, core_mod, data_mod);
+            static_mod.pic = true;
+            for ([_]*std.Build.Module{ fmod, core_mod, data_mod }) |dep| dep.pic = true;
+            const static_lib = b.addLibrary(.{ .name = "d2drlg", .linkage = .static, .root_module = static_mod });
             const shared_lib = b.addLibrary(.{ .name = "d2drlg", .linkage = .dynamic, .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, core_mod, data_mod) });
             b.installArtifact(static_lib);
             b.installArtifact(shared_lib);
