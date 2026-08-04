@@ -11,56 +11,25 @@ its own.
 If libd2 is useful to you, you can [**sponsor the work on GitHub**](https://github.com/sponsors/jaenster).
 It is a long reverse-engineering effort and sponsorship is what keeps it moving.
 
-## Packages in this repo
-
-Everything under `packages/` is a library, consumable on its own. Runnable programs
-built on top of them live under `apps/`.
-
-| package | module | depends on | what it is |
-|-|-|-|-|
-| [`data`](packages/data) | `d2-data` | — | The 1.14d Blizzard excel tables, `@embedFile`d, so no filesystem is needed and it cross-compiles to wasm. |
-| [`core`](packages/core) | `d2-core` | `data` | Shared foundation: seed-RNG, stats, the `Unit` base type, the item bit-decoder, the Fog pool allocator. |
-| [`formats`](packages/formats) | `d2-formats` | — | Parsers for D2 on-disk data: `ds1`, `dt1`, `dc6`/`dcc`/`cof`, the `.d2s` header. Bytes in, records out. |
-| [`save`](packages/save) | `d2-save` | `core`, `data`, `item`, `formats` | The `.d2s` character save, read and write. Byte-exact round trip over real saves. |
-| [`drlg`](packages/drlg) | `d2-drlg` | `formats`, `core`, `data` | **The map generator.** A seed in, and every level of all five acts out: rooms, tiles, collision, roads, objects and monsters. |
-| [`render`](packages/render) | `d2-render` | `drlg`, `formats` | Turns generation output into visuals: automap cells and real DT1 tile art. |
-| [`item`](packages/item) | `d2-item` | `core`, `data` | Seed-driven item drops: treasure class, item class, quality, and magic/rare affixes. |
-| [`pathfinding`](packages/pathfinding) | `d2-pathfinding` | `drlg`, `core`, `data` | Routing over a generated world, walking or teleporting, across as many levels as it takes, using the movement gates the server enforces. |
-| [`game`](packages/game) | `d2-game` | `core`, `data`, `drlg`, `net` | The rules engine: units, stats, combat, skills, monsters, missiles, objects, character state. |
-| [`net`](packages/net) | `d2-net` | — | The D2GS wire protocol, both directions, including the variable and bit-packed packets. |
-| [`util`](packages/util) | `d2-util` | — | Cross-cutting primitives: the D2GS Huffman packet codec and its framing. |
-
-## Apps
-
-| app | built on | what it is |
-|-|-|-|
-| [`drlg-server`](apps/drlg-server) | `drlg` | Serves a generated act as JSON over HTTP. A live instance runs at [libd2.typeguru.nl](https://libd2.typeguru.nl); see below. |
-
-## Does it match the game?
-
-Map generation is compared **cell for cell** against dumps captured from the retail engine:
-11.1M subtiles per seed, every level of all five acts, zero differing cells. Two of the seeds
-are blind holdouts, captured up front and never looked at while developing. Those per-cell
-captures are all Nightmare; Normal and Hell are checked per level rather than per cell.
-
-Other packages rest on weaker evidence than that, and it is worth knowing which before you
-depend on one: [docs/VERIFICATION.md](docs/VERIFICATION.md).
-
 ## Using it
 
-From Zig, add the packages as source modules and import them directly. That works for
-all of them. Building from source: [docs/BUILDING.md](docs/BUILDING.md); why the project is
-written in Zig at all: [docs/WHY-ZIG.md](docs/WHY-ZIG.md).
+| language | install | guide |
+|-|-|-|
+| **Rust** | `cargo add libd2` | [guide](docs/usage/rust.md) |
+| **.NET** | `dotnet add package LibD2` | [guide](docs/usage/csharp.md) |
+| **Node, Bun, Deno, browser** | `npm install @jaenster/d2drlg` | [guide](docs/usage/node.md) |
+| **Zig** | add the packages as source modules | [guide](docs/usage/zig.md) |
+| **C** | header + native lib from a Release | [guide](docs/usage/c.md) |
+| **C++** | header + native lib from a Release | [guide](docs/usage/cpp.md) |
 
-From anything else, use the **C ABI**: an `export fn` surface compiled to native shared +
-static libs with a C header, plus a **WebAssembly** build, so the same artifacts work from
-any language with a C FFI. Two packages ship that today, `drlg` and `item`, and they are the
-ones the language guides below use. For .NET there is a package that wraps it, so nothing about
-the C boundary shows through:
+Anything else with a C FFI works as well. Packages with a C ABI export it as an `export fn`
+surface compiled to native shared and static libs with a plain header, plus a freestanding
+**WebAssembly** build, so the same artifacts serve every language above. There is no binding
+layer on either side: each package calls the same exported symbols. Two packages ship that
+today, `drlg` and `item`.
 
-```sh
-dotnet add package LibD2
-```
+Building from source: [docs/BUILDING.md](docs/BUILDING.md). Why the project is written in Zig,
+and why that is what makes the packages above possible: [docs/WHY-ZIG.md](docs/WHY-ZIG.md).
 
 ### Try it without installing anything
 
@@ -117,15 +86,6 @@ in **Node, Bun, Deno and the browser**. The wasm is freestanding and libc-free, 
 object is empty and the shim reads it with `fetch` or the filesystem depending on where it finds
 itself. `item` has the same shape, as `@jaenster/d2item`.
 
-### Language guides
-
-- [C](docs/usage/c.md)
-- [C++](docs/usage/cpp.md)
-- [C#](docs/usage/csharp.md)
-- [Node (WebAssembly)](docs/usage/node.md)
-- [Rust](docs/usage/rust.md)
-- [Zig](docs/usage/zig.md)
-
 Where to get the artifacts:
 - **.NET**: `LibD2` on NuGet. One package for the whole library, carrying a native build for
   every platform .NET runs on, so there is nothing to place by hand.
@@ -134,6 +94,41 @@ Where to get the artifacts:
 - **WebAssembly**: published to npm as `@jaenster/d2<pkg>` (e.g. `@jaenster/d2drlg`),
   a tiny typed TypeScript shim over the wasm. ESM; `require()` works from CommonJS on
   Node 22.12+, which is the floor the package declares.
+
+## Does it match the game?
+
+Map generation is compared **cell for cell** against dumps captured from the retail engine:
+11.1M subtiles per seed, every level of all five acts, zero differing cells. Two of the seeds
+are blind holdouts, captured up front and never looked at while developing. Those per-cell
+captures are all Nightmare; Normal and Hell are checked per level rather than per cell.
+
+Other packages rest on weaker evidence than that, and it is worth knowing which before you
+depend on one: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+
+## Packages in this repo
+
+Everything under `packages/` is a library, consumable on its own. Runnable programs
+built on top of them live under `apps/`.
+
+| package | module | depends on | what it is |
+|-|-|-|-|
+| [`data`](packages/data) | `d2-data` | — | The 1.14d Blizzard excel tables, `@embedFile`d, so no filesystem is needed and it cross-compiles to wasm. |
+| [`core`](packages/core) | `d2-core` | `data` | Shared foundation: seed-RNG, stats, the `Unit` base type, the item bit-decoder, the Fog pool allocator. |
+| [`formats`](packages/formats) | `d2-formats` | — | Parsers for D2 on-disk data: `ds1`, `dt1`, `dc6`/`dcc`/`cof`, the `.d2s` header. Bytes in, records out. |
+| [`save`](packages/save) | `d2-save` | `core`, `data`, `item`, `formats` | The `.d2s` character save, read and write. Byte-exact round trip over real saves. |
+| [`drlg`](packages/drlg) | `d2-drlg` | `formats`, `core`, `data` | **The map generator.** A seed in, and every level of all five acts out: rooms, tiles, collision, roads, objects and monsters. |
+| [`render`](packages/render) | `d2-render` | `drlg`, `formats` | Turns generation output into visuals: automap cells and real DT1 tile art. |
+| [`item`](packages/item) | `d2-item` | `core`, `data` | Seed-driven item drops: treasure class, item class, quality, and magic/rare affixes. |
+| [`pathfinding`](packages/pathfinding) | `d2-pathfinding` | `drlg`, `core`, `data` | Routing over a generated world, walking or teleporting, across as many levels as it takes, using the movement gates the server enforces. |
+| [`game`](packages/game) | `d2-game` | `core`, `data`, `drlg`, `net` | The rules engine: units, stats, combat, skills, monsters, missiles, objects, character state. |
+| [`net`](packages/net) | `d2-net` | — | The D2GS wire protocol, both directions, including the variable and bit-packed packets. |
+| [`util`](packages/util) | `d2-util` | — | Cross-cutting primitives: the D2GS Huffman packet codec and its framing. |
+
+## Apps
+
+| app | built on | what it is |
+|-|-|-|
+| [`drlg-server`](apps/drlg-server) | `drlg` | Serves a generated act as JSON over HTTP. A live instance runs at [libd2.typeguru.nl](https://libd2.typeguru.nl); see below. |
 
 ## About the baked assets
 
