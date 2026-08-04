@@ -46,6 +46,7 @@ pub const rooms = @import("rooms.zig");
 pub const astar = @import("astar.zig");
 pub const teleport = @import("teleport.zig");
 pub const portals = @import("portals.zig");
+pub const cast = @import("cast.zig");
 pub const level = @import("level.zig");
 pub const world = @import("world.zig");
 
@@ -67,6 +68,8 @@ pub const RouteDoor = world.RouteDoor;
 pub const TeleportRule = level.TeleportRule;
 pub const Point = grid.Point;
 pub const Pather = astar.Pather;
+pub const LineOfSight = cast.LineOfSight;
+pub const CastVerdict = cast.Verdict;
 pub const WallAversion = astar.WallAversion;
 pub const PassMap = grid.PassMap;
 
@@ -86,6 +89,7 @@ test {
     _ = astar;
     _ = teleport;
     _ = portals;
+    _ = cast;
     _ = level;
     _ = world;
 }
