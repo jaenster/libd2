@@ -74,6 +74,9 @@ pub const Effect = union(enum) {
     shapeshift: struct { skill_id: u16 },
     /// A single-target poison damage-over-time (Poison Dagger).
     poison_dot: struct { target_guid: u32, skill_id: u16, level: i32 },
+    /// A martial-arts charge-up strike (Tiger/Cobra/Phoenix Strike, Fists of Fire / Claws of Thunder
+    /// / Blades of Ice): a weapon hit + the prgdam-specific charge effect, accruing the charge stack.
+    charge_up_strike: struct { target_guid: u32, skill_id: u16, level: i32 },
     /// Warp the caster to the act's town (Town Portal).
     warp_town,
     /// Consume the nearest corpse to (x,y) and do a corpse skill: `.explode` = Corpse Explosion (fire+
