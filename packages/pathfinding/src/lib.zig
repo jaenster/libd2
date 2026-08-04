@@ -65,6 +65,7 @@ pub const Exit = level.Exit;
 pub const TeleportRule = level.TeleportRule;
 pub const Point = grid.Point;
 pub const Pather = astar.Pather;
+pub const WallAversion = astar.WallAversion;
 pub const PassMap = grid.PassMap;
 
 /// Subtiles per DS1 tile. Positions in this package are subtiles; rooms are tiles.
@@ -72,6 +73,9 @@ pub const SUBTILES_PER_TILE = grid.SUBTILES_PER_TILE;
 
 /// The furthest a single movement command may target — walk, run or cast alike. See grid.zig.
 pub const ENGINE_MAX_COMMAND_RANGE = grid.ENGINE_MAX_COMMAND_RANGE;
+/// What a mover should actually cap steps at: under the gate, with margin for the server's lagging
+/// view of your position. See grid.zig.
+pub const SAFE_COMMAND_STEP = grid.SAFE_COMMAND_STEP;
 
 test {
     _ = @import("tests.zig");

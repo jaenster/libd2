@@ -59,10 +59,30 @@ const Timer = struct {
 /// direct efficiency measure: well under 50 means casts are being wasted.
 const Spans = struct {
     pairs: usize = 0,
+    clear_sum: f64 = 0,
+    clear_n: usize = 0,
+    hug: usize = 0,
     euclid_sum: f64 = 0,
     cheb_sum: f64 = 0,
     cheb_max: i32 = 0,
     at_gate: usize = 0, // pairs within 2 subtiles of the gate — a maximal cast
+
+    /// Mean clearance of the cells a route's waypoints sit on, plus how many touch a wall. This is
+    /// what wall aversion is supposed to move.
+    fn addClearance(self: *Spans, world: *pf.World, r: *const pf.Route, mask: u16) !void {
+        for (r.legs) |leg| {
+            const lv = world.level(leg.level) orelse continue;
+            const pm = try lv.passMap(mask);
+            const cl = pm.clearance();
+            for (leg.moves) |m| {
+                if (!pm.inBounds(m.x, m.y)) continue;
+                const c = cl[pm.index(m.x, m.y)];
+                self.clear_sum += @floatFromInt(c);
+                self.clear_n += 1;
+                if (c <= 1) self.hug += 1;
+            }
+        }
+    }
 
     fn add(self: *Spans, r: *const pf.Route, gate: i32) void {
         for (r.legs) |leg| {
@@ -108,6 +128,12 @@ const Spans = struct {
         print("    spans: {d} hops, mean {d:.1} subtiles ({d:.1} chebyshev), max cheb {d}", .{
             self.pairs, self.euclid_sum / n, self.cheb_sum / n, u(self.cheb_max),
         });
+        if (self.clear_n != 0) {
+            print(" | clearance mean {d:.2}, {d}% of nodes touch a wall", .{
+                self.clear_sum / @as(f64, @floatFromInt(self.clear_n)),
+                self.hug * 100 / self.clear_n,
+            });
+        }
         if (!teleporting) {
             // A walk has no per-step limit, so "how close to the gate" means nothing here — the
             // spans are just how long the compressed straight runs are.
@@ -277,7 +303,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
         const Variant = struct { name: []const u8, opts: pf.Options };
         for ([_]Variant{
-            .{ .name = "walk", .opts = .{} },
+            .{ .name = "walk (no aversion)", .opts = .{ .wall_aversion = .{ .desired = 0 } } },
+            .{ .name = "walk (aversion 3/2)", .opts = .{} },
+            .{ .name = "walk (aversion 5/3)", .opts = .{ .wall_aversion = .{ .desired = 5, .weight = 3 } } },
             // The engine's own gate, then what conventional bots use. d2bs-style movers cap a
             // RADIAL distance, which is the disk inscribed in the engine's square — so the same
             // number costs casts even before you shave it down to 40 or 39 for safety.
@@ -307,6 +335,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             moves += r0.moveCount();
             print("    wp -> chaos star   {d:4} moves  {d:8.1} us\n", .{ r0.moveCount(), @as(f64, @floatFromInt(ns)) / 1e3 });
             spans.add(&r0, gate);
+            try spans.addClearance(&world, &r0, v.opts.mask);
             legs += r0.legs.len;
             if (show_spans) Spans.dump(&r0, "wp->star");
             r0.deinit();
@@ -326,6 +355,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 moves += r.moveCount();
                 print("    -> seal {d}          {d:4} moves  {d:8.1} us\n", .{ i + 1, r.moveCount(), @as(f64, @floatFromInt(ns)) / 1e3 });
                 spans.add(&r, gate);
+                try spans.addClearance(&world, &r, v.opts.mask);
                 legs += r.legs.len;
                 if (show_spans) Spans.dump(&r, "->seal");
                 r.deinit();
@@ -343,6 +373,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             moves += rb.moveCount();
             print("    -> star (Diablo)   {d:4} moves  {d:8.1} us\n", .{ rb.moveCount(), @as(f64, @floatFromInt(ns)) / 1e3 });
             spans.add(&rb, gate);
+            try spans.addClearance(&world, &rb, v.opts.mask);
             legs += rb.legs.len;
             if (show_spans) Spans.dump(&rb, "->star");
             rb.deinit();

@@ -119,10 +119,14 @@ pub const Options = struct {
     exit_snap_radius: i32 = 48,
     /// Collapse straight runs into waypoints.
     compress: bool = true,
-    /// Cap on the distance between consecutive emitted waypoints, Chebyshev. Defaults to the
-    /// engine's own command gate: anything further is refused by the packet handler and desyncs
-    /// the client. See `grid.ENGINE_MAX_COMMAND_RANGE`.
-    max_step: ?i32 = grid.ENGINE_MAX_COMMAND_RANGE,
+    /// Cap on the distance between consecutive emitted waypoints, Chebyshev. Anything past the
+    /// engine's command gate is refused by the packet handler and desyncs the client; the default
+    /// sits under it with margin, because the gate is measured from the server's lagging view of
+    /// where you are. See `grid.SAFE_COMMAND_STEP`.
+    max_step: ?i32 = grid.SAFE_COMMAND_STEP,
+    /// Keep walked paths off the walls. Walking only — teleport lands where it is aimed, so it has
+    /// nothing to snag on. See `astar.WallAversion`.
+    wall_aversion: astar.WallAversion = .{},
     max_nodes: u32 = 4_000_000,
 };
 
@@ -619,6 +623,7 @@ pub const World = struct {
             .goal_snap_radius = snap_to,
             .compress = opts.compress,
             .max_step = opts.max_step,
+            .wall_aversion = opts.wall_aversion,
             .max_nodes = opts.max_nodes,
         }, &pts);
         for (pts.items) |p| try out.append(self.alloc, .{ .x = p.x, .y = p.y, .kind = .walk });

@@ -558,6 +558,72 @@ test "no emitted waypoint exceeds what a movement command may target" {
     try testing.expect(checked > 200);
 }
 
+test "wall aversion keeps walked paths off the geometry" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    var hug_off: usize = 0;
+    var hug_on: usize = 0;
+    var nodes_off: usize = 0;
+    var nodes_on: usize = 0;
+
+    for (f.world.levels.items) |*lv| {
+        const pm = try lv.passMap(pf.Colmask.player_path);
+        const cl = pm.clearance();
+        const a = pf.grid.nearestPassable(pm, @divTrunc(lv.w, 6), @divTrunc(lv.h, 6), 64) orelse continue;
+        const b = pf.grid.nearestPassable(pm, lv.w - @divTrunc(lv.w, 6), lv.h - @divTrunc(lv.h, 6), 64) orelse continue;
+
+        for ([_]pf.WallAversion{ .{ .desired = 0 }, .{} }, 0..) |av, which| {
+            var r = f.world.route(
+                .{ .level = lv.id, .x = a.x, .y = a.y },
+                .{ .level = lv.id, .x = b.x, .y = b.y },
+                .{ .wall_aversion = av },
+            ) catch continue;
+            defer r.deinit();
+            for (r.legs) |leg| {
+                for (leg.moves) |m| {
+                    if (!pm.inBounds(m.x, m.y)) continue;
+                    const touching = cl[pm.index(m.x, m.y)] <= 1;
+                    if (which == 0) {
+                        nodes_off += 1;
+                        if (touching) hug_off += 1;
+                    } else {
+                        nodes_on += 1;
+                        if (touching) hug_on += 1;
+                    }
+                }
+            }
+        }
+    }
+    try testing.expect(nodes_off > 100 and nodes_on > 100);
+    // Not asserting a specific ratio — level geometry decides how much room there is to move away
+    // from a wall — but the default must be a large, unambiguous improvement, not noise.
+    const pct_off = hug_off * 100 / nodes_off;
+    const pct_on = hug_on * 100 / nodes_on;
+    try testing.expect(pct_on * 3 < pct_off);
+}
+
+test "the clearance transform is an exact Chebyshev distance to the nearest wall" {
+    const alloc = testing.allocator;
+    // Open 9x9 with a single wall in the middle: clearance must fall off in rings around it, and
+    // the border counts as wall too.
+    const cells = try alloc.alloc(u16, 81);
+    defer alloc.free(cells);
+    @memset(cells, 0);
+    cells[4 * 9 + 4] = pf.Colbit.wall;
+    var pm = try pf.grid.buildPassMap(alloc, cells, 9, 9, pf.Colmask.player_path);
+    defer pm.deinit(alloc);
+    const cl = pm.clearance();
+
+    try testing.expectEqual(@as(u8, 0), cl[4 * 9 + 4]); // the wall itself
+    try testing.expectEqual(@as(u8, 1), cl[4 * 9 + 3]); // touching it
+    try testing.expectEqual(@as(u8, 1), cl[3 * 9 + 3]); // diagonally touching it
+    try testing.expectEqual(@as(u8, 2), cl[4 * 9 + 2]); // one further out
+    try testing.expectEqual(@as(u8, 1), cl[0]); // the border is wall as well
+    try testing.expectEqual(@as(u8, 1), cl[4 * 9 + 0]);
+}
+
 test "an unreachable level fails fast instead of searching" {
     const alloc = testing.allocator;
     var f = try Fixture.load(alloc, &.{0});

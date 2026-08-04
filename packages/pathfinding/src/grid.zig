@@ -37,6 +37,19 @@ pub const SUBTILES_PER_TILE: i32 = 5;
 /// (It is roughly the screen radius, which is why a human clicking can never exceed it.)
 pub const ENGINE_MAX_COMMAND_RANGE: i32 = 50;
 
+/// What a mover should actually cap its steps at, rather than the raw gate.
+///
+/// The gate is evaluated against the SERVER'S view of your position, and while you are moving that
+/// view lags yours: your own click applies locally at once, the server learns of it a round-trip
+/// later and is still stepping you along the previous order in the meantime. So the origin the
+/// server measures from is behind the origin you measured from, and a step you computed as 49 can
+/// arrive as 60-something and be thrown out — taking a `0x15` resync with it, which is precisely
+/// the stutter this is meant to avoid.
+///
+/// Leaving ten subtiles of slack absorbs ordinary latency. It is not a magic number; it is the
+/// same margin the established bots settled on, and this is the reason for it.
+pub const SAFE_COMMAND_STEP: i32 = 40;
+
 pub const Point = struct { x: i32, y: i32 };
 
 /// The passability bitset packs one subtile per bit. Both helpers divide by a power-of-two
@@ -64,13 +77,75 @@ pub const PassMap = struct {
     comp: []u32,
     comp_built: bool,
     comp_count: u32,
+    /// Chebyshev distance from each cell to the nearest impassable cell, saturating at
+    /// `CLEARANCE_MAX`. 0 on an impassable cell, 1 on one that touches a wall. Lazily built.
+    clear: []u8,
+    clear_built: bool,
 
     pub const NO_COMPONENT: u32 = 0;
+
+    /// Clearance saturates here: beyond a few subtiles "far from a wall" is far enough, and one
+    /// byte per cell keeps the map cheap next to the collision grid itself.
+    pub const CLEARANCE_MAX: u8 = 15;
 
     pub fn deinit(self: *PassMap, alloc: std.mem.Allocator) void {
         alloc.free(self.bits);
         alloc.free(self.comp);
+        alloc.free(self.clear);
         self.* = undefined;
+    }
+
+    /// Build (or return) the clearance map: for every cell, how far it is from the nearest wall.
+    ///
+    /// Two chamfer passes over the grid — forward taking the min of the already-settled neighbours
+    /// plus one, backward doing the same from the other corner — which is the standard way to get
+    /// an exact Chebyshev distance transform in O(n) without a queue. Out-of-bounds counts as wall,
+    /// so the level border pushes paths inward like any other.
+    pub fn clearance(self: *PassMap) []const u8 {
+        if (self.clear_built) return self.clear;
+        const w: usize = @intCast(self.w);
+        const h: usize = @intCast(self.h);
+
+        for (self.clear, 0..) |*c, i| c.* = if (self.passableAt(i)) CLEARANCE_MAX else 0;
+
+        var y: usize = 0;
+        while (y < h) : (y += 1) {
+            var x: usize = 0;
+            while (x < w) : (x += 1) {
+                const i = y * w + x;
+                if (self.clear[i] == 0) continue;
+                // Out of bounds is wall: a missing neighbour contributes 0, giving this cell 1.
+                var best: u8 = if (y == 0 or x == 0 or x + 1 == w) 0 else CLEARANCE_MAX;
+                if (y > 0) {
+                    best = @min(best, self.clear[i - w]);
+                    if (x > 0) best = @min(best, self.clear[i - w - 1]);
+                    if (x + 1 < w) best = @min(best, self.clear[i - w + 1]);
+                }
+                if (x > 0) best = @min(best, self.clear[i - 1]);
+                self.clear[i] = @min(self.clear[i], best +| 1);
+            }
+        }
+        y = h;
+        while (y > 0) {
+            y -= 1;
+            var x: usize = w;
+            while (x > 0) {
+                x -= 1;
+                const i = y * w + x;
+                if (self.clear[i] == 0) continue;
+                var best: u8 = if (y + 1 == h or x + 1 == w or x == 0) 0 else CLEARANCE_MAX;
+                if (y + 1 < h) {
+                    best = @min(best, self.clear[i + w]);
+                    if (x > 0) best = @min(best, self.clear[i + w - 1]);
+                    if (x + 1 < w) best = @min(best, self.clear[i + w + 1]);
+                }
+                if (x + 1 < w) best = @min(best, self.clear[i + 1]);
+                self.clear[i] = @min(self.clear[i], best +| 1);
+            }
+        }
+
+        self.clear_built = true;
+        return self.clear;
     }
 
     pub inline fn index(self: *const PassMap, x: i32, y: i32) usize {
@@ -164,6 +239,8 @@ pub fn buildPassMap(alloc: std.mem.Allocator, cells: []const u16, w: i32, h: i32
 
     const comp = try alloc.alloc(u32, n);
     errdefer alloc.free(comp);
+    const clear = try alloc.alloc(u8, n);
+    errdefer alloc.free(clear);
 
     return .{
         .mask = mask,
@@ -173,6 +250,8 @@ pub fn buildPassMap(alloc: std.mem.Allocator, cells: []const u16, w: i32, h: i32
         .comp = comp,
         .comp_built = false,
         .comp_count = 0,
+        .clear = clear,
+        .clear_built = false,
     };
 }
 

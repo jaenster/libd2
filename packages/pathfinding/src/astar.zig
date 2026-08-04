@@ -53,9 +53,45 @@ pub const Options = struct {
     compress: bool = true,
     /// Cap on how far apart two consecutive waypoints may be, Chebyshev. Compression alone happily
     /// produces a 100-subtile straight run, and a movement command that far is DROPPED by the
-    /// server — see `grid.ENGINE_MAX_COMMAND_RANGE`. Null removes the cap (useful only when the
-    /// caller is not driving a real character).
-    max_step: ?i32 = grid.ENGINE_MAX_COMMAND_RANGE,
+    /// server. Defaults to `grid.SAFE_COMMAND_STEP` rather than the raw gate, because the gate is
+    /// measured from the server's LAGGING view of your position — see that constant. Null removes
+    /// the cap (useful only when the caller is not driving a real character).
+    max_step: ?i32 = grid.SAFE_COMMAND_STEP,
+    /// Push the path away from walls. See `WallAversion`.
+    wall_aversion: WallAversion = .{},
+};
+
+/// How hard to avoid walking right along a wall.
+///
+/// This is a WALKING concern only, and it is not cosmetic. The server does not follow the waypoints
+/// we emit — it runs its own `PATH_CalculatePath` between them and advances the unit by direction
+/// and velocity, while the client predicts the same movement independently. Wherever those two
+/// simulations can disagree, the character drifts and gets resynced, and they disagree most where
+/// the route grazes geometry: one side clips a corner, the other rounds it.
+///
+/// With octile costs there are usually many equal-cost shortest paths and A* returns whichever the
+/// heap happened to order first, so a path hugs walls out of indifference rather than necessity.
+/// A small penalty on low-clearance cells breaks that tie toward the middle of open space, for
+/// free in path length wherever a tie existed.
+///
+/// Cost of enabling it: the heuristic stays admissible and consistent (it under-estimates the now
+/// larger edge costs, so no node is ever re-expanded) but it is no longer EXACT, so A* explores
+/// more before it settles. Measure with `zig build bench` rather than assuming.
+///
+/// Teleport deliberately ignores this: a cast lands exactly where it is aimed, so there is nothing
+/// to snag on and no reason to pay for width.
+pub const WallAversion = struct {
+    /// Clearance at or above which a cell is considered comfortably clear and costs nothing extra.
+    /// 0 disables the whole mechanism.
+    desired: u8 = 3,
+    /// Extra cost per subtile of missing clearance. Relative to a straight step of 2 and a diagonal
+    /// of 3, so 2 makes a wall-touching cell (clearance 1) cost about twice a normal step.
+    weight: u32 = 2,
+
+    pub inline fn penalty(self: WallAversion, clear: u8) u32 {
+        if (self.desired == 0 or clear >= self.desired) return 0;
+        return @as(u32, self.desired - clear) * self.weight;
+    }
 };
 
 /// Reusable search scratch. One per thread; `ensure` grows it to the biggest level you search.
@@ -168,6 +204,8 @@ pub const Pather = struct {
             return error.GoalBlocked;
 
         const comp = try pm.components(self.alloc);
+        const avoid = opts.wall_aversion;
+        const clear: []const u8 = if (avoid.desired == 0) &.{} else pm.clearance();
         const si = pm.index(start.x, start.y);
         const gi = pm.index(goal.x, goal.y);
         if (comp[si] != comp[gi]) return error.Unreachable;
@@ -207,7 +245,9 @@ pub const Pather = struct {
                 const ni = pm.index(nx, ny);
                 if (!pm.passableAt(ni)) continue;
                 const step: u32 = if (d[0] != 0 and d[1] != 0) grid.COST_DIAGONAL else grid.COST_STRAIGHT;
-                const tentative = gc + step;
+                // The penalty is charged on ENTERING a cell, so it is a property of where you end
+                // up rather than of the direction you took to get there.
+                const tentative = gc + step + if (clear.len == 0) 0 else avoid.penalty(clear[ni]);
                 self.touch(ni);
                 if (self.state[ni] & 1 != 0 or tentative >= self.g[ni]) continue;
                 self.g[ni] = tentative;
