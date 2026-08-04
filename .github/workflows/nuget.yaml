@@ -6,7 +6,7 @@ name: nuget
 # a workflow of its own.
 #
 # Publishing uses NuGet trusted publishing (OIDC), so there is no stored API key. The policy on
-# nuget.org must name THIS file (nuget.yml) as its Workflow File.
+# nuget.org must name THIS file (nuget.yaml) as its Workflow File.
 
 on:
   workflow_dispatch:
