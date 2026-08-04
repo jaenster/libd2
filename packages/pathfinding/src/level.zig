@@ -115,14 +115,20 @@ pub const Level = struct {
         return @divTrunc(self.h, grid.SUBTILES_PER_TILE);
     }
 
-    /// The passability view for `mask`, built and cached on first use.
+    /// The passability view for `mask` as a point-sized unit, built and cached on first use.
     pub fn passMap(self: *Level, mask: u16) !*grid.PassMap {
+        return self.passMapFor(mask, .point);
+    }
+
+    /// The passability view for `mask` as a unit of `footprint`. A big monster is blocked by gaps
+    /// a small one walks through, so the two are separate maps and separate cache entries.
+    pub fn passMapFor(self: *Level, mask: u16, footprint: grid.Footprint) !*grid.PassMap {
         for (self.maps.items) |m| {
-            if (m.mask == mask) return m;
+            if (m.mask == mask and m.footprint == footprint) return m;
         }
         const pm = try self.alloc.create(grid.PassMap);
         errdefer self.alloc.destroy(pm);
-        pm.* = try grid.buildPassMap(self.alloc, self.cells, self.w, self.h, mask);
+        pm.* = try grid.buildPassMap(self.alloc, self.cells, self.w, self.h, mask, footprint);
         errdefer pm.deinit(self.alloc);
         try self.maps.append(self.alloc, pm);
         try self.tile_reps.append(self.alloc, &.{});
@@ -131,7 +137,7 @@ pub const Level = struct {
 
     fn maskIndex(self: *Level, mask: u16) ?usize {
         for (self.maps.items, 0..) |m, i| {
-            if (m.mask == mask) return i;
+            if (m.mask == mask and m.footprint == .point) return i;
         }
         return null;
     }

@@ -67,8 +67,24 @@ inline fn bitOf(cell: usize) Word {
 }
 
 /// One mask's derived view of a level. Owned by the `Level` that built it.
+/// How much of the grid a unit occupies. The engine never tests a bare cell for a real unit:
+/// `CheckCollision_BlockPlayer_Type` (0x64d910) and `CheckCollision_BlockAll_Width` (0x64d9b0)
+/// dispatch on the unit's size and OR together every cell of its shape, so a big monster is
+/// blocked by a gap a small one walks through.
+pub const Footprint = enum {
+    /// `COLLISION_UNIT_SIZE_POINT` / `COLLISION_PATTERN_NONE` — the cell alone.
+    point,
+    /// `COLLISION_UNIT_SIZE_SMALL` / the `*_SMALL_*` patterns — `CheckCollision_Cross`
+    /// (0x64d100): the cell plus its four cardinal neighbours.
+    cross,
+    /// `COLLISION_UNIT_SIZE_BIG` / the `*_BIG_*` patterns — `CheckCollision_BoundingBox1`
+    /// (0x64d4a0), which builds `[x-1, x+1] x [y-1, y+1]`.
+    box3,
+};
+
 pub const PassMap = struct {
     mask: u16,
+    footprint: Footprint,
     w: i32,
     h: i32,
     /// 1 = a unit with this mask may occupy the subtile.
@@ -226,7 +242,14 @@ pub inline fn heuristic(ax: i32, ay: i32, bx: i32, by: i32) u32 {
 
 /// Build the passability bitset for `mask` over `cells`. Cells are the level-local u16 composite;
 /// `collision.VOID` fails naturally because it has every bit set.
-pub fn buildPassMap(alloc: std.mem.Allocator, cells: []const u16, w: i32, h: i32, mask: u16) !PassMap {
+pub fn buildPassMap(
+    alloc: std.mem.Allocator,
+    cells: []const u16,
+    w: i32,
+    h: i32,
+    mask: u16,
+    footprint: Footprint,
+) !PassMap {
     const n: usize = @intCast(w * h);
     std.debug.assert(cells.len == n);
     const bits = try alloc.alloc(Word, std.math.divCeil(usize, n, bits_per_word) catch unreachable);
@@ -236,6 +259,7 @@ pub fn buildPassMap(alloc: std.mem.Allocator, cells: []const u16, w: i32, h: i32
     for (cells, 0..) |cell, i| {
         if (collision.passable(cell, mask)) bits[wordOf(i)] |= bitOf(i);
     }
+    if (footprint != .point) try erode(alloc, bits, w, h, footprint);
 
     const comp = try alloc.alloc(u32, n);
     errdefer alloc.free(comp);
@@ -244,6 +268,7 @@ pub fn buildPassMap(alloc: std.mem.Allocator, cells: []const u16, w: i32, h: i32
 
     return .{
         .mask = mask,
+        .footprint = footprint,
         .w = w,
         .h = h,
         .bits = bits,
@@ -253,6 +278,109 @@ pub fn buildPassMap(alloc: std.mem.Allocator, cells: []const u16, w: i32, h: i32
         .clear = clear,
         .clear_built = false,
     };
+}
+
+pub const Trace = struct {
+    /// Where the walk stopped: the blocking cell when `blocked`, otherwise the destination.
+    at: Point,
+    blocked: bool,
+};
+
+/// Walk the line from `from` to `to`, stopping at the first cell `pm`'s mask rejects. Both
+/// endpoints are tested, and a cell off the grid blocks — the engine's null-room case.
+///
+/// This is `Collision::TestCollision` (0x64e260) with the room walk collapsed, because a
+/// `PassMap` is already one flat level-wide grid where the engine has to re-resolve the room at
+/// every boundary. Same four cases (degenerate, vertical, horizontal, and Bresenham split on
+/// which axis is major), same order — test the cell, then advance — so the same set of cells is
+/// visited. Note the engine's own return is inverted: `TestCollision` yields TRUE for a HIT, and
+/// `SKILLS_HasLineOfSight` (0x645910) is a one-line negation of it.
+///
+/// The mask lives in the `PassMap`, which is what makes this one function serve every caller the
+/// engine has: line of sight with the caster's mask, a missile with `Colmask.missile_flight`, an
+/// area-of-effect check with whatever the skill passes.
+pub fn trace(pm: *const PassMap, from: Point, to: Point) Trace {
+    var x = from.x;
+    var y = from.y;
+    const span_x = to.x - x;
+    const span_y = to.y - y;
+    const step_x: i32 = if (span_x < 0) -1 else 1;
+    const step_y: i32 = if (span_y < 0) -1 else 1;
+    const dx: i32 = if (span_x < 0) -span_x else span_x;
+    const dy: i32 = if (span_y < 0) -span_y else span_y;
+
+    if (dx < dy) {
+        // Steep: y advances every step, x follows the error term.
+        var err: i32 = 0;
+        while (true) {
+            if (!pm.passable(x, y)) return .{ .at = .{ .x = x, .y = y }, .blocked = true };
+            if (y == to.y) return .{ .at = .{ .x = x, .y = y }, .blocked = false };
+            y += step_y;
+            err += dx;
+            if (err >= dy) {
+                err -= dy;
+                x += step_x;
+            }
+        }
+    }
+    // Shallow, and the degenerate/axis-aligned cases fall out of it: when dy is 0 the error term
+    // never fires and y never moves, and when both are 0 the first cell is also the last.
+    var err: i32 = 0;
+    while (true) {
+        if (!pm.passable(x, y)) return .{ .at = .{ .x = x, .y = y }, .blocked = true };
+        if (x == to.x) return .{ .at = .{ .x = x, .y = y }, .blocked = false };
+        err += dy;
+        x += step_x;
+        if (err >= dx) {
+            err -= dx;
+            y += step_y;
+        }
+    }
+}
+
+/// `SKILLS_HasLineOfSight` (0x645910): is the line clear end to end?
+pub fn hasLineOfSight(pm: *const PassMap, from: Point, to: Point) bool {
+    return !trace(pm, from, to).blocked;
+}
+
+/// Shrink a point-passability bitset to a footprint's: a cell stays set only when every cell of
+/// the shape centred on it is set. The engine ORs the shape's flags on every query; folding that
+/// in once here keeps a neighbour test one bit lookup instead of five or nine. Cells off the grid
+/// count as blocked, which is what the engine's out-of-room fallback amounts to.
+fn erode(alloc: std.mem.Allocator, bits: []Word, w: i32, h: i32, footprint: Footprint) !void {
+    const src = try alloc.dupe(Word, bits);
+    defer alloc.free(src);
+    @memset(bits, 0);
+
+    const cross = [_][2]i32{ .{ 0, 0 }, .{ -1, 0 }, .{ 1, 0 }, .{ 0, -1 }, .{ 0, 1 } };
+    const box3 = [_][2]i32{
+        .{ -1, -1 }, .{ 0, -1 }, .{ 1, -1 },
+        .{ -1, 0 },  .{ 0, 0 },  .{ 1, 0 },
+        .{ -1, 1 },  .{ 0, 1 },  .{ 1, 1 },
+    };
+    const shape: []const [2]i32 = switch (footprint) {
+        .point => return,
+        .cross => &cross,
+        .box3 => &box3,
+    };
+
+    var y: i32 = 0;
+    while (y < h) : (y += 1) {
+        var x: i32 = 0;
+        while (x < w) : (x += 1) {
+            const fits = for (shape) |d| {
+                const nx = x + d[0];
+                const ny = y + d[1];
+                if (nx < 0 or ny < 0 or nx >= w or ny >= h) break false;
+                const j: usize = @intCast(ny * w + nx);
+                if (src[wordOf(j)] & bitOf(j) == 0) break false;
+            } else true;
+            if (fits) {
+                const i: usize = @intCast(y * w + x);
+                bits[wordOf(i)] |= bitOf(i);
+            }
+        }
+    }
 }
 
 /// Nearest passable subtile to (x,y) within `radius`, searched in rings so the first hit is the
