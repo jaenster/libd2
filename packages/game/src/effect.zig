@@ -84,6 +84,9 @@ pub const Effect = union(enum) {
     spawn_missiles: struct { skill_id: u16, level: i32, x: i32, y: i32, tx: i32, ty: i32, count: u8, homing: bool, kind: enum { spiral, spread } },
     /// Move the caster to (x,y) (Leap / Whirlwind endpoint).
     reposition: struct { x: i32, y: i32 },
+    /// Teleport the caster to (x,y) — or onto `guid` if set — through walls, mana/range-gated, and
+    /// stream the jump to the casting client.
+    teleport: struct { x: i32, y: i32, guid: u32 },
     /// A weapon attack on every hostile in an area. `sweep` = along the segment (from_x,from_y)->(x,y)
     /// within the melee reach (Whirlwind); otherwise within `radius` of (x,y) (Leap Attack landing).
     weapon_area: struct { x: i32, y: i32, radius: i32, ed_percent: i32, from_x: i32, from_y: i32, sweep: bool },

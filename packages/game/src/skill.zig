@@ -714,6 +714,11 @@ pub fn resolve(
         buf[0] = .{ .elemental_area = .{ .skill_id = skill_id, .level = lvl, .x = caster_x, .y = caster_y, .radius = skills.evalCalc(book, 0, skill_id, lvl, "aurarangecalc"), .static = true } };
         return buf[0..1];
     }
+    // Teleport: a through-walls reposition (host applies the mana/range gate + client stream).
+    if (sd.doFunc() == .teleport) {
+        buf[0] = .{ .teleport = .{ .x = target_x, .y = target_y, .guid = target_guid } };
+        return buf[0..1];
+    }
     // Missile spawns: Blessed Hammer's spiral grid + the bow/bolt fans (Multiple Shot/Charged Bolt/
     // Guided Arrow). resolve() picks count/homing/pattern; applyEffect builds + spawns via the missiles.
     if (sd.doFunc() == .blessed_hammer) {
