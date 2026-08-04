@@ -1,0 +1,19 @@
+{
+  "name": "libd2",
+  "version": "0.1.0",
+  "description": "Clean-room Diablo II 1.14d engine core. One entry point over the libd2 WebAssembly packages: give it a seed and it produces the same world the game does.",
+  "type": "module",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": { "types": "./index.d.ts", "default": "./index.js" }
+  },
+  "engines": { "node": ">=22.12" },
+  "dependencies": {
+    "@jaenster/d2drlg": "^0.4.0"
+  },
+  "files": ["index.js", "index.d.ts", "README.md"],
+  "keywords": ["diablo2", "drlg", "map", "procgen", "seed"],
+  "license": "MIT",
+  "repository": "github:jaenster/libd2",
+  "homepage": "https://github.com/jaenster/libd2"
+}
