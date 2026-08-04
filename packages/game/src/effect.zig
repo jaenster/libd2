@@ -51,4 +51,7 @@ pub const Effect = union(enum) {
     /// Spawn a summon of MonStats `monster` at (x,y), owned by the caster. `kind` picks the
     /// placement/cap rules; `count` is the pet cap (pet/trap kinds).
     summon: struct { monster: []const u8, x: i32, y: i32, count: i32, kind: SummonKind },
+    /// Drop a lingering AoE at (x,y) that pulses `skill_id`'s elemental damage each frame for
+    /// `duration` frames (Fire Wall / Blaze / Blizzard / Volcano / Armageddon).
+    ground_effect: struct { skill_id: u16, level: i32, x: i32, y: i32, duration: i32 },
 };
