@@ -1,0 +1,24 @@
+<Project>
+  <!--
+    .NET Framework does not resolve runtimes/{rid}/native the way the modern .NET host does, so
+    for those projects we copy the right binaries next to the built application ourselves. .NET
+    Core, .NET 5+, Mono and Unity never take this path: their host already picks per RID.
+
+    Every subsystem's native library is copied, because which ones a project actually calls is
+    not knowable here.
+  -->
+  <PropertyGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETFramework'">
+    <_LibD2Rid Condition="'$(PlatformTarget)' == 'x86'">win-x86</_LibD2Rid>
+    <_LibD2Rid Condition="'$(PlatformTarget)' == 'x64'">win-x64</_LibD2Rid>
+    <_LibD2Rid Condition="'$(PlatformTarget)' == 'ARM64'">win-arm64</_LibD2Rid>
+    <_LibD2Rid Condition="'$(_LibD2Rid)' == '' And '$(Prefer32Bit)' == 'true'">win-x86</_LibD2Rid>
+    <_LibD2Rid Condition="'$(_LibD2Rid)' == ''">win-x64</_LibD2Rid>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETFramework'">
+    <None Include="$(MSBuildThisFileDirectory)..\runtimes\$(_LibD2Rid)\native\*.dll">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

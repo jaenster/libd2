@@ -62,6 +62,20 @@ jobs:
           - aarch64-macos
           - x86_64-windows-gnu
           - aarch64-windows-gnu
+          - x86-windows-gnu
+          # musl, for Alpine and the containers .NET is usually deployed in. A glibc build
+          # will not load there.
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+          # 32-bit ARM, RISC-V and FreeBSD. The .NET SDK cannot build a RID-specific app for
+          # the last two (no official apphost), but a PORTABLE app resolves the native asset by
+          # the host's own RID at run time, so shipping them is what makes those platforms work
+          # at all. One matrix entry each, because zig cross-compiles them from the same host.
+          - arm-linux-gnueabihf
+          - arm-linux-musleabihf
+          - riscv64-linux-gnu
+          - x86_64-freebsd
+          - aarch64-freebsd
           - wasm32-freestanding
     steps:
       - uses: actions/checkout@v4
@@ -144,6 +158,8 @@ jobs:
             else
               echo "skip npm ($name): no wasm artifact"
             fi
+
             rm -rf out
             echo "::endgroup::"
           done
+

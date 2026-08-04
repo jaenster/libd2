@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- netstandard2.0 is the one target every .NET runtime understands: .NET Framework 4.6.1+,
+         .NET Core 2.0+, .NET 5-10, Mono and Unity all load it from a single build. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>LibD2</AssemblyName>
+    <RootNamespace>LibD2</RootNamespace>
+
+    <PackageId>LibD2</PackageId>
+    <Version>0.0.0</Version>
+    <Authors>jaenster</Authors>
+    <Description>Clean-room Diablo II 1.14d engine core for .NET. Give it a seed and it produces the same world the game does. No game install required, and no native setup: the package carries a build for every platform .NET runs on.</Description>
+    <PackageTags>diablo2;d2;map;procedural-generation;gamedev</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/jaenster/libd2</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/jaenster/libd2</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Span<T> on netstandard2.0. Modern runtimes have it built in and ignore this. -->
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <!-- One native binary per runtime identifier, per subsystem. Staged by
+         scripts/nuget-pack.sh from the release build; absent in a plain local build. -->
+    <None Include="runtimes/**" Pack="true" PackagePath="runtimes" />
+    <!-- Only .NET Framework evaluates this; see the file for why it exists. -->
+    <None Include="build/LibD2.targets" Pack="true" PackagePath="build" />
+  </ItemGroup>
+
+</Project>
