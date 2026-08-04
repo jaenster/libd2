@@ -636,6 +636,30 @@ pub fn resolve(
         buf[0] = .{ .summon = .{ .monster = info.monster, .x = sx, .y = sy, .count = info.count, .kind = kind } };
         return buf[0..1];
     }
+    // Persistent ground effects (24 Fire Wall, 23 Blaze, 28 Blizzard-no-radius, 123 Volcano, 124
+    // Armageddon): a lingering AoE pulsing the skill's element. 23-without-EType is Energy Shield and
+    // 28-with-radius is Meteor — both fall through (return [] here).
+    {
+        const no_radius = if (skills.rowById(skill_id)) |row| skills.table.get(row, "aurarangecalc").len == 0 else true;
+        const is_armageddon = sd.srvdofunc == 124;
+        const is_ground = sd.srvdofunc == 24 or
+            (sd.srvdofunc == 23 and sd.dmg.etype != .none) or
+            (sd.srvdofunc == 28 and no_radius and sd.dmg.etype != .none) or
+            (sd.srvdofunc == 123 and sd.dmg.etype != .none) or
+            is_armageddon;
+        if (is_ground) {
+            const lvl = book.get(skill_id);
+            const dur: i32 = if (is_armageddon) @max(1, skills.evalCalc(book, 0, skill_id, lvl, "auralencalc")) else if (sd.srvdofunc == 28) 100 else 90;
+            buf[0] = .{ .ground_effect = .{
+                .skill_id = skill_id,
+                .level = lvl,
+                .x = if (is_armageddon) caster_x else target_x,
+                .y = if (is_armageddon) caster_y else target_y,
+                .duration = dur,
+            } };
+            return buf[0..1];
+        }
+    }
     // Curses (30 Necro curses; 6 Inner Sight / Slow Missiles): a debuff over hostiles in radius.
     if (sd.srvdofunc == 30 or sd.srvdofunc == 6) {
         const lvl = book.get(skill_id);
