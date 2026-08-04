@@ -19,10 +19,10 @@ Packages with a C-ABI shim (`src/capi.zig`) build native shared/static libs and 
 wasm module:
 
 ```sh
-cd packages/items
-zig build                                   # zig-out/lib/libd2items.* + zig-out/include/d2items.h
+cd packages/item
+zig build                                   # zig-out/lib/libd2item.* + zig-out/include/d2item.h
 zig build -Dtarget=aarch64-macos            # cross-compile (any target Zig supports)
-zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall   # zig-out/bin/d2items.wasm
+zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall   # zig-out/bin/d2item.wasm
 ```
 
 The packages are libc-free, so the wasm build is `wasm32-freestanding` — it
