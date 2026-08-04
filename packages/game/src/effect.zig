@@ -57,4 +57,15 @@ pub const Effect = union(enum) {
     /// One-shot elemental burst on every hostile within `radius` of (x,y). `static` selects Static
     /// Field's %-of-current-life drain; otherwise the skill's staged element (Meteor / Fist of Heavens).
     elemental_area: struct { skill_id: u16, level: i32, x: i32, y: i32, radius: i32, static: bool },
+    /// A weapon attack on `target_guid`: `hits` strikes at `ed_percent` enhanced damage. `reposition`
+    /// first dashes onto the target (Charge / Dragon Flight); `use_melee_skill` routes through the
+    /// multi-hit combat helper (Fend/Zeal) instead of a plain roll.
+    weapon_strike: struct {
+        target_guid: u32,
+        skill_id: u16,
+        ed_percent: i32,
+        hits: i32,
+        reposition: bool,
+        use_melee_skill: bool,
+    },
 };
