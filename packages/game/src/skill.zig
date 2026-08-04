@@ -662,6 +662,24 @@ pub fn resolve(
             return buf[0..1];
         }
     }
+    // Whirlwind (sweep from caster to cursor, then end there), Leap (pure jump), Leap Attack (jump
+    // then a weapon burst at the landing).
+    if (sd.doFunc() == .whirlwind) {
+        const lvl = book.get(skill_id);
+        buf[0] = .{ .weapon_area = .{ .x = target_x, .y = target_y, .radius = 0, .ed_percent = skills.evalCalc(book, 0, skill_id, lvl, "calc1"), .from_x = caster_x, .from_y = caster_y, .sweep = true } };
+        buf[1] = .{ .reposition = .{ .x = target_x, .y = target_y } };
+        return buf[0..2];
+    }
+    if (sd.doFunc() == .leap) {
+        buf[0] = .{ .reposition = .{ .x = target_x, .y = target_y } };
+        return buf[0..1];
+    }
+    if (sd.doFunc() == .leap_attack) {
+        const lvl = book.get(skill_id);
+        buf[0] = .{ .reposition = .{ .x = target_x, .y = target_y } };
+        buf[1] = .{ .weapon_area = .{ .x = target_x, .y = target_y, .radius = skills.evalCalc(book, 0, skill_id, lvl, "calc1"), .ed_percent = 0, .from_x = 0, .from_y = 0, .sweep = false } };
+        return buf[0..2];
+    }
     // Melee weapon strikes. Precedence mirrors the host: the ed%/reposition/multi-hit specials first,
     // then the generic strike group (meleeHitCount plain rolls). The 34/35 charge-ups are resolved
     // separately (they stack charges) and are not handled here.
