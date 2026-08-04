@@ -14,7 +14,8 @@ sub-package module, so an external Zig 0.16 project can add libd2 **once** and
 | `d2-sim` | packages/sim | faithful runtime game-simulation port (combat/skills/monsters) |
 | `d2-items` | packages/items | faithful item-generation (drop) port |
 | `d2-drlg` | packages/drlg | faithful DRLG map generator + collision |
-| `d2-formats` | packages/formats | pure DS1/DT1 parsers |
+| `d2-formats` | packages/formats | pure DS1/DT1 parsers + the fixed `.d2s` save header |
+| `d2-save` | packages/save | the `.d2s` character save sections, read and write |
 | `d2-fog` | packages/fog | Fog::Memory pool allocator |
 
 ## build.zig.zon
