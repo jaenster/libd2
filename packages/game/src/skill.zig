@@ -1428,6 +1428,41 @@ test "whole catalog: every skill resolves through the generic machinery without 
     try testing.expect(summons > 5);
 }
 
+test "resolve emits the right Effect for each migrated skill branch" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var buf: [4]effect_mod.Effect = undefined;
+    const R = struct {
+        fn tag(sk: *const Skills, b: []effect_mod.Effect, name: []const u8) ?std.meta.Tag(effect_mod.Effect) {
+            const id = sk.idByName(name) orelse return null;
+            var book = SkillBook{};
+            book.setByName(sk, name, 5);
+            const e = resolve(sk, book, id, 100, 100, 120, 120, 9001, b);
+            if (e.len == 0) return null;
+            return e[0];
+        }
+    };
+    try testing.expectEqual(effect_mod.Effect.curse_area, R.tag(&s, &buf, "Amplify Damage").?);
+    try testing.expectEqual(effect_mod.Effect.cc_area, R.tag(&s, &buf, "Cloak of Shadows").?); // stun
+    try testing.expectEqual(effect_mod.Effect.cc_area, R.tag(&s, &buf, "Grim Ward").?); // fear
+    try testing.expectEqual(effect_mod.Effect.set_aura, R.tag(&s, &buf, "Might").?);
+    try testing.expectEqual(effect_mod.Effect.summon, R.tag(&s, &buf, "Raise Skeleton").?);
+    try testing.expectEqual(effect_mod.Effect.ground_effect, R.tag(&s, &buf, "Fire Wall").?);
+    try testing.expectEqual(effect_mod.Effect.elemental_area, R.tag(&s, &buf, "Fist of the Heavens").?);
+    try testing.expectEqual(effect_mod.Effect.elemental_area, R.tag(&s, &buf, "Static Field").?);
+    try testing.expectEqual(effect_mod.Effect.weapon_strike, R.tag(&s, &buf, "Bash").?);
+    try testing.expectEqual(effect_mod.Effect.weapon_strike, R.tag(&s, &buf, "Zeal").?); // multi-hit
+    try testing.expectEqual(effect_mod.Effect.weapon_area, R.tag(&s, &buf, "Whirlwind").?);
+    try testing.expectEqual(effect_mod.Effect.reposition, R.tag(&s, &buf, "Leap").?);
+    // Fear centres on the caster; stun CC uses the given radius/target.
+    const gw = resolve(&s, blk: {
+        var b = SkillBook{};
+        b.setByName(&s, "Grim Ward", 5);
+        break :blk b;
+    }, s.idByName("Grim Ward").?, 100, 100, 120, 120, 0, &buf);
+    try testing.expect(gw[0].cc_area.kind == .fear and gw[0].cc_area.x == 100);
+}
+
 test "classify: every category resolves from the real Skills.txt columns" {
     var s = try Skills.load(testing.allocator);
     defer s.deinit();
