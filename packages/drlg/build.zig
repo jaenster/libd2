@@ -120,12 +120,25 @@ pub fn build(b: *std.Build) void {
             if (is_wasm and b.args == null) .ReleaseSmall else (if (optimize == .Debug) .ReleaseFast else optimize);
         const CapiMod = struct {
             fn make(bb: *std.Build, tgt: std.Build.ResolvedTarget, opt: std.builtin.OptimizeMode, o: *std.Build.Step.Options, fm: *std.Build.Module, cm: *std.Build.Module, dm: *std.Build.Module) *std.Build.Module {
+                // Its own d2-drlg instance at the C-ABI optimize mode, so a Debug build still
+                // gets a usable library rather than a generator too slow to run.
+                const libmod = bb.createModule(.{
+                    .root_source_file = bb.path("src/lib.zig"),
+                    .target = tgt,
+                    .optimize = opt,
+                });
+                libmod.addOptions("build_options", o);
+                libmod.addImport("d2-formats", fm);
+                libmod.addImport("d2-core", cm);
+                libmod.addImport("d2-data", dm);
+
                 const m = bb.createModule(.{
                     .root_source_file = bb.path("src/capi.zig"),
                     .target = tgt,
                     .optimize = opt,
                 });
                 m.addOptions("build_options", o);
+                m.addImport("d2-drlg", libmod);
                 m.addImport("d2-formats", fm);
                 m.addImport("d2-core", cm);
                 m.addImport("d2-data", dm);
@@ -133,6 +146,24 @@ pub fn build(b: *std.Build) void {
             }
         };
         const fmod = formats.module("d2-formats");
+
+        // Exposed so a bundle package can link this shim into ONE module alongside other
+        // subsystems (see packages/wasm). Routing needs the generated act in the same linear
+        // memory, which only happens if the two shims are the same wasm.
+        // The exposed one takes the PACKAGE's d2-drlg module, which is the same instance
+        // pathfinding resolves, so both shims address one lib.zig in the combined module.
+        const capi_pub = b.addModule("d2drlg-capi", .{
+            .root_source_file = b.path("src/capi.zig"),
+            .target = target,
+            .optimize = capi_optimize,
+            .imports = &.{
+                .{ .name = "d2-drlg", .module = mod },
+                .{ .name = "d2-formats", .module = fmod },
+                .{ .name = "d2-core", .module = core_mod },
+                .{ .name = "d2-data", .module = data_mod },
+            },
+        });
+        capi_pub.addOptions("build_options", opts);
 
         if (is_wasm) {
             const wasm = b.addExecutable(.{ .name = "d2drlg", .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, core_mod, data_mod) });

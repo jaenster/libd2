@@ -17,9 +17,6 @@ const drlg = @import("d2-drlg");
 
 const pa = std.heap.page_allocator;
 
-/// A position: Levels.txt id + LEVEL-LOCAL subtiles. Must match `D2PfPos` in d2pf.h.
-pub const D2PfPos = extern struct { level: i32, x: i32, y: i32 };
-
 /// One step of a route. `kind` is 0 walk, 1 teleport, 2 pad. Must match `D2PfMove` in d2pf.h.
 pub const D2PfMove = extern struct { x: i32, y: i32, kind: i32 };
 
@@ -104,11 +101,23 @@ export fn d2pf_world_load_act(world: ?*World, act_no: i32) i32 {
     return 0;
 }
 
-export fn d2pf_route(world: ?*World, from: D2PfPos, to: D2PfPos, opts: ?*const D2PfOptions) ?*Route {
+/// Positions are passed as scalars rather than by-value structs on purpose: a struct argument
+/// is lowered to a hidden pointer on the wasm C ABI, which a JavaScript host cannot see and has
+/// no way to guess. Scalars mean every host calls this the same way.
+export fn d2pf_route(
+    world: ?*World,
+    from_level: i32,
+    from_x: i32,
+    from_y: i32,
+    to_level: i32,
+    to_x: i32,
+    to_y: i32,
+    opts: ?*const D2PfOptions,
+) ?*Route {
     const w = world orelse return null;
     const r = w.inner.route(
-        .{ .level = from.level, .x = from.x, .y = from.y },
-        .{ .level = to.level, .x = to.x, .y = to.y },
+        .{ .level = from_level, .x = from_x, .y = from_y },
+        .{ .level = to_level, .x = to_x, .y = to_y },
         optsFrom(opts),
     ) catch return null;
     const out = pa.create(Route) catch {
