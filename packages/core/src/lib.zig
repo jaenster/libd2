@@ -9,6 +9,7 @@
 const std = @import("std");
 
 pub const rng = @import("rng.zig");
+pub const collision = @import("collision.zig");
 pub const stat = @import("stat.zig");
 pub const unit = @import("unit.zig");
 pub const skill = @import("skill.zig");
@@ -22,6 +23,8 @@ pub const wire = @import("wire/item.zig");
 
 pub const Seed = rng.Seed;
 pub const DoFunc = skill.DoFunc;
+pub const Colbit = collision.Colbit;
+pub const Colmask = collision.Colmask;
 pub const Stat = stat.Stat;
 pub const StatList = stat.StatList;
 pub const Unit = unit.Unit;
@@ -33,6 +36,7 @@ pub const WireBitReader = bitreader.BitReader;
 
 test {
     _ = rng;
+    _ = collision;
     _ = stat;
     _ = itemstatcost;
     _ = bitreader;

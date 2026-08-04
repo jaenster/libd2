@@ -79,7 +79,7 @@ export fn d2drlg_gen_act(ctx: ?*Ctx, seed: u32, difficulty: i32, act_no: i32) ?*
     act.arena = std.heap.ArenaAllocator.init(pa);
     const a = act.arena.allocator();
     // true: this handle backs d2drlg_act_level_walk, so the walk grids must exist.
-    act.result = lib.generateActFull(&c.inner, a, act_no, seed, diff, null, true) catch {
+    act.result = lib.generateActFull(&c.inner, a, act_no, seed, diff, .{ .walk = true }) catch {
         act.arena.deinit();
         pa.destroy(act);
         return null;

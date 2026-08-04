@@ -342,10 +342,24 @@ pub fn generateAct(
 /// per-level fields the DBM-shaped shim pulls (preset units, warp adjacents, and the raw
 /// u16 CollMap composite). Everything is owned by the ActFullResult's allocator and freed
 /// wholesale by deinit — but the C-ABI Act handle keeps them alive in its arena instead.
+/// One CROSS-LEVEL near-room link, read straight out of the engine's own
+/// `ppDrlgRoomsExNear` after `DRLGROOMEX_LinkNearRoomsByVis` (0x66c220) has run.
+///
+/// Same-level adjacency is pure geometry (`DefineRoomsNear` 0x66bc20: signed bounding-box gap
+/// under 6 tiles) and a consumer can derive it from `meta.rooms` alone, so it is NOT repeated
+/// here. Cross-level adjacency cannot be derived — it exists only where a room's vis slot links
+/// it to a room of another level — which is exactly what this carries.
+///
+/// Room indices are positions in the level's `pRoomExFirst` chain, i.e. indices into that
+/// level's `meta.rooms`.
+pub const RoomLink = struct { from_room: u32, to_level: i32, to_room: u32 };
+
 pub const LevelFull = struct {
     meta: LevelRooms,
     presets: []PresetUnit,
     adjacents: []LevelAdjacent,
+    /// Cross-level near-room links; empty unless `ActFullOptions.room_links` asked for them.
+    room_links: []RoomLink = &.{},
     coll_w: i32,
     coll_h: i32,
     /// zlib-deflated LE-u16 raw CollMap (row-major coll_w*coll_h), NOT the raw grid —
@@ -373,6 +387,7 @@ pub const ActFullResult = struct {
             alloc.free(l.meta.rooms);
             alloc.free(l.presets);
             alloc.free(l.adjacents);
+            if (l.room_links.len != 0) alloc.free(l.room_links);
             if (l.coll_deflated.len != 0) alloc.free(l.coll_deflated);
             if (l.walk_deflated.len != 0) alloc.free(l.walk_deflated);
         }
@@ -568,6 +583,7 @@ pub fn freeLevelFull(alloc: std.mem.Allocator, l: LevelFull) void {
     alloc.free(l.meta.rooms);
     alloc.free(l.presets);
     alloc.free(l.adjacents);
+    if (l.room_links.len != 0) alloc.free(l.room_links);
     if (l.coll_deflated.len != 0) alloc.free(l.coll_deflated);
     if (l.walk_deflated.len != 0) alloc.free(l.walk_deflated);
 }
@@ -582,17 +598,31 @@ pub fn freeLevelFull(alloc: std.mem.Allocator, l: LevelFull) void {
 /// per-level extraction is pure post-generation read (shared `collectLevel*` helpers +
 /// materialize/composite), so output matches the per-seed accessors cell-for-cell.
 /// `act_no` is 0-based (Act I = 0 … Act V = 4). Caller owns the result.
+/// What a whole-act generation should produce beyond the baseline (rooms, presets, adjacents and
+/// the deflated CollMap, which always come out). Each extra costs real work, so they are opt-in.
+pub const ActFullOptions = struct {
+    /// Compression primitive for the CollMap. Null uses the pure-Zig `deflateZlib`, which keeps
+    /// the library and the wasm build libc-free.
+    deflate_fn: ?DeflateFn = null,
+    /// Build the per-level walk grid too. Off by default: it is a second level-sized buffer
+    /// through zlib that only `?walk=` responses ever read.
+    walk: bool = false,
+    /// Harvest each room's CROSS-LEVEL near-room links (see `RoomLink`). Free of extra generation
+    /// — the links are a side effect of building collision — but it walks every room of every
+    /// level once more to resolve them into indices.
+    room_links: bool = false,
+};
+
 pub fn generateActFull(
     ctx: *Ctx,
     out_alloc: std.mem.Allocator,
     act_no: i32,
     seed: u32,
     diff: Difficulty,
-    deflate_fn: ?DeflateFn,
-    /// Build the per-level walk grid too. Off by default: it is a second level-sized
-    /// buffer through zlib that only `?walk=` responses ever read.
-    want_walk: bool,
+    opts: ActFullOptions,
 ) !ActFullResult {
+    const deflate_fn = opts.deflate_fn;
+    const want_walk = opts.walk;
     var pool = fog.PoolManager.init(ctx.gpa);
     defer pool.deinit();
     const saved_alloc = dpool.allocator;
@@ -741,7 +771,60 @@ pub fn generateActFull(
         }
     }
 
+    // Pass 4: cross-level near-room links. Every level has been materialized by now, and
+    // materialization is what runs `linkLevelWarpNodes` -> `DRLGROOMEX_LinkNearRoomsByVis`, so
+    // each room's `ppDrlgRoomsExNear` is complete. A room's own level fills in when THAT level is
+    // materialized, hence a separate pass rather than doing it inline.
+    if (opts.room_links) try harvestRoomLinks(out_alloc, &pDrlg, ids.items, out.items);
+
     return .{ .levels = try out.toOwnedSlice(out_alloc) };
+}
+
+/// Resolve every room's CROSS-LEVEL entries in `ppDrlgRoomsExNear` into (level, room-index) pairs.
+/// Indices are positions in each level's `pRoomExFirst` chain, which is the order `collectLevelFull`
+/// walks to build `meta.rooms` — so they index straight into it.
+fn harvestRoomLinks(
+    out_alloc: std.mem.Allocator,
+    pDrlg: *abi.D2DrlgStrc,
+    ids: []const i32,
+    levels: []LevelFull,
+) !void {
+    // RoomEx pointer -> (level id, index in that level's chain), for every room of the act.
+    var index_of: std.AutoHashMapUnmanaged(*abi.D2RoomExStrc, struct { lid: i32, idx: u32 }) = .empty;
+    defer index_of.deinit(out_alloc);
+    for (ids) |lid| {
+        const pLevel = drlg.GetLevelAndAlloc(pDrlg, @enumFromInt(lid));
+        var i: u32 = 0;
+        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+        while (pr) |p| : (pr = p.pRoomExNext) {
+            try index_of.put(out_alloc, p, .{ .lid = lid, .idx = i });
+            i += 1;
+        }
+    }
+
+    for (levels) |*l| {
+        const pLevel = drlg.GetLevelAndAlloc(pDrlg, @enumFromInt(l.meta.level_id));
+        var links: std.ArrayListUnmanaged(RoomLink) = .empty;
+        errdefer links.deinit(out_alloc);
+        var from: u32 = 0;
+        var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
+        while (pr) |p| : ({
+            pr = p.pRoomExNext;
+            from += 1;
+        }) {
+            const n = p.nDrlgRoomsExNearCount;
+            if (n <= 0 or p.ppDrlgRoomsExNear == null) continue;
+            var i: usize = 0;
+            while (i < @as(usize, @intCast(n))) : (i += 1) {
+                const near = p.ppDrlgRoomsExNear[i] orelse continue;
+                const nlv = near.*.pLevel orelse continue;
+                if (nlv == pLevel) continue; // same level: pure geometry, the consumer derives it
+                const found = index_of.get(near) orelse continue;
+                try links.append(out_alloc, .{ .from_room = from, .to_level = found.lid, .to_room = found.idx });
+            }
+        }
+        l.room_links = try links.toOwnedSlice(out_alloc);
+    }
 }
 
 /// Generate ONE level's full DBM payload without generating the other levels of the act.
@@ -1331,8 +1414,8 @@ pub fn generateActComposite(
 
 /// A level composited into ONE level-local subtile grid of RAW u16 CollMap flags —
 /// the exact per-subtile bits the engine's Room1.pColl carries at room init
-/// (collision.Colbit: 0x01 block_walk, 0x02 block_los, 0x04 wall, 0x08 block_player,
-/// 0x10 alternate_tile, 0x20 blank, …). Dims equal the level's WorldSize×SUBTILES_PER_TILE
+/// (collision.Colbit: 0x01 wall, 0x02 visible, 0x04 missile_barrier, 0x08 noplayer,
+/// 0x10 preset, 0x20 blank, …). Dims equal the level's WorldSize×SUBTILES_PER_TILE
 /// (what DBM reports as collisionWidth/Height); origin is level-local (0,0) at the
 /// level WorldPosition. Uncovered cells (the level rect exceeds room coverage) are
 /// the OOB fill 0x00FF, matching DBM.
@@ -3288,7 +3371,7 @@ test "lib: walk grid derives cell-for-cell from the raw CollMap (Cold Plains, se
     // 1-byte-per-cell walk grid per level. Verify the walk grid is EXACTLY the d2bs walkable
     // mask applied to the raw CollMap — proving it is path-ready and free of drift.
     // want_walk = true: this test is ABOUT the walk grid, so it has to ask for one.
-    var result = try generateActFull(&ctx, gpa, 0, 0, .normal, null, true);
+    var result = try generateActFull(&ctx, gpa, 0, 0, .normal, .{ .walk = true });
     defer result.deinit(gpa);
 
     var checked_l3 = false;
