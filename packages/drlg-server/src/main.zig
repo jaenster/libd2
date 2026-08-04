@@ -118,6 +118,43 @@ fn zlibDeflate(alloc: std.mem.Allocator, raw: []const u8) anyerror![]u8 {
 threadlocal var zcomp: ?*Compressor = null;
 threadlocal var zbuf: []u8 = &.{};
 
+/// The process-wide `Io`, so `zlibDeflateMany` can put a batch of levels on its thread pool.
+var g_io: Io = undefined;
+
+/// One level, compressed on whichever pool thread picks it up. The result is `smp_allocator`-
+/// owned (thread-safe); `zlibDeflateMany` copies it into the request arena and frees it, since
+/// that arena belongs to the requesting thread alone.
+fn deflateTask(raw: []const u8) anyerror![]u8 {
+    return zlibDeflate(std.heap.smp_allocator, raw);
+}
+
+/// `drlg.DeflateManyFn`: compress a batch of levels concurrently. Deflate is the biggest phase
+/// of a whole-act render (up to 32 ms of a 62 ms act-2 request) and the levels are independent,
+/// so the pool turns it into roughly one level's worth of wall-clock.
+fn zlibDeflateMany(alloc: std.mem.Allocator, srcs: []const []const u8, dsts: [][]u8) anyerror!void {
+    const Fut = std.Io.Future(anyerror![]u8);
+    var futs: [16]Fut = undefined;
+    var i: usize = 0;
+    while (i < srcs.len) {
+        // The last level of a batch runs here rather than on the pool: this thread would
+        // otherwise just block on it.
+        var n: usize = 0;
+        while (n < futs.len and i + n + 1 < srcs.len) : (n += 1) {
+            futs[n] = g_io.concurrent(deflateTask, .{srcs[i + n]}) catch break;
+        }
+        for (futs[0..n], 0..) |*f, k| {
+            const bytes = try f.await(g_io);
+            defer std.heap.smp_allocator.free(bytes);
+            dsts[i + k] = try alloc.dupe(u8, bytes);
+        }
+        i += n;
+        if (i < srcs.len) {
+            dsts[i] = try zlibDeflate(alloc, srcs[i]);
+            i += 1;
+        }
+    }
+}
+
 pub fn main(init: std.process.Init) !void {
     // `io` (a shared, thread-safe std.Io.Threaded) and `gpa` come from the runtime. gpa is
     // shared across workers for their long-lived Ctx tables + per-request arenas; generation
@@ -154,6 +191,8 @@ pub fn main(init: std.process.Init) !void {
     prewarm(gpa) catch |e| std.debug.print("drlg-server: prewarm failed: {s}\n", .{@errorName(e)});
     // After prewarm, so the one-time table builds don't land in the phase totals.
     drlg.prof.clock = &monoNs;
+    g_io = io;
+    drlg.deflate_many = &zlibDeflateMany;
 
     logLine("{{\"level\":\"info\",\"msg\":\"listening\",\"port\":{d},\"workers\":{d}}}\n", .{ port, want });
 
