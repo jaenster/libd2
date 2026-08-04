@@ -4,6 +4,9 @@ A reimplementation of the deterministic **Diablo II 1.14d** engine core in [Zig]
 the seed-driven subsystems that turn a game seed into a world. 
 Reverse-engineered from the retail binary, with no Blizzard code.
 
+If libd2 is useful to you, you can [**sponsor the work on GitHub**](https://github.com/sponsors/jaenster).
+It is a long reverse-engineering effort and sponsorship is what keeps it moving.
+
 ## Packages in this repo
 
 Everything under `packages/` is a library, consumable on its own. Runnable programs
@@ -18,7 +21,9 @@ built on top of them live under `apps/`.
 | [`drlg`](packages/drlg) | `d2-drlg` | `formats`, `core`, `data` | **DRLG** — the map generator. Given a seed, produces the room/tile layout, collision grid, roads and object/monster population for every level in all five acts. Pure generation, verified byte-exact over 1000+ seeds. |
 | [`render`](packages/render) | `d2-render` | `drlg`, `formats` | Turns drlg's generation output into visuals: automap sprite cells and real DT1 tile-art materialization. A pure post-generation consumer. |
 | [`items`](packages/item) | `d2-item` | `core`, `data` | Seed-driven item drops: treasure-class resolution, item-class roll by level, quality, and magic/rare affix selection. |
-| [`sim`](packages/sim) | `d2-sim` | `core`, `data` | Runtime simulation: units, stats, combat, skills, monsters and missiles, plus the byte-exact server↔client protocol layer. |
+| [`pathfinding`](packages/pathfinding) | `d2-pathfinding` | `drlg`, `core`, `data` | Routing over a generated world: walk and teleport, within a level and across as many as it takes. Models the gates the server actually applies — the cast range check, the adjacent-room rule, line of sight, and unit footprints — so a planned move is one the server would accept. |
+| [`game`](packages/game) | `d2-game` | `core`, `data`, `drlg`, `net` | The rules engine: units, stats, combat, skills, monsters, missiles, objects and character state. What the server decides; the host only applies it. |
+| [`net`](packages/net) | `d2-net` | — | The D2GS wire protocol, both directions: the server→client and client→server opcode spaces, byte-exact including the variable and bit-packed packets. |
 | [`util`](packages/util) | `d2-util` | — | Cross-cutting primitives with no domain of their own: the D2GS server→client Huffman packet codec and the length-prefix framing / `AF` greeting around it. |
 
 ## Apps
