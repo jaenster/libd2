@@ -12,6 +12,8 @@ const ai = @import("ai.zig");
 const world = @import("world.zig");
 const events = @import("events.zig");
 const skill = @import("skill.zig");
+const select = @import("select.zig");
+const rng = @import("rng.zig");
 const buff = @import("buff.zig");
 const shrines = @import("shrines.zig");
 const spell = @import("spell.zig");
@@ -277,6 +279,29 @@ pub const LevelState = struct {
             }
         }
         for (expired[0..ne]) |g| _ = self.curses.remove(g);
+    }
+
+    /// Pulse every active ground effect one frame: deal its skill's staged elemental damage to hostile
+    /// monsters within radius of its centre (castDirectAreaElemental, replicating the engine's per-frame
+    /// re-hit) and reap it once past end_frame. `frame` is the current game tick; `seed` drives the
+    /// damage rolls; `gpa` backs a scratch target list.
+    pub fn tickGroundEffects(self: *LevelState, skills: *const skill.Skills, seed: *rng.Seed, frame: u64, gpa: std.mem.Allocator) void {
+        var i: usize = 0;
+        while (i < self.ground_effects.items.len) {
+            const ge = self.ground_effects.items[i];
+            if (frame >= ge.end_frame) {
+                _ = self.ground_effects.swapRemove(i);
+                continue;
+            }
+            var tgts: std.ArrayListUnmanaged(*Unit) = .empty;
+            defer tgts.deinit(gpa);
+            var it = self.units.valueIterator();
+            while (it.next()) |u| {
+                if (select.isHostileMonster(u)) tgts.append(gpa, u) catch {};
+            }
+            _ = skill.castDirectAreaElemental(skills, .{}, ge.skill_id, ge.level, ge.x, ge.y, ge.radius, tgts.items, seed);
+            i += 1;
+        }
     }
 };
 
