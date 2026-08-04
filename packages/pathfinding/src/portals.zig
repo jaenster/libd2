@@ -25,6 +25,11 @@ pub const Kind = enum {
     quest_portal,
     /// A portal that also moves the player to another act.
     act_change,
+    /// Not a portal at all: an NPC ride between towns — Warriv's caravan, Meshif's ship. Included
+    /// because without it the level graph is five disconnected islands and no route can cross from
+    /// one act to the next on foot. A consumer whose mover cannot hold a conversation should filter
+    /// this kind out; `x`/`y` are -1 because there is no tile to walk to, only an NPC to talk to.
+    npc_travel,
 };
 
 /// How well each row is established, so nothing here reads as more certain than it is.
@@ -51,6 +56,8 @@ pub const Link = struct {
 pub const STONY_FIELD: i32 = 4;
 pub const TRISTRAM: i32 = 38;
 pub const ROGUE_ENCAMPMENT: i32 = 1;
+pub const LUT_GHOLEIN: i32 = 40;
+pub const KURAST_DOCKS: i32 = 75;
 pub const MOO_MOO_FARM: i32 = 39;
 pub const CANYON_OF_THE_MAGI: i32 = 46;
 pub const PALACE_CELLAR_3: i32 = 54;
@@ -111,6 +118,20 @@ pub const LINKS = blk: {
             .to = HARROGATH,
             .kind = .act_change,
             .note = "Tyrael's portal, after Diablo.",
+        },
+        .{
+            .from = ROGUE_ENCAMPMENT,
+            .to = LUT_GHOLEIN,
+            .kind = .npc_travel,
+            .provenance = .table_implied,
+            .note = "Warriv's caravan. Act 1 and Act 2 share no map link of any kind.",
+        },
+        .{
+            .from = LUT_GHOLEIN,
+            .to = KURAST_DOCKS,
+            .kind = .npc_travel,
+            .provenance = .table_implied,
+            .note = "Meshif's ship. Act 2 and Act 3 share no map link of any kind.",
         },
         .{
             .from = HARROGATH,

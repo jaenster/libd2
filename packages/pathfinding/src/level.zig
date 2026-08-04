@@ -40,6 +40,23 @@ pub const Exit = struct {
     };
 };
 
+/// A door placed on a level, in level-local subtiles.
+pub const Door = struct {
+    class_id: i32,
+    x: i32,
+    y: i32,
+    /// Objects.txt `OperateFn`, which is a function INDEX rather than a name. 8 is the ordinary
+    /// openable door (23 of the rows); 18 is a secret door, 29 the Act 3 slime doors, and 0 means
+    /// the object has no operate function at all — Tyrael's door, which a quest opens, not you.
+    /// A mover that has to decide whether it can open something needs this, not just the position.
+    operate_fn: i16,
+
+    /// True for the ordinary door a character opens by walking into it.
+    pub fn isOrdinary(self: Door) bool {
+        return self.operate_fn == 8;
+    }
+};
+
 pub const Level = struct {
     id: i32,
     /// World TILE origin. Levels of one act share a world frame; add `origin * 5` to a

@@ -624,6 +624,181 @@ test "the clearance transform is an exact Chebyshev distance to the nearest wall
     try testing.expectEqual(@as(u8, 1), cl[4 * 9 + 0]);
 }
 
+test "Act 1 routes town to Andariel, the way the game is played" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // Rogue Encampment -> Blood Moor -> Cold Plains -> Stony Field -> Dark Wood -> Black Marsh ->
+    // Tamoe Highland -> Monastery Gate -> Outer Cloister -> Barracks -> Jail 1/2/3 -> Inner
+    // Cloister -> Cathedral -> Catacombs 1..4. Outdoor seams, then warp doors, then the
+    // door-heavy Jail and Catacombs run.
+    const ANDARIEL: i32 = 37; // Catacombs Level 4
+    var chain: std.ArrayListUnmanaged(i32) = .empty;
+    defer chain.deinit(alloc);
+    try f.world.levelRoute(1, ANDARIEL, &chain);
+
+    try testing.expectEqual(@as(i32, 1), chain.items[0]);
+    try testing.expectEqual(ANDARIEL, chain.items[chain.items.len - 1]);
+    // The Catacombs are only reachable through the Cathedral, which is only reachable through the
+    // Inner Cloister -- so the tail of the chain is forced and worth pinning.
+    for ([_]i32{ 33, 34, 35, 36, 37 }) |want| {
+        try testing.expect(std.mem.indexOfScalar(i32, chain.items, want) != null);
+    }
+
+    const from = try centre(f.world.level(1).?, pf.Colmask.player_path);
+    const to = try centre(f.world.level(ANDARIEL).?, pf.Colmask.player_path);
+    for ([_]bool{ false, true }) |tele| {
+        var r = try f.world.route(
+            .{ .level = 1, .x = from.x, .y = from.y },
+            .{ .level = ANDARIEL, .x = to.x, .y = to.y },
+            .{ .teleport = tele },
+        );
+        defer r.deinit();
+        try testing.expectEqual(chain.items.len, r.legs.len);
+        for (r.legs) |leg| try testing.expect(leg.moves.len > 0);
+    }
+}
+
+test "the Jail and Catacombs runs report the doors they pass" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // The generated grid has no door bit, so the search walks through doorways as if open -- which
+    // is right, a character opens what it walks into. The route still has to SAY so.
+    var any: usize = 0;
+    for ([_]i32{ 28, 29, 30, 31, 33, 34, 35, 36 }) |lid| {
+        var doors: std.ArrayListUnmanaged(pf.Door) = .empty;
+        defer doors.deinit(alloc);
+        f.world.doorsOn(lid, &doors) catch continue;
+        any += doors.items.len;
+        // A door must sit somewhere inside its level.
+        const lv = f.world.level(lid) orelse continue;
+        for (doors.items) |d| try testing.expect(lv.inBounds(d.x, d.y));
+    }
+    try testing.expect(any > 0);
+
+    // And a real route through them reports the ones it passes, in leg order.
+    const from = try centre(f.world.level(28).?, pf.Colmask.player_path);
+    const to = try centre(f.world.level(31).?, pf.Colmask.player_path);
+    var r = try f.world.route(
+        .{ .level = 28, .x = from.x, .y = from.y },
+        .{ .level = 31, .x = to.x, .y = to.y },
+        .{},
+    );
+    defer r.deinit();
+
+    var passed: std.ArrayListUnmanaged(pf.RouteDoor) = .empty;
+    defer passed.deinit(alloc);
+    try f.world.doorsAlong(&r, 12, &passed);
+    var last_leg: usize = 0;
+    for (passed.items) |rd| {
+        try testing.expect(rd.leg >= last_leg); // in the order they are met
+        last_leg = rd.leg;
+        try testing.expect(rd.move < r.legs[rd.leg].moves.len);
+    }
+}
+
+test "the whole game connects, bar one known hole" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{ 0, 1, 2, 3, 4 });
+    defer f.deinit();
+    try testing.expect(f.world.levels.items.len > 120);
+
+    // Every boss in order, each from where the last one left you. Act travel (Warriv, Meshif) is in
+    // the portal table as `.npc_travel`, which is what lets the chain cross from act to act at all.
+    const STAGES = [_]struct { to: i32, name: []const u8 }{
+        .{ .to = 37, .name = "Andariel" },
+        .{ .to = 73, .name = "Duriel" },
+        .{ .to = 102, .name = "Mephisto" },
+        .{ .to = 108, .name = "Diablo" },
+    };
+    var chain: std.ArrayListUnmanaged(i32) = .empty;
+    defer chain.deinit(alloc);
+    var from: i32 = 1;
+    for (STAGES) |st| {
+        chain.clearRetainingCapacity();
+        f.world.levelRoute(from, st.to, &chain) catch |e| {
+            std.debug.print("stage {s} unreachable: {s}\n", .{ st.name, @errorName(e) });
+            return e;
+        };
+        try testing.expectEqual(from, chain.items[0]);
+        try testing.expectEqual(st.to, chain.items[chain.items.len - 1]);
+        from = st.to;
+    }
+
+    // KNOWN GAP: Throne of Destruction -> Worldstone Chamber. Levels.txt gives 131 Vis1=132
+    // Warp1=82 and 132 Vis0=131 Warp0=81, but map generation emits no warp adjacency for the pair
+    // (131 reports only its exit to 130; 132 reports none at all), so Baal is unreachable. That is
+    // a d2-drlg warp-collection gap, not a routing one.
+    //
+    // Rather than pin the bug, this asserts the SHAPE of the situation: every Levels.txt Vis pair
+    // must produce an adjacency except that one. It passes today, keeps passing when the gap is
+    // closed, and fails the moment a different link goes missing.
+    var holes: usize = 0;
+    for (f.world.levels.items) |*lv| {
+        for (lv.exits) |_| {}
+        const vis = try visOf(alloc, lv.id);
+        defer alloc.free(vis);
+        for (vis) |dest| {
+            if (dest == 0 or dest == lv.id) continue;
+            const dl = f.world.level(dest) orelse continue;
+            var found = false;
+            for (lv.exits) |e| {
+                if (e.to_level == dest) found = true;
+            }
+            for (dl.exits) |e| {
+                if (e.to_level == lv.id) found = true;
+            }
+            if (found) continue;
+            holes += 1;
+            const known = (lv.id == 131 and dest == 132) or (lv.id == 132 and dest == 131);
+            if (!known) {
+                std.debug.print("unexpected adjacency hole: {d} -> {d}\n", .{ lv.id, dest });
+                return error.UnexpectedAdjacencyHole;
+            }
+        }
+    }
+    try testing.expectEqual(@as(usize, 2), holes); // the pair, seen from both sides
+}
+
+/// A level's Levels.txt Vis array.
+fn visOf(alloc: std.mem.Allocator, level_id: i32) ![]i32 {
+    const text = @import("d2-data").file("Levels");
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    const header = lines.next() orelse return error.InvalidTable;
+    var idc: usize = 0;
+    var visc: [8]usize = @splat(0);
+    var cols = std.mem.splitScalar(u8, header, '\t');
+    var i: usize = 0;
+    while (cols.next()) |c| : (i += 1) {
+        const nm = std.mem.trim(u8, c, "\r");
+        if (std.mem.eql(u8, nm, "Id")) idc = i;
+        for (0..8) |v| {
+            var buf: [8]u8 = undefined;
+            const want = std.fmt.bufPrint(&buf, "Vis{d}", .{v}) catch continue;
+            if (std.mem.eql(u8, nm, want)) visc[v] = i;
+        }
+    }
+    while (lines.next()) |line| {
+        if (std.mem.trim(u8, line, "\r \t").len == 0) continue;
+        var c2 = std.mem.splitScalar(u8, line, '\t');
+        var j: usize = 0;
+        var lid: i32 = -1;
+        var vis: [8]i32 = @splat(0);
+        while (c2.next()) |c| : (j += 1) {
+            const v = std.mem.trim(u8, c, "\r ");
+            if (j == idc) lid = std.fmt.parseInt(i32, v, 10) catch -1;
+            for (0..8) |k| {
+                if (visc[k] != 0 and j == visc[k]) vis[k] = std.fmt.parseInt(i32, v, 10) catch 0;
+            }
+        }
+        if (lid == level_id) return alloc.dupe(i32, &vis);
+    }
+    return alloc.dupe(i32, &[_]i32{});
+}
+
 test "an unreachable level fails fast instead of searching" {
     const alloc = testing.allocator;
     var f = try Fixture.load(alloc, &.{0});
