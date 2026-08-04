@@ -359,6 +359,10 @@ pub const LevelFull = struct {
     /// raw u16 CollMap via `collision.walkable`. Path-ready: consumers inflate and A* on it
     /// directly. Empty when the level has no collision. Deflates to a fraction of the u16 grid.
     walk_deflated: []u8,
+    /// Transient: the undeflated CollMap bytes, set only between materialization and the
+    /// `DeflateManyFn` flush that fills `coll_deflated`. Points into a batch arena that the
+    /// flush resets, so it is always empty by the time a caller sees the result.
+    raw: []const u8 = &.{},
 };
 
 pub const ActFullResult = struct {
@@ -381,6 +385,21 @@ pub const ActFullResult = struct {
 /// is passed `null` for its `deflate_fn`, it uses the pure-Zig `deflateZlib` below (the default,
 /// keeping the library + wasm build libc-free). The native server injects a libz-backed impl.
 pub const DeflateFn = *const fn (alloc: std.mem.Allocator, raw: []const u8) anyerror![]u8;
+
+/// Deflate several CollMaps at once, writing each `srcs[i]`'s stream to `dsts[i]`. Same output
+/// contract as `DeflateFn`, one call per batch instead of per level: compression is the biggest
+/// phase of a whole-act render and is a pure function of bytes, so a host with a thread pool
+/// can overlap the levels. Every `dsts[i]` must be owned by `alloc`, which is NOT thread-safe —
+/// an implementation that fans out has to bring the results back before it returns them.
+pub const DeflateManyFn = *const fn (alloc: std.mem.Allocator, srcs: []const []const u8, dsts: [][]u8) anyerror!void;
+
+/// Installed by a host that can compress concurrently (drlg-server does). Null = deflate each
+/// level inline, on the generating thread, as before.
+pub var deflate_many: ?DeflateManyFn = null;
+
+/// Levels held raw before a `deflate_many` flush. A whole act's raw CollMaps are ~48 MB, so
+/// the batch is bounded; 8 is the width a flush can actually use.
+const deflate_batch = 8;
 
 /// zlib-deflate (rfc1950, fastest flate level) `input` into a fresh `alloc` slice. The
 /// single pure-Zig collision-compression primitive; the DEFAULT `DeflateFn` when a caller
@@ -417,16 +436,21 @@ pub fn inflateZlib(alloc: std.mem.Allocator, deflated: []const u8, expected_len:
 /// `sa` is the per-level scratch arena (the raw grid + LE bytes live here and die on the
 /// next reset); the returned deflated bytes are `out_alloc`-owned and small. Sets w/h to the
 /// grid dims. Returns empty deflated (w=h=0) when the level materialized no collision.
+///
+/// When `raw_alloc` is non-null the level is NOT compressed here: its LE bytes are copied
+/// into that (batch-lifetime) allocator and returned as `raw`, for the caller to hand to a
+/// `DeflateManyFn` together with the rest of its batch.
 fn deflateLevelColl(
     out_alloc: std.mem.Allocator,
     sa: std.mem.Allocator,
+    raw_alloc: ?std.mem.Allocator,
     ctx: *Ctx,
     idx: *const dt1blob.Index,
     pLevel: *abi.D2DrlgLevelStrc,
     lid: i32,
     deflate_fn: ?DeflateFn,
     want_walk: bool,
-) !struct { w: i32, h: i32, deflated: []u8, walk_deflated: []u8 } {
+) !struct { w: i32, h: i32, deflated: []u8, walk_deflated: []u8, raw: []const u8 = &.{} } {
     const t_mat = prof.begin();
     const maybe_lc = try materializeLevelColl(sa, ctx, idx, pLevel, lid);
     prof.end(.materialize, t_mat);
@@ -445,9 +469,6 @@ fn deflateLevelColl(
                 for (rc.cells, 0..) |cell, i| std.mem.writeInt(u16, tmp[i * 2 ..][0..2], cell, .little);
                 break :blk tmp;
             };
-            const t_def = prof.begin();
-            const deflated = if (deflate_fn) |df| try df(out_alloc, src) else try deflateZlib(out_alloc, src);
-            prof.end(.deflate, t_def);
             // Walk grid: 1 byte/cell (0=blocked, 1=walkable). Only the `?walk=` responses
             // carry it, and it used to be built AND deflated for every request regardless —
             // a whole extra level-sized grid through zlib, then discarded by the serializer.
@@ -459,6 +480,15 @@ fn deflateLevelColl(
                 walk_deflated = if (deflate_fn) |df| try df(out_alloc, walk) else try deflateZlib(out_alloc, walk);
                 prof.end(.walk, t_walk);
             }
+            if (raw_alloc) |ra| {
+                // Deferred: the raw grid lives in `sa`, which is reset before the batch
+                // flushes, so it moves to the batch allocator now.
+                const kept = try ra.dupe(u8, src);
+                return .{ .w = @intCast(rc.w), .h = @intCast(rc.h), .deflated = &.{}, .walk_deflated = walk_deflated, .raw = kept };
+            }
+            const t_def = prof.begin();
+            const deflated = if (deflate_fn) |df| try df(out_alloc, src) else try deflateZlib(out_alloc, src);
+            prof.end(.deflate, t_def);
             return .{ .w = @intCast(rc.w), .h = @intCast(rc.h), .deflated = deflated, .walk_deflated = walk_deflated };
         }
     }
@@ -475,6 +505,7 @@ fn collectLevelFull(
     want_walk: bool,
     out_alloc: std.mem.Allocator,
     sa: std.mem.Allocator,
+    raw_alloc: ?std.mem.Allocator,
     ctx: *Ctx,
     idx: *const dt1blob.Index,
     act: *const act_mod.Act,
@@ -508,7 +539,7 @@ fn collectLevelFull(
     errdefer out_alloc.free(adjacents);
     prof.end(.collect, t_collect);
 
-    const coll = try deflateLevelColl(out_alloc, sa, ctx, idx, pLevel, lid, deflate_fn, want_walk);
+    const coll = try deflateLevelColl(out_alloc, sa, raw_alloc, ctx, idx, pLevel, lid, deflate_fn, want_walk);
     errdefer if (coll.deflated.len != 0) out_alloc.free(coll.deflated);
     errdefer if (coll.walk_deflated.len != 0) out_alloc.free(coll.walk_deflated);
 
@@ -529,6 +560,7 @@ fn collectLevelFull(
         .coll_h = coll.h,
         .coll_deflated = coll.deflated,
         .walk_deflated = coll.walk_deflated,
+        .raw = coll.raw,
     };
 }
 
@@ -621,6 +653,43 @@ pub fn generateActFull(
         for (out.items) |l| freeLevelFull(out_alloc, l);
         out.deinit(out_alloc);
     }
+
+    // With a `deflate_many` host, levels are held raw in `batch` and compressed a group at a
+    // time so the host can overlap them; `batch` is reset after each flush, which is why the
+    // whole act's raw CollMaps never coexist.
+    var batch = std.heap.ArenaAllocator.init(ctx.gpa);
+    defer batch.deinit();
+    var pend_raw: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer pend_raw.deinit(ctx.gpa);
+    var pend_level: std.ArrayListUnmanaged(usize) = .empty;
+    defer pend_level.deinit(ctx.gpa);
+
+    const Flush = struct {
+        fn run(
+            gpa: std.mem.Allocator,
+            oa: std.mem.Allocator,
+            many: DeflateManyFn,
+            raws: *std.ArrayListUnmanaged([]const u8),
+            levels: *std.ArrayListUnmanaged(usize),
+            dst: *std.ArrayListUnmanaged(LevelFull),
+            ba: *std.heap.ArenaAllocator,
+        ) !void {
+            if (raws.items.len == 0) return;
+            const t = prof.begin();
+            const outs = try gpa.alloc([]u8, raws.items.len);
+            defer gpa.free(outs);
+            try many(oa, raws.items, outs);
+            prof.end(.deflate, t);
+            for (levels.items, outs) |li, d| {
+                dst.items[li].coll_deflated = d;
+                dst.items[li].raw = &.{}; // the batch arena is about to be reset
+            }
+            raws.clearRetainingCapacity();
+            levels.clearRetainingCapacity();
+            _ = ba.reset(.retain_capacity);
+        }
+    };
+
     for (ids.items) |lid| {
         _ = scratch.reset(.free_all);
         const sa = scratch.allocator();
@@ -631,8 +700,19 @@ pub fn generateActFull(
         const t_gen = prof.begin();
         if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
         prof.end(.generate, t_gen);
-        try out.append(out_alloc, try collectLevelFull(want_walk, out_alloc, sa, ctx, idx, &act, pLevel, lid, deflate_fn));
+        const raw_alloc: ?std.mem.Allocator = if (deflate_many != null) batch.allocator() else null;
+        const lf = try collectLevelFull(want_walk, out_alloc, sa, raw_alloc, ctx, idx, &act, pLevel, lid, deflate_fn);
+        try out.append(out_alloc, lf);
+        if (deflate_many) |many| {
+            if (lf.raw.len != 0) {
+                try pend_raw.append(ctx.gpa, lf.raw);
+                try pend_level.append(ctx.gpa, out.items.len - 1);
+                if (pend_raw.items.len >= deflate_batch)
+                    try Flush.run(ctx.gpa, out_alloc, many, &pend_raw, &pend_level, &out, &batch);
+            }
+        }
     }
+    if (deflate_many) |many| try Flush.run(ctx.gpa, out_alloc, many, &pend_raw, &pend_level, &out, &batch);
 
     // Pass 3: cross-level SEAM adjacency. Every level's rooms are now placed, so the
     // outdoor border-junction bridges (coordinate-adjacent rooms across a level seam) are
@@ -748,7 +828,7 @@ pub fn generateLevelFull(
     // Pass 2 for the target level ONLY (no Pass 3 seam adjacents — see the doc caveat).
     const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(level_id));
     drlg.InitLevel(pLevel);
-    return try collectLevelFull(want_walk, out_alloc, scratch.allocator(), ctx, idx, &act, pLevel, level_id, deflate_fn);
+    return try collectLevelFull(want_walk, out_alloc, scratch.allocator(), null, ctx, idx, &act, pLevel, level_id, deflate_fn);
 }
 
 // ---- collision maps --------------------------------------------------------
