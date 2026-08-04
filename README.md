@@ -59,7 +59,7 @@ ones the language guides below use. For .NET there is a package that wraps it, s
 the C boundary shows through:
 
 ```sh
-dotnet add package LibD2.Drlg
+dotnet add package LibD2
 ```
 
 ### Try it without installing anything
@@ -122,8 +122,8 @@ itself. `item` has the same shape, as `@jaenster/d2item`.
 - [Zig](docs/usage/zig.md)
 
 Where to get the artifacts:
-- **.NET**: `LibD2.Drlg` on NuGet. Carries the native binary for every platform, so there is
-  nothing to place by hand.
+- **.NET**: `LibD2` on NuGet. One package for the whole library, carrying a native build for
+  every platform .NET runs on, so there is nothing to place by hand.
 - **Native libs + headers**: attached to the package's GitHub Release
   (`<pkg>-vX.Y.Z`), one archive per target: linux / macos / windows × x64 / arm64.
 - **WebAssembly**: published to npm as `@jaenster/d2<pkg>` (e.g. `@jaenster/d2drlg`),
