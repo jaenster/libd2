@@ -12,12 +12,14 @@ const std = @import("std");
 /// @0x56d810, 191-entry table @0x7322b0, indices 1..152 populated). Every populated index is named
 /// after its engine function so a branch can be self-documenting.
 ///
-/// CAUTION: the names are the engine's Ghidra symbols and are occasionally MISLEADING — e.g. index
-/// 45 is the assassin trap-sentry handler (Lightning/Death Sentry) and 49 the shadow-clone handler
-/// (Shadow Warrior/Master), the REVERSE of what the `shadow_master`/`sentry_spawn` labels suggest;
-/// likewise 44/48 (Blade Sentinel vs Blade Fury) and 60/62 (Bone Wall/Prison, not golem-at-cursor).
-/// The AUTHORITATIVE skill→func mapping is Skills.txt `srvdofunc`, and behaviour comes from the
-/// function body — never derive semantics from the label.
+/// These names follow the SKILL that uses each srvdofunc — the authoritative mapping is Skills.txt,
+/// which IS the engine's runtime dispatch data (a skill row's `srvdofunc` selects SKILLSRVDOFUNCS[N]).
+/// CAUTION: several of Ghidra's auto-named `Skills_SrvDoFunc_NNN_*` symbols DISAGREE with that data and
+/// are misnamed — verified from Skills.txt: 44=Blade Sentinel, 45=trap sentries (Lightning/Death
+/// Sentry), 48=Blade Fury, 49=Shadow Warrior/Master, 56=golems (Clay/Blood/Fire), 60=Bone Wall,
+/// 62=Bone Prison, 117=Firestorm, 118=Twister/Tornado. (117/118 were corrected in Ghidra v630; the
+/// rest still carry Ghidra's wrong symbol names — do NOT trust the Ghidra label, trust Skills.txt +
+/// the function body reached THROUGH the table index, not through the symbol name.)
 pub const DoFunc = enum(i32) {
     none = 0,
     attack = 1,
@@ -63,7 +65,7 @@ pub const DoFunc = enum(i32) {
     blade_fury_scatter = 41,
     dragon_talon = 42,
     charge_release_scatter_missiles = 43,
-    summon_trap_or_creeper = 44,
+    blade_sentinel = 44,
     summon_trap_sentry = 45,
     cobra_strike = 46,
     cloak_of_shadows = 47,
@@ -75,11 +77,11 @@ pub const DoFunc = enum(i32) {
     venom_blade_shield_area_pulse = 53,
     blade_shield_activate = 54,
     corpse_explosion = 55,
-    summon_minion = 56,
+    summon_golem = 56,
     iron_golem = 57,
     revive_corpse_check = 58,
     cast_corpse_skill = 59,
-    summon_golem_at_cursor = 60,
+    summon_bone_wall = 60,
     cast_convert_aoe = 61,
     spawn_bone_structure = 62,
     corpse_radial_missiles = 63,
