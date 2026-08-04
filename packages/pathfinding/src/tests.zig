@@ -942,8 +942,9 @@ test "line of sight is direction-dependent, as it is in the engine" {
     const alloc = testing.allocator;
     // A single blocking cell off the centre line. Bresenham visits a different chain of cells
     // depending on which end it starts from, so a thin obstacle can be clipped one way and
-    // missed the other. TestCollision (0x64e260) has exactly this property, and the server
-    // always traces FROM THE CASTER — so a bot must ask the question in that direction.
+    // missed the other. TestCollision (0x64e260) has exactly this property, and the direction the
+    // server uses is TARGET -> CASTER: SKILLS_HasLineOfSightToUnit (0x645950) puts the aim point
+    // in ptSrc and the unit's own position in ptDest. cast.zig asks it that way round.
     var cells = [_]u16{0} ** (9 * 9);
     cells[3 * 9 + 6] = pf.Colbit.wall;
     var pm = try pf.grid.buildPassMap(alloc, &cells, 9, 9, pf.Colmask.player_path, .point);
@@ -1004,4 +1005,87 @@ test "a missile flies where a player cannot walk" {
 
     const stop = pf.grid.trace(&fly2, from, to);
     try testing.expectEqual(open.x + 1, stop.at.x);
+}
+
+test "a cast is refused by range, by line of sight, or by having no rule" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    const lv = f.world.level(2) orelse return error.NoLevel;
+    const pm = try lv.passMapFor(pf.Colmask.radial_barrier, .point);
+    const here = pf.grid.nearestPassable(pm, @divTrunc(lv.w, 2), @divTrunc(lv.h, 2), 128) orelse
+        return error.NoPassableCell;
+
+    // Casting at your own feet always clears both gates.
+    try testing.expectEqual(pf.CastVerdict.ok, try pf.cast.canCast(lv, here, here));
+
+    // One subtile past the packet handler's gate. It is Chebyshev, so this is about the axis,
+    // not the distance: a (50,50) diagonal is fine and a (51,0) straight line is not.
+    const gate = pf.teleport.ENGINE_MAX_CAST;
+    try testing.expectEqual(
+        pf.CastVerdict.out_of_range,
+        try pf.cast.canCast(lv, here, .{ .x = here.x + gate + 1, .y = here.y }),
+    );
+    try testing.expectEqual(
+        pf.CastVerdict.ok,
+        try pf.cast.canCastAt(lv, here, .{ .x = here.x, .y = here.y }, .barrier, gate),
+    );
+
+    // A skill whose lineofsight column is not one the jump table handles cannot be cast.
+    try testing.expectEqual(
+        pf.CastVerdict.no_line_of_sight_rule,
+        try pf.cast.canCastAt(lv, here, here, .none, gate),
+    );
+
+    // Somewhere on the level, something within cast range is behind a barrier — otherwise the
+    // line-of-sight gate would never fire and would not be worth modelling.
+    var blocked: usize = 0;
+    for (f.world.levels.items) |*l| {
+        var y: i32 = 0;
+        while (y < l.h) : (y += 20) {
+            var x: i32 = 0;
+            while (x < l.w) : (x += 20) {
+                const a = pf.Point{ .x = x, .y = y };
+                const b = pf.Point{ .x = @min(x + gate, l.w - 1), .y = @min(y + gate, l.h - 1) };
+                if ((try pf.cast.canCast(l, a, b)) == .no_line_of_sight) blocked += 1;
+            }
+        }
+    }
+    try testing.expect(blocked > 0);
+}
+
+test "canTeleportTo agrees with the route builder about every cast it emits" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // The router already proves its casts against the room rule; this proves the standalone
+    // predicate a bot would call reaches the same verdict, so the two cannot drift apart.
+    var checked: usize = 0;
+    for (f.world.levels.items) |*lv| {
+        if (lv.teleport == .forbidden) continue;
+        const pm = try lv.passMap(pf.Colmask.player_path);
+        const a = pf.grid.nearestPassable(pm, @divTrunc(lv.w, 4), @divTrunc(lv.h, 4), 64) orelse continue;
+        const b = pf.grid.nearestPassable(pm, lv.w - @divTrunc(lv.w, 4), lv.h - @divTrunc(lv.h, 4), 64) orelse continue;
+
+        var r = f.world.route(
+            .{ .level = lv.id, .x = a.x, .y = a.y },
+            .{ .level = lv.id, .x = b.x, .y = b.y },
+            .{ .teleport = true },
+        ) catch continue;
+        defer r.deinit();
+
+        for (r.legs) |leg| {
+            var i: usize = 1;
+            while (i < leg.moves.len) : (i += 1) {
+                if (leg.moves[i].kind != .teleport) continue;
+                const from = pf.Point{ .x = leg.moves[i - 1].x, .y = leg.moves[i - 1].y };
+                const to = pf.Point{ .x = leg.moves[i].x, .y = leg.moves[i].y };
+                try testing.expect(try pf.cast.canTeleportTo(lv, from, to, pf.teleport.ENGINE_MAX_CAST));
+                checked += 1;
+            }
+        }
+    }
+    try testing.expect(checked > 50);
 }
