@@ -1331,8 +1331,8 @@ pub fn generateActComposite(
 
 /// A level composited into ONE level-local subtile grid of RAW u16 CollMap flags —
 /// the exact per-subtile bits the engine's Room1.pColl carries at room init
-/// (collision.Colbit: 0x01 block_walk, 0x02 block_los, 0x04 wall, 0x08 block_player,
-/// 0x10 alternate_tile, 0x20 blank, …). Dims equal the level's WorldSize×SUBTILES_PER_TILE
+/// (collision.Colbit: 0x01 wall, 0x02 visible, 0x04 missile_barrier, 0x08 noplayer,
+/// 0x10 preset, 0x20 blank, …). Dims equal the level's WorldSize×SUBTILES_PER_TILE
 /// (what DBM reports as collisionWidth/Height); origin is level-local (0,0) at the
 /// level WorldPosition. Uncovered cells (the level rect exceeds room coverage) are
 /// the OOB fill 0x00FF, matching DBM.

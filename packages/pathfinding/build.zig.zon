@@ -1,0 +1,22 @@
+.{
+    .name = .d2_pathfinding,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x39333ccecddd07de,
+
+    // d2-drlg supplies the world (collision grids, rooms, warp/seam adjacency); d2-core supplies
+    // the collision bit/mask vocabulary both sides have to agree on; d2-data supplies Levels.txt,
+    // which is where the per-level teleport rule lives.
+    .dependencies = .{
+        .d2_drlg = .{ .path = "../drlg" },
+        .d2_core = .{ .path = "../core" },
+        .d2_data = .{ .path = "../data" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+}
