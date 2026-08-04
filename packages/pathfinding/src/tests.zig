@@ -1089,3 +1089,83 @@ test "canTeleportTo agrees with the route builder about every cast it emits" {
     }
     try testing.expect(checked > 50);
 }
+
+test "attack positions are in range, stand-able and can see the target" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    const lv = f.world.level(2) orelse return error.NoLevel;
+    const stand = try lv.passMapFor(pf.Colmask.player_path, .point);
+    const target = pf.grid.nearestPassable(stand, @divTrunc(lv.w, 2), @divTrunc(lv.h, 2), 128) orelse
+        return error.NoPassableCell;
+
+    const spots = try pf.cast.attackPositions(alloc, lv, target, .{ .min_range = 3, .max_range = 20 });
+    defer alloc.free(spots);
+    try testing.expect(spots.len > 0);
+
+    const sight = try lv.passMapFor(pf.Colmask.radial_barrier, .point);
+    for (spots) |s| {
+        try testing.expect(s.dist >= 3 and s.dist <= 20);
+        try testing.expectEqual(s.dist, @as(i32, @intCast(@max(@abs(s.at.x - target.x), @abs(s.at.y - target.y)))));
+        try testing.expect(stand.passable(s.at.x, s.at.y));
+        try testing.expect(pf.cast.unitsCanReach(sight, target, 1, s.at, 1));
+    }
+    // Best first: roomier, then closer.
+    for (spots[1..], 0..) |s, i| {
+        const prev = spots[i];
+        try testing.expect(prev.clearance > s.clearance or
+            (prev.clearance == s.clearance and prev.dist <= s.dist));
+    }
+}
+
+test "a big attacker gets fewer places to stand than a small one" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // Same target, same range, only the footprint differs — the 3x3 shape cannot use cells the
+    // point-sized one can, which is the whole reason CheckCollision dispatches on unit size.
+    var total_point: usize = 0;
+    var total_box: usize = 0;
+    for (f.world.levels.items) |*lv| {
+        const stand = try lv.passMapFor(pf.Colmask.player_path, .point);
+        const t = pf.grid.nearestPassable(stand, @divTrunc(lv.w, 2), @divTrunc(lv.h, 2), 128) orelse continue;
+        const small = try pf.cast.attackPositions(alloc, lv, t, .{ .max_range = 12, .limit = 4096 });
+        defer alloc.free(small);
+        const big = try pf.cast.attackPositions(alloc, lv, t, .{ .max_range = 12, .limit = 4096, .footprint = .box3 });
+        defer alloc.free(big);
+        try testing.expect(big.len <= small.len);
+        total_point += small.len;
+        total_box += big.len;
+    }
+    try testing.expect(total_box < total_point);
+    try testing.expect(total_box > 0);
+}
+
+test "unitsCanReach shrinks the segment by each radius before tracing" {
+    const alloc = testing.allocator;
+    // Wall at x = 4. Two units either side, radius 2 each.
+    var cells = [_]u16{0} ** (11 * 11);
+    for (0..11) |y| cells[y * 11 + 4] = pf.Colbit.wall;
+    var pm = try pf.grid.buildPassMap(alloc, &cells, 11, 11, pf.Colmask.radial_barrier, .point);
+    defer pm.deinit(alloc);
+
+    const a = pf.Point{ .x = 0, .y = 5 };
+    const b = pf.Point{ .x = 10, .y = 5 };
+    try testing.expect(!pf.cast.unitsCanReach(&pm, a, 2, b, 2));
+
+    // Close enough that the Manhattan check short-circuits: the engine reports no collision
+    // without tracing at all, even standing right on the wall.
+    const near = pf.Point{ .x = 4, .y = 5 };
+    try testing.expect(pf.cast.unitsCanReach(&pm, near, 2, .{ .x = 5, .y = 5 }, 2));
+
+    // Radii are clamped, so anything at or above 2 behaves identically.
+    var open = [_]u16{0} ** (11 * 11);
+    var pm2 = try pf.grid.buildPassMap(alloc, &open, 11, 11, pf.Colmask.radial_barrier, .point);
+    defer pm2.deinit(alloc);
+    try testing.expectEqual(
+        pf.cast.unitsCanReach(&pm2, a, 2, b, 2),
+        pf.cast.unitsCanReach(&pm2, a, 99, b, 99),
+    );
+}
