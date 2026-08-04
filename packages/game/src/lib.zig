@@ -23,6 +23,7 @@ pub const spell = @import("spell.zig");
 pub const montable = @import("montable.zig");
 pub const monskill = @import("monskill.zig");
 pub const missile = @import("missile.zig");
+pub const missilespawn = @import("missilespawn.zig");
 pub const select = @import("select.zig");
 pub const ai = @import("ai.zig");
 pub const monai = @import("monai.zig");
@@ -99,6 +100,7 @@ test {
     _ = montable;
     _ = monskill;
     _ = missile;
+    _ = missilespawn;
     _ = select;
     _ = ai;
     _ = monai;
