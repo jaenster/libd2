@@ -618,6 +618,24 @@ pub fn resolve(
         buf[0] = .{ .set_aura = .{ .skill_id = skill_id } };
         return buf[0..1];
     }
+    // Summon (skeletons / golems / valkyrie / traps / hydra / druid pets): the monster + placement.
+    if (sd.is_summon) {
+        const lvl = book.get(skill_id);
+        const info = skills.summonInfo(skill_id, lvl);
+        if (info.monster.len == 0) return buf[0..0];
+        if (sd.srvdofunc == 144) { // Hydra: three stationary heads at the cursor
+            const off = [_]i32{ -1, 0, 1 };
+            for (off, 0..) |ox, i| buf[i] = .{ .summon = .{ .monster = info.monster, .x = target_x + ox, .y = target_y, .count = info.count, .kind = .hydra_head } };
+            return buf[0..3];
+        }
+        const is_golem = std.mem.indexOf(u8, info.monster, "Golem") != null;
+        const is_trap = sd.srvdofunc == 44 or sd.srvdofunc == 45; // Blade Sentinel / assassin sentries
+        const kind: effect_mod.SummonKind = if (is_golem) .golem else if (is_trap) .trap else .pet;
+        const sx = if (is_trap) target_x else caster_x + 2;
+        const sy = if (is_trap) target_y else caster_y;
+        buf[0] = .{ .summon = .{ .monster = info.monster, .x = sx, .y = sy, .count = info.count, .kind = kind } };
+        return buf[0..1];
+    }
     // Curses (30 Necro curses; 6 Inner Sight / Slow Missiles): a debuff over hostiles in radius.
     if (sd.srvdofunc == 30 or sd.srvdofunc == 6) {
         const lvl = book.get(skill_id);

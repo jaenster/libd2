@@ -9,6 +9,14 @@ const shrines = @import("shrines.zig");
 /// A crowd-control kind an area effect applies.
 pub const CcKind = enum { stun, fear, chill };
 
+/// The placement/cap rule for a summoned unit.
+pub const SummonKind = enum {
+    pet, // pet-cap enforced, next to the caster (skeletons / valkyrie / druid pets)
+    golem, // single golem, replaces the previous one
+    trap, // pet-cap, stationary at the cursor (assassin sentries / Blade Sentinel)
+    hydra_head, // stationary head at the cursor (Hydra spawns three)
+};
+
 /// One thing the host must do. Object resolvers emit the object arms; skill resolvers add theirs
 /// during the retrofit. `guid == 0` on an area effect means "centred at the given (x,y)".
 pub const Effect = union(enum) {
@@ -40,4 +48,7 @@ pub const Effect = union(enum) {
     cc_area: struct { x: i32, y: i32, radius: i32, frames: u32, target_guid: u32, kind: CcKind },
     /// Make `skill_id` the caster's active aura (tickAuras applies it each frame).
     set_aura: struct { skill_id: u16 },
+    /// Spawn a summon of MonStats `monster` at (x,y), owned by the caster. `kind` picks the
+    /// placement/cap rules; `count` is the pet cap (pet/trap kinds).
+    summon: struct { monster: []const u8, x: i32, y: i32, count: i32, kind: SummonKind },
 };
