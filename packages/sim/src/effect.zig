@@ -30,4 +30,11 @@ pub const Effect = union(enum) {
     warp_level: struct { level_id: u16 },
     /// Open the operator's personal stash.
     open_stash,
+
+    // --- skill arms (the castSkill retrofit migrates branches to these) ---
+    /// Apply a curse's debuff (its aurastat) to every hostile monster within `radius` of (x,y),
+    /// replacing any existing curse, for `duration` frames.
+    curse_area: struct { x: i32, y: i32, radius: i32, skill_id: u16, level: i32, duration: i32 },
+    /// Stun hostiles within `radius` of (x,y) for `frames`; radius==0 stuns `target_guid` only.
+    cc_area: struct { x: i32, y: i32, radius: i32, frames: u32, target_guid: u32 },
 };
