@@ -35,6 +35,9 @@ pub const Effect = union(enum) {
     /// Apply a curse's debuff (its aurastat) to every hostile monster within `radius` of (x,y),
     /// replacing any existing curse, for `duration` frames.
     curse_area: struct { x: i32, y: i32, radius: i32, skill_id: u16, level: i32, duration: i32 },
-    /// Stun hostiles within `radius` of (x,y) for `frames`; radius==0 stuns `target_guid` only.
-    cc_area: struct { x: i32, y: i32, radius: i32, frames: u32, target_guid: u32 },
+    /// Crowd-control hostiles within `radius` of (x,y) for `frames`; radius==0 hits `target_guid`
+    /// only. `kind` selects stun / fear / chill.
+    cc_area: struct { x: i32, y: i32, radius: i32, frames: u32, target_guid: u32, kind: CcKind },
+    /// Make `skill_id` the caster's active aura (tickAuras applies it each frame).
+    set_aura: struct { skill_id: u16 },
 };

@@ -605,12 +605,19 @@ pub fn resolve(
     skills: *const Skills,
     book: SkillBook,
     skill_id: u16,
+    caster_x: i32,
+    caster_y: i32,
     target_x: i32,
     target_y: i32,
     target_guid: u32,
     buf: []effect_mod.Effect,
 ) []effect_mod.Effect {
     const sd = skills.byId(skill_id) orelse return buf[0..0];
+    // Aura (Might / Concentration / ...): casting one makes it the caster's active aura.
+    if (sd.is_aura) {
+        buf[0] = .{ .set_aura = .{ .skill_id = skill_id } };
+        return buf[0..1];
+    }
     // Curses (30 Necro curses; 6 Inner Sight / Slow Missiles): a debuff over hostiles in radius.
     if (sd.srvdofunc == 30 or sd.srvdofunc == 6) {
         const lvl = book.get(skill_id);
@@ -624,12 +631,22 @@ pub fn resolve(
         } };
         return buf[0..1];
     }
+    // Fear (Grim Ward 75, Howl 22-no-element): hostiles in radius of the CASTER flee for the duration.
+    if (sd.srvdofunc == 75 or (sd.srvdofunc == 22 and sd.dmg.etype == .none)) {
+        const lvl = book.get(skill_id);
+        var radius = skills.evalCalc(book, 0, skill_id, lvl, "aurarangecalc");
+        if (radius <= 0) radius = 12; // Howl has no aurarangecalc column
+        var durc = skills.evalCalc(book, 0, skill_id, lvl, "auralencalc");
+        if (durc <= 0) durc = 25;
+        buf[0] = .{ .cc_area = .{ .x = caster_x, .y = caster_y, .radius = radius, .frames = @intCast(@max(1, durc)), .target_guid = 0, .kind = .fear } };
+        return buf[0..1];
+    }
     // Crowd control (47 Cloak, 51 Mind Blast, 59 Attract, 61 Confuse, 71 Taunt, 79 Conversion): a
     // brief stun — 47/51 hit an area, the rest the single target.
     switch (sd.srvdofunc) {
         47, 51, 59, 61, 71, 79 => {
             const area = sd.srvdofunc == 47 or sd.srvdofunc == 51;
-            buf[0] = .{ .cc_area = .{ .x = target_x, .y = target_y, .radius = if (area) 12 else 0, .frames = 25, .target_guid = target_guid } };
+            buf[0] = .{ .cc_area = .{ .x = target_x, .y = target_y, .radius = if (area) 12 else 0, .frames = 25, .target_guid = target_guid, .kind = .stun } };
             return buf[0..1];
         },
         else => {},
