@@ -1,4 +1,4 @@
-//! C-ABI shim for the d2-items package: exposes seed-driven drop generation to
+//! C-ABI shim for the d2-item package: exposes seed-driven drop generation to
 //! C/C++/C#/Node and to a freestanding wasm module. NO Zig types cross the
 //! boundary — only C primitives, fixed ints, pointers and `extern struct`s.
 //!
@@ -9,8 +9,8 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 
-/// Mirrors `model.Drop`, flattened to C. Field order/types MUST match d2items.h.
-pub const D2ItemsDrop = extern struct {
+/// Mirrors `model.Drop`, flattened to C. Field order/types MUST match d2item.h.
+pub const D2ItemDrop = extern struct {
     kind: u8, // DropKind tag: none=0 gold=1 item=2 quiver=3 bodypart=4
     item_code: [4]u8,
     quality: u8, // Quality enum(u8) tag value
@@ -24,7 +24,7 @@ pub const D2ItemsDrop = extern struct {
 };
 
 /// Opaque context: the loaded tables + treasure sets, built once. The C side only
-/// ever sees `*D2ItemsCtx` (an opaque pointer).
+/// ever sees `*D2ItemCtx` (an opaque pointer).
 pub const Ctx = struct {
     arena: std.heap.ArenaAllocator,
     tables: lib.Tables,
@@ -32,7 +32,7 @@ pub const Ctx = struct {
 };
 
 /// Loads tables + treasure sets. Returns null on any failure.
-export fn d2items_create() ?*Ctx {
+export fn d2item_create() ?*Ctx {
     const pa = std.heap.page_allocator;
     const ctx = pa.create(Ctx) catch return null;
     ctx.arena = std.heap.ArenaAllocator.init(pa);
@@ -51,7 +51,7 @@ export fn d2items_create() ?*Ctx {
     return ctx;
 }
 
-export fn d2items_destroy(ctx: ?*Ctx) void {
+export fn d2item_destroy(ctx: ?*Ctx) void {
     const c = ctx orelse return;
     c.arena.deinit();
     std.heap.page_allocator.destroy(c);
@@ -59,13 +59,13 @@ export fn d2items_destroy(ctx: ?*Ctx) void {
 
 /// Rolls a drop. Writes up to `cap` drops into `out`, returns the FULL count
 /// produced (so a caller can detect truncation) or a negative error code.
-export fn d2items_roll(
+export fn d2item_roll(
     ctx: ?*Ctx,
     seed: u32,
     tc_name: [*:0]const u8,
     mlvl: i32,
     mf: i32,
-    out: [*]D2ItemsDrop,
+    out: [*]D2ItemDrop,
     cap: i32,
 ) i32 {
     const c = ctx orelse return -1;
@@ -103,6 +103,6 @@ export fn d2items_roll(
     return @intCast(drops.len);
 }
 
-export fn d2items_abi_version() u32 {
+export fn d2item_abi_version() u32 {
     return 1;
 }

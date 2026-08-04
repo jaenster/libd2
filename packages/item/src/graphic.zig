@@ -41,7 +41,7 @@ pub fn qualityColor(q: model.Quality) Rgb {
 }
 
 /// Resolve the inventory graphic + quality colour for a rolled drop. Returns null
-/// if the drop is not a real base item (gold, class-token residual, unknown code).
+/// if the drop is not a real base item (gold, a unique/set link entry, unknown code).
 pub fn resolve(t: *const tables.Tables, d: *const model.Drop) ?Graphic {
     if (d.kind != .item) return null;
     const ref = t.itemRef(d.code()) orelse return null;

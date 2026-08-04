@@ -1,8 +1,8 @@
 .{
-    .name = .d2_items,
+    .name = .d2_item,
     .version = "0.1.0",
     .minimum_zig_version = "0.16.0",
-    .fingerprint = 0xd49b61219a959b96,
+    .fingerprint = 0x2f3bb33652303552,
 
     // The shared Stat/Item model foundation (seed-RNG, ISC, wire item decoder)
     // lives in d2-core; items re-exports those so its public API is unchanged.

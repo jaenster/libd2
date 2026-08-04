@@ -662,6 +662,20 @@ pub fn resolve(
             return buf[0..1];
         }
     }
+    // Area elemental burst: Meteor (28 WITH a radius) + Fist of the Heavens (80) hit hostiles at the
+    // cursor; Static Field (20) drains %-current-life from monsters around the caster.
+    if (sd.doFunc() == .fist_of_the_heavens or
+        (sd.doFunc() == .meteor_blizzard and (if (skills.rowById(skill_id)) |row| skills.table.get(row, "aurarangecalc").len != 0 else false)))
+    {
+        const lvl = book.get(skill_id);
+        buf[0] = .{ .elemental_area = .{ .skill_id = skill_id, .level = lvl, .x = target_x, .y = target_y, .radius = skills.evalCalc(book, 0, skill_id, lvl, "aurarangecalc"), .static = false } };
+        return buf[0..1];
+    }
+    if (sd.doFunc() == .static) {
+        const lvl = book.get(skill_id);
+        buf[0] = .{ .elemental_area = .{ .skill_id = skill_id, .level = lvl, .x = caster_x, .y = caster_y, .radius = skills.evalCalc(book, 0, skill_id, lvl, "aurarangecalc"), .static = true } };
+        return buf[0..1];
+    }
     // Curses (Necro curses; Inner Sight / Slow Missiles): a debuff over hostiles in radius.
     if (sd.doFunc() == .cast_curse_aoe or sd.doFunc() == .inner_sight) {
         const lvl = book.get(skill_id);

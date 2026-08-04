@@ -87,7 +87,7 @@ fn readAsset(gpa: std.mem.Allocator, path: []const u8) ?[]u8 {
 }
 
 /// Render the item drops into a PNG grid. Only real base-item drops with a
-/// resolvable invfile are drawn (gold / class-token residuals are skipped).
+/// resolvable invfile are drawn (gold and unique/set link entries are skipped).
 /// Returns PNG bytes (caller owns) or error.NoRenderableItems if nothing drew.
 pub fn renderDropsToPng(
     gpa: std.mem.Allocator,

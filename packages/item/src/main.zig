@@ -1,5 +1,5 @@
 //! Smoke/demo CLI: roll an item drop for a seed + treasure class + monster level.
-//! Usage: d2-items <seed> <treasureclass> <mlvl> [magicfind]
+//! Usage: d2-item <seed> <treasureclass> <mlvl> [magicfind]
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -21,10 +21,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     if (a_seed == null or a_tc == null or a_mlvl == null) {
         std.debug.print(
-            \\d2-items — faithful D2 1.14d drop roller
+            \\d2-item — faithful D2 1.14d drop roller
             \\loaded {d} treasure classes, {d} magic prefixes, {d} suffixes
-            \\usage: d2-items <seed> <treasureclass> <mlvl> [magicfind]
-            \\  e.g. d2-items 12345 "Act 1 Equip A" 12 200
+            \\usage: d2-item <seed> <treasureclass> <mlvl> [magicfind]
+            \\  e.g. d2-item 12345 "Act 1 Equip A" 12 200
             \\
         , .{ t.treasure.rowCount(), t.magic_prefix.rowCount(), t.magic_suffix.rowCount() });
         return;

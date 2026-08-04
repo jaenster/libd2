@@ -1,4 +1,4 @@
-// CommonJS build of the d2items wasm shim. Node runs .cts natively by stripping
+// CommonJS build of the d2item wasm shim. Node runs .cts natively by stripping
 // types, but does NOT rewrite export/import — so this file uses require() +
 // module.exports + __dirname. Same lazy API as index.ts.
 const { readFile } = require('node:fs/promises') as typeof import('node:fs/promises');
@@ -6,7 +6,7 @@ const { join } = require('node:path') as typeof import('node:path');
 
 const PAGE = 65536;
 
-// D2ItemsDrop layout (C ABI, extern struct — i32 fields force 4-byte alignment):
+// D2ItemDrop layout (C ABI, extern struct — i32 fields force 4-byte alignment):
 //   kind u8@0, item_code u8[4]@1, quality u8@5, prefix_id u16@6, suffix_id u16@8,
 //   rare_prefix u16[3]@10, rare_suffix u16[3]@16, sockets u8@22,
 //   quantity i32@24, item_level i32@28 ; sizeof = 32
@@ -17,7 +17,7 @@ const OFF = {
 } as const;
 const CAP = 64;
 
-export interface D2ItemsDrop {
+export interface D2ItemDrop {
   /** DropKind: none=0 gold=1 item=2 quiver=3 bodypart=4 */
   kind: number;
   /** base item code (4-char, NUL-trimmed) */
@@ -36,10 +36,10 @@ export interface D2ItemsDrop {
 
 interface Exports {
   memory: WebAssembly.Memory;
-  d2items_create(): number;
-  d2items_destroy(ctx: number): void;
-  d2items_roll(ctx: number, seed: number, tcName: number, mlvl: number, mf: number, out: number, cap: number): number;
-  d2items_abi_version(): number;
+  d2item_create(): number;
+  d2item_destroy(ctx: number): void;
+  d2item_roll(ctx: number, seed: number, tcName: number, mlvl: number, mf: number, out: number, cap: number): number;
+  d2item_abi_version(): number;
 }
 
 function scratch(memory: WebAssembly.Memory, bytes: number): number {
@@ -47,10 +47,10 @@ function scratch(memory: WebAssembly.Memory, bytes: number): number {
   return prev * PAGE;
 }
 
-function decodeDrops(memory: WebAssembly.Memory, base: number, count: number): D2ItemsDrop[] {
+function decodeDrops(memory: WebAssembly.Memory, base: number, count: number): D2ItemDrop[] {
   const dv = new DataView(memory.buffer);
   const u8 = new Uint8Array(memory.buffer);
-  const out: D2ItemsDrop[] = [];
+  const out: D2ItemDrop[] = [];
   for (let i = 0; i < count; i++) {
     const b = base + i * DROP;
     let itemCode = '';
@@ -76,11 +76,11 @@ function decodeDrops(memory: WebAssembly.Memory, base: number, count: number): D
 }
 
 async function open(): Promise<Items> {
-  const bytes = await readFile(join(__dirname, 'd2items.wasm'));
+  const bytes = await readFile(join(__dirname, 'd2item.wasm'));
   const { instance } = await WebAssembly.instantiate(bytes, {});
   const ex = instance.exports as unknown as Exports;
-  const ctx = ex.d2items_create();
-  if (!ctx) throw new Error('d2items: create failed');
+  const ctx = ex.d2item_create();
+  if (!ctx) throw new Error('d2item: create failed');
   return new Items(ex, ctx);
 }
 
@@ -89,7 +89,7 @@ class Items {
   #ctx: number;
   constructor(ex: Exports, ctx: number) { this.#ex = ex; this.#ctx = ctx; }
 
-  roll(seed: number, tcName: string, mlvl: number, mf = 0): D2ItemsDrop[] {
+  roll(seed: number, tcName: string, mlvl: number, mf = 0): D2ItemDrop[] {
     const ex = this.#ex;
     const name = new TextEncoder().encode(tcName);
     const namePtr = scratch(ex.memory, name.length + 1 + CAP * DROP);
@@ -97,19 +97,19 @@ class Items {
     const mem = new Uint8Array(ex.memory.buffer);
     mem.set(name, namePtr);
     mem[namePtr + name.length] = 0;
-    const n = ex.d2items_roll(this.#ctx, seed >>> 0, namePtr, mlvl, mf, outPtr, CAP);
-    if (n < 0) throw new Error(`d2items: roll failed (${n})`);
+    const n = ex.d2item_roll(this.#ctx, seed >>> 0, namePtr, mlvl, mf, outPtr, CAP);
+    if (n < 0) throw new Error(`d2item: roll failed (${n})`);
     return decodeDrops(ex.memory, outPtr, Math.min(n, CAP));
   }
 
-  abiVersion(): number { return this.#ex.d2items_abi_version(); }
-  close(): void { this.#ex.d2items_destroy(this.#ctx); }
+  abiVersion(): number { return this.#ex.d2item_abi_version(); }
+  close(): void { this.#ex.d2item_destroy(this.#ctx); }
 }
 
 let _p: Promise<Items> | undefined;
 const inst = (): Promise<Items> => (_p ??= open());
 
-async function roll(seed: number, tcName: string, mlvl: number, mf = 0): Promise<D2ItemsDrop[]> {
+async function roll(seed: number, tcName: string, mlvl: number, mf = 0): Promise<D2ItemDrop[]> {
   return (await inst()).roll(seed, tcName, mlvl, mf);
 }
 async function abiVersion(): Promise<number> {

@@ -35,10 +35,13 @@ pub const Drop = struct {
     rare_prefix_ids: [3]u16 = .{ 0, 0, 0 },
     rare_suffix_ids: [3]u16 = .{ 0, 0, 0 },
     /// 1-based UniqueItems.txt / SetItems.txt row of the selected special item (0 = none), the
-    /// unique/set analogue of prefix_id — the SELECTION; per-property value rolls are deferred like
-    /// the magic/rare affix values (the library models selection, the bitstream layer rolls values).
+    /// unique/set analogue of prefix_id. This is the SELECTION; the per-property values are rolled
+    /// from `item_seed` on demand by properties.rollDropStats, not stored here.
     unique_id: u16 = 0,
     set_id: u16 = 0,
+    /// 1-based QualityItems.txt row picked for a SUPERIOR drop (0 = none) — the engine's item
+    /// nFileIndex, chosen by ITEMMOD_GenerateQualityItem 0x5c2970.
+    quality_id: u16 = 0,
     sockets: u8 = 0,
     quantity: i32 = 0, // gold amount / quiver count
     item_level: i32 = 0,
