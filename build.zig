@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) void {
         b.modules.put(b.graph.arena, b.dupe(e.mod), dep.module(e.mod)) catch @panic("OOM");
     }
 
-    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "items", "sim", "data", "util", "pathfinding", "save" };
+    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "items", "sim", "net", "data", "util", "pathfinding", "save" };
 
     const test_step = b.step("test", "Run every package's test suite");
 

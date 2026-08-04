@@ -1,0 +1,16 @@
+.{
+    .name = .d2_net,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x6783d4108d2fa8c3,
+
+    // The D2GS wire protocol (sc/cs opcode structs + bit reader/writer). Pure serialization
+    // over std — no dependencies on purpose, so it stays usable anywhere (and from wasm).
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
