@@ -1740,11 +1740,7 @@ fn buildLevelRoomColl(
         tilegen.probe_cur_room = .{ p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB };
         const tiles: []materialize.CollTile = blk: {
             if (roomPMap(p)) |pmap| {
-                const t_unpack = prof.begin();
                 const d = preset.cachedDs1(preset.presetDs1Path(pmap) orelse continue) orelse continue;
-                prof.end(.mat_ds1_unpack, t_unpack);
-                const t_build = prof.begin();
-                defer prof.end(.mat_ds1_build, t_build);
                 var mr = materialize.materializeDs1(out_alloc, d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap), .{
                     .index = &near_tiles,
                     .alloc = out_alloc,
@@ -1781,8 +1777,6 @@ fn buildLevelRoomColl(
                     }
                     break :t .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
                 };
-                const t_out = prof.begin();
-                defer prof.end(.mat_outdoor, t_out);
                 var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), .{
                         .index = &near_tiles,
                         .alloc = out_alloc,

@@ -57,7 +57,6 @@ const drlgmod = @import("drlg.zig");
 const act_mod = @import("../act.zig");
 const fog = @import("d2-fog").memory;
 const TileSub = @import("TileSub.zig");
-const prof = @import("../prof.zig");
 
 /// Reusable per-room transient scratch. These builders used to nest a fresh ArenaAllocator in
 /// the caller's allocator, which on the render path IS an arena — so `deinit` handed the pages
@@ -1069,7 +1068,6 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
 
     // ── DS1 → grids (InitGridsFromDS1File). The cell arrays cover the WHOLE DS1;
     //    the sub-grid headers window each room's (off,size) view into them. ──
-    const t_grids = prof.begin();
     var floor_grids = try ar.alloc(OwnedGrid, d.floor_layers.len);
     for (d.floor_layers, 0..) |fl, li| {
         const cells = try ar.alloc(i32, full_ncells);
@@ -1101,10 +1099,8 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     for (floor_grids, 0..) |*g, li| flagAllCells(g, @as(i32, @intCast(li)) << 0x12);
     for (floor_grids) |*g| flagBorderCells(g, CELLFLAGS_0x04);
     flagBorderCells(&shadow_grid, CELLFLAGS_0x04);
-    prof.end(.ds1_grids, t_grids);
 
     // ── Room tile grid + count → alloc (InitializePresetRoom order). ──
-    const t_count = prof.begin();
     try allocRoomTileGrid(pRoom, ar);
     for (floor_grids, 0..) |*g, li|
         countTilesFromGrid(pRoom, &g.grid, if (li == 0) win.fill_blanks else 0, win.kill_x, win.kill_y);
@@ -1123,7 +1119,6 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     pTileGrid.*.nWallTilesMax += @as(i32, @intCast(win_ncells)) + 16;
     pTileGrid.*.nRoofTilesMax += @as(i32, @intCast(win_ncells)) + 16;
     try allocTileDataArrays(pRoom, ar);
-    prof.end(.ds1_count, t_count);
 
     // ── InitRoomTiles per layer. ──
     var ctx = MatCtx{
@@ -1141,7 +1136,6 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     @memset(ctx.companion, false);
     g_ctx = &ctx;
 
-    const t_init = prof.begin();
     for (floor_grids, 0..) |*g, li|
         InitRoomTiles(pRoom, &g.grid, null, if (li == 0) win.fill_blanks else 0, win.kill_x, win.kill_y);
     for (wall_grids, 0..) |*g, li| InitRoomTiles(
@@ -1153,7 +1147,6 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
         if (li == 0) win.kill_y else win.kill1_y,
     );
     InitRoomTiles(pRoom, &shadow_grid.grid, null, 0, win.kill_x, win.kill_y);
-    prof.end(.ds1_init, t_init);
 
     // ── Rasterize floor + wall tile-data (exclude roof array + companions). ──
     // The engine's per-room CollMap is dwSizeGameX/Y = WorldSize*5 (NO +1): the +1
@@ -1172,7 +1165,6 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     };
     @memset(coll.cells, 0);
 
-    const t_blit = prof.begin();
     const pFloor: [*]s.D2DrlgTileDataStrc = @ptrCast(@alignCast(pTileGrid.*.pFloorTiles.?));
     var fi: usize = 0;
     while (fi < @as(usize, @intCast(pTileGrid.*.nFloors))) : (fi += 1) {
@@ -1199,7 +1191,6 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
         }
     }
 
-    prof.end(.ds1_blit, t_blit);
 
     // No-floor subtiles are void/unwalkable: a subtile whose tile has no floor tile
     // is a dungeon gap (the runtime CollMap has no walkable void, so "no floor =

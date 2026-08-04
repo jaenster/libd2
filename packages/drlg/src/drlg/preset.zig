@@ -305,10 +305,10 @@ fn ParsePresetsOfDrlgFile(pDrlgFile: *s.D2DrlgFileStrc, pMemory: ?*s.D2PoolManag
     // Baked path: look the DS1 up in the embedded blob. A missing key must leave
     // the file zeroed (return) exactly as a missing asset would, so the seed
     // stream is unchanged.
-    const rec = ds1BlobIndex().get(rel) orelse return;
-    var d = ds1blob.unpack(pool.allocator, rec) catch return;
-    defer d.deinit();
-    fillDrlgFileFromDs1(pDrlgFile, pMemory, &d);
+    // Same parse the collision builder uses, and generation hits the same handful of files
+    // over and over, so it shares the cache rather than re-decoding per DrlgFile.
+    const d = cachedDs1(rel) orelse return;
+    fillDrlgFileFromDs1(pDrlgFile, pMemory, d);
 }
 
 // Lazily-built index over the one embedded DS1 blob. The embedded file is
@@ -405,7 +405,7 @@ fn ds1BlobIndex() *const ds1blob.Index {
 /// Populate a (zeroed) D2DrlgFileStrc from a parsed DS1 (recon Preset.cpp:111-391).
 /// Split out so the keystone field-population can be unit-tested with a synthetic
 /// DS1 (the LvlSub substitution DS1 assets are not present in the repo dataset).
-fn fillDrlgFileFromDs1(pDrlgFile: *s.D2DrlgFileStrc, pMemory: ?*s.D2PoolManagerStrc, d: *ds1mod.Ds1) void {
+fn fillDrlgFileFromDs1(pDrlgFile: *s.D2DrlgFileStrc, pMemory: ?*s.D2PoolManagerStrc, d: *const ds1mod.Ds1) void {
     // ds1.zig stores width/height as the ACTUAL tile counts (header+1); the recon
     // struct keeps the header values (tiles-1). nWidth+1 (InitializeDrlgFile) then
     // recovers the tile count = the layer-array stride.

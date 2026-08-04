@@ -16,24 +16,10 @@ const atomic_totals = !builtin.single_threaded and @bitSizeOf(usize) >= 64;
 pub const Phase = enum {
     /// DRLG proper: InitLevel (room layout, presets, tile placement).
     generate,
-    /// Per-room collision grids: DT1 lookup + stamping. Sum of the three below plus setup.
+    /// Per-room collision grids: DT1 lookup + stamping. Sum of the four below plus setup.
     materialize,
-    /// Materialize each of the level's own rooms to its placed tile list (DS1 unpack + tilegen).
+    /// Materialize each of the level's own rooms to its placed tile list (DS1 layers + tilegen).
     mat_rooms,
-    /// Parse one room's preset DS1 out of the embedded blob.
-    mat_ds1_unpack,
-    /// Place a preset room's DS1 layers into collision tiles.
-    mat_ds1_build,
-    /// …of which: DS1 cell layers → windowed i32 grids.
-    ds1_grids,
-    /// …of which: count the room's tiles and allocate its tile arrays.
-    ds1_count,
-    /// …of which: InitRoomTiles per layer.
-    ds1_init,
-    /// …of which: blit the placed tiles into the room's subtile grid.
-    ds1_blit,
-    /// Place an outdoor (wilderness/maze) room's tiles.
-    mat_outdoor,
     /// Same, for rooms in OTHER levels that this level's rooms gather collision from.
     mat_foreign,
     /// AllocRoomCollisionGrid: stamp every reaching tile into every room's grid.
