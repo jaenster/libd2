@@ -373,9 +373,10 @@ pub const LevelFull = struct {
     /// raw u16 CollMap via `collision.walkable`. Path-ready: consumers inflate and A* on it
     /// directly. Empty when the level has no collision. Deflates to a fraction of the u16 grid.
     walk_deflated: []u8,
-    /// Transient: the undeflated CollMap bytes, set only between materialization and the
-    /// `DeflateManyFn` flush that fills `coll_deflated`. Points into a batch arena that the
-    /// flush resets, so it is always empty by the time a caller sees the result.
+    /// The undeflated LE-u16 CollMap. Under `ActFullOptions.raw_collision` this is the level's
+    /// collision and `coll_deflated` is empty. Otherwise it is transient — set only between
+    /// materialization and the `DeflateManyFn` flush that fills `coll_deflated`, pointing into a
+    /// batch arena the flush resets, so a caller never sees it set.
     raw: []const u8 = &.{},
 };
 
@@ -390,6 +391,8 @@ pub const ActFullResult = struct {
             if (l.room_links.len != 0) alloc.free(l.room_links);
             if (l.coll_deflated.len != 0) alloc.free(l.coll_deflated);
             if (l.walk_deflated.len != 0) alloc.free(l.walk_deflated);
+            // Only `raw_collision` leaves this set on a completed act; the batch path clears it.
+            if (l.raw.len != 0) alloc.free(l.raw);
         }
         alloc.free(self.levels);
     }
@@ -611,6 +614,11 @@ pub const ActFullOptions = struct {
     /// — the links are a side effect of building collision — but it walks every room of every
     /// level once more to resolve them into indices.
     room_links: bool = false,
+    /// Hand each level's CollMap back uncompressed in `LevelFull.raw` instead of deflating it
+    /// into `coll_deflated`. Deflate is the largest phase of a whole act (roughly three quarters
+    /// of it), so a consumer that wants the cells anyway should not pay for a round trip. Costs
+    /// an act's worth of raw grids resident at once (~48 MB for act 1) instead of the streams.
+    raw_collision: bool = false,
 };
 
 pub fn generateActFull(
@@ -730,7 +738,9 @@ pub fn generateActFull(
         const t_gen = prof.begin();
         if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
         prof.end(.generate, t_gen);
-        const raw_alloc: ?std.mem.Allocator = if (deflate_many != null) batch.allocator() else null;
+        const raw_alloc: ?std.mem.Allocator = if (opts.raw_collision)
+            out_alloc
+        else if (deflate_many != null) batch.allocator() else null;
         const lf = try collectLevelFull(want_walk, out_alloc, sa, raw_alloc, ctx, idx, &act, pLevel, lid, deflate_fn);
         try out.append(out_alloc, lf);
         if (deflate_many) |many| {
@@ -3220,12 +3230,10 @@ fn appendSeamAdjacents(
     }
 }
 
-/// Build the seed-invariant STITCH set for `level_id`: the ids of levels the engine links
-/// it to. A level B is stitched to A when B is in A's Levels.txt Vis array or A is in B's
-/// (the interior warp/vis links — Cloister↔Cathedral, Outer Cloister↔Barracks), or A and B
-/// are consecutive in the act placement chain (`warps` from act.build — the wilderness
-/// border stitch, e.g. Tamoe Highland↔Monastery Gate). Only stitched levels get seam
-/// bridges. Caller owns the returned slice.
+/// Build the seed-invariant STITCH set for `level_id` — the levels the engine writes into its
+/// runtime warps-info (vis) array, and so the only ones that get seam bridges. Three sources:
+/// the Levels.txt Vis array (either direction), the act placement chain, and the pairwise
+/// level-box sweep of `WARP_CONNECTION_SWEEPS`. Caller owns the returned slice.
 fn buildSeamConn(
     alloc: std.mem.Allocator,
     pDrlg: *abi.D2DrlgStrc,
@@ -3260,7 +3268,38 @@ fn buildSeamConn(
         if (@as(i32, @intCast(w[0])) == level_id) try add(&set, alloc, @intCast(w[1]));
         if (@as(i32, @intCast(w[1])) == level_id) try add(&set, alloc, @intCast(w[0]));
     }
+    // Pairwise level-box sweep, for the acts that stitch that way instead of via the chain.
+    const a = drlg.GetLevelAndAlloc(pDrlg, @enumFromInt(level_id)).sCoordinatesAndSize;
+    for (WARP_CONNECTION_SWEEPS) |range| {
+        if (level_id < range[0] or level_id > range[1]) continue;
+        var other = range[0];
+        while (other <= range[1]) : (other += 1) {
+            if (other == level_id) continue;
+            const b = drlg.GetLevelAndAlloc(pDrlg, @enumFromInt(other)).sCoordinatesAndSize;
+            if (levelBoxesTouch(a, b)) try add(&set, alloc, other);
+        }
+    }
     return set.toOwnedSlice(alloc);
+}
+
+/// Level-id ranges swept by DRLGACT_SetWarpConnectionsBetweenTwoAreas (0x6775c0). Acts I/II/IV
+/// stitch through the placement chain instead (already in `warps`); Act III (0x6789b0) and Act V
+/// (0x678ad0) have no chain and get this pairwise sweep.
+const WARP_CONNECTION_SWEEPS = [_][2]i32{
+    .{ 75, 83 }, // Kurast Docktown .. Travincal
+    .{ 111, 112 }, // Frigid Highlands .. Arreat Plateau
+    .{ 110, 111 }, // Bloody Foothills .. Frigid Highlands
+    .{ 109, 110 }, // Harrogath .. Bloody Foothills
+};
+
+/// DRLGCOORDS_IsAdjacentOrOverlapping (0x66b880) at nMaxDist == -1: touching on one axis
+/// (gap == 0) and strictly overlapping on the other. A corner meeting is not a border.
+fn levelBoxesTouch(a: abi.D2DrlgCoordsStrc, b: abi.D2DrlgCoordsStrc) bool {
+    const gx = axisGap(a.WorldPosition.x, a.WorldSize.x, b.WorldPosition.x, b.WorldSize.x);
+    const gy = axisGap(a.WorldPosition.y, a.WorldSize.y, b.WorldPosition.y, b.WorldSize.y);
+    if (gx == 0 and gy <= -1) return true;
+    if (gy != 0) return false;
+    return gx <= -1;
 }
 
 // Process-global Objects.txt lookup (name / description columns), decoded once and

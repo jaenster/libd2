@@ -189,11 +189,14 @@ pub const World = struct {
         if (self.teleport_rule.len == 0) self.teleport_rule = try parseTeleportColumn(self.alloc);
         if (self.door_fn.len == 0) self.door_fn = try parseDoorClasses(self.alloc);
 
-        var full = try drlg.generateActFull(ctx, self.alloc, act_no, self.seed, self.difficulty, .{ .room_links = true });
+        var full = try drlg.generateActFull(ctx, self.alloc, act_no, self.seed, self.difficulty, .{
+            .room_links = true,
+            .raw_collision = true,
+        });
         defer full.deinit(self.alloc);
 
         for (full.levels) |lf| {
-            if (lf.coll_w <= 0 or lf.coll_h <= 0 or lf.coll_deflated.len == 0) continue;
+            if (lf.coll_w <= 0 or lf.coll_h <= 0 or lf.raw.len == 0) continue;
             try self.addLevel(ctx, lf);
         }
     }
@@ -204,13 +207,15 @@ pub const World = struct {
         const h = lf.coll_h;
         const cell_count: usize = @intCast(w * h);
 
-        // generateActFull holds each level's CollMap deflated so a whole act does not sit in
-        // memory as raw u16 grids; a pathfinder wants exactly that raw grid, so inflate it once.
-        const raw = try drlg.inflateZlib(self.alloc, lf.coll_deflated, cell_count * @sizeOf(u16));
-        defer self.alloc.free(raw);
+        // `raw_collision` skips the deflate a pathfinder would only undo again: the grid arrives
+        // as LE u16 bytes, which on a little-endian host is already the cell array.
         const cells = try self.alloc.alloc(u16, cell_count);
         errdefer self.alloc.free(cells);
-        for (cells, 0..) |*c, i| c.* = std.mem.readInt(u16, raw[i * 2 ..][0..2], .little);
+        if (@import("builtin").cpu.arch.endian() == .little) {
+            @memcpy(std.mem.sliceAsBytes(cells), lf.raw[0 .. cell_count * @sizeOf(u16)]);
+        } else {
+            for (cells, 0..) |*c, i| c.* = std.mem.readInt(u16, lf.raw[i * 2 ..][0..2], .little);
+        }
 
         // Room boxes come out of drlg in WORLD tiles; rebase them onto this level's own frame so
         // rooms, collision and positions all agree.
