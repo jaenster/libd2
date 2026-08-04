@@ -80,22 +80,24 @@ pub const SkillData = struct {
         if (self.is_aura) return .aura;
         if (self.is_passive) return .passive;
         if (self.is_summon) return .summon;
-        if (self.srvdofunc == @intFromEnum(DoFunc.teleport)) return .teleport;
+        if (self.doFunc() == .teleport) return .teleport;
         if (self.serverMissile().len != 0 and !self.missileIsSecondary()) return .missile;
-        if (self.srvdofunc == @intFromEnum(DoFunc.attack)) return .melee;
+        if (self.doFunc() == .attack) return .melee;
         if (self.dmg.etype != .none) return .direct; // direct elemental (Nova / Static Field / ...)
         return .other;
+    }
+
+    /// This skill's server do-function as the named `DoFunc` (Skills.txt srvdofunc). The one place
+    /// that turns the raw int into the enum — branch on this instead of magic `srvdofunc == N`.
+    pub fn doFunc(self: SkillData) DoFunc {
+        return @enumFromInt(self.srvdofunc);
     }
 
     /// Do-funcs whose `srvmissilea` is only a ring/visual, not how they deal damage — Static/Nova
     /// (direct-area), War Cry (buff+stun ring), Cyclone Armor (absorb buff) — so NOT `.missile`.
     pub fn missileIsSecondary(self: SkillData) bool {
-        return switch (self.srvdofunc) {
-            @intFromEnum(DoFunc.static),
-            @intFromEnum(DoFunc.nova_frost_nova),
-            @intFromEnum(DoFunc.war_cry),
-            @intFromEnum(DoFunc.cyclone_armor),
-            => true,
+        return switch (self.doFunc()) {
+            .static, .nova_frost_nova, .war_cry, .cyclone_armor => true,
             else => false,
         };
     }
@@ -623,13 +625,13 @@ pub fn resolve(
         const lvl = book.get(skill_id);
         const info = skills.summonInfo(skill_id, lvl);
         if (info.monster.len == 0) return buf[0..0];
-        if (sd.srvdofunc == 144) { // Hydra: three stationary heads at the cursor
+        if (sd.doFunc() == .hydra) { // three stationary heads at the cursor
             const off = [_]i32{ -1, 0, 1 };
             for (off, 0..) |ox, i| buf[i] = .{ .summon = .{ .monster = info.monster, .x = target_x + ox, .y = target_y, .count = info.count, .kind = .hydra_head } };
             return buf[0..3];
         }
         const is_golem = std.mem.indexOf(u8, info.monster, "Golem") != null;
-        const is_trap = sd.srvdofunc == 44 or sd.srvdofunc == 45; // Blade Sentinel / assassin sentries
+        const is_trap = sd.doFunc() == .blade_sentinel or sd.doFunc() == .summon_trap_sentry;
         const kind: effect_mod.SummonKind = if (is_golem) .golem else if (is_trap) .trap else .pet;
         const sx = if (is_trap) target_x else caster_x + 2;
         const sy = if (is_trap) target_y else caster_y;
@@ -641,15 +643,15 @@ pub fn resolve(
     // 28-with-radius is Meteor — both fall through (return [] here).
     {
         const no_radius = if (skills.rowById(skill_id)) |row| skills.table.get(row, "aurarangecalc").len == 0 else true;
-        const is_armageddon = sd.srvdofunc == 124;
-        const is_ground = sd.srvdofunc == 24 or
-            (sd.srvdofunc == 23 and sd.dmg.etype != .none) or
-            (sd.srvdofunc == 28 and no_radius and sd.dmg.etype != .none) or
-            (sd.srvdofunc == 123 and sd.dmg.etype != .none) or
+        const is_armageddon = sd.doFunc() == .armageddon;
+        const is_ground = sd.doFunc() == .fire_wall or
+            (sd.doFunc() == .blaze_energy_shield and sd.dmg.etype != .none) or
+            (sd.doFunc() == .meteor_blizzard and no_radius and sd.dmg.etype != .none) or
+            (sd.doFunc() == .volcano and sd.dmg.etype != .none) or
             is_armageddon;
         if (is_ground) {
             const lvl = book.get(skill_id);
-            const dur: i32 = if (is_armageddon) @max(1, skills.evalCalc(book, 0, skill_id, lvl, "auralencalc")) else if (sd.srvdofunc == 28) 100 else 90;
+            const dur: i32 = if (is_armageddon) @max(1, skills.evalCalc(book, 0, skill_id, lvl, "auralencalc")) else if (sd.doFunc() == .meteor_blizzard) 100 else 90;
             buf[0] = .{ .ground_effect = .{
                 .skill_id = skill_id,
                 .level = lvl,
@@ -660,8 +662,8 @@ pub fn resolve(
             return buf[0..1];
         }
     }
-    // Curses (30 Necro curses; 6 Inner Sight / Slow Missiles): a debuff over hostiles in radius.
-    if (sd.srvdofunc == 30 or sd.srvdofunc == 6) {
+    // Curses (Necro curses; Inner Sight / Slow Missiles): a debuff over hostiles in radius.
+    if (sd.doFunc() == .cast_curse_aoe or sd.doFunc() == .inner_sight) {
         const lvl = book.get(skill_id);
         buf[0] = .{ .curse_area = .{
             .x = target_x,
@@ -673,8 +675,8 @@ pub fn resolve(
         } };
         return buf[0..1];
     }
-    // Fear (Grim Ward 75, Howl 22-no-element): hostiles in radius of the CASTER flee for the duration.
-    if (sd.srvdofunc == 75 or (sd.srvdofunc == 22 and sd.dmg.etype == .none)) {
+    // Fear (Grim Ward, Howl = Nova-do-func with no element): hostiles near the CASTER flee for a while.
+    if (sd.doFunc() == .grim_ward or (sd.doFunc() == .nova_frost_nova and sd.dmg.etype == .none)) {
         const lvl = book.get(skill_id);
         var radius = skills.evalCalc(book, 0, skill_id, lvl, "aurarangecalc");
         if (radius <= 0) radius = 12; // Howl has no aurarangecalc column
@@ -683,11 +685,10 @@ pub fn resolve(
         buf[0] = .{ .cc_area = .{ .x = caster_x, .y = caster_y, .radius = radius, .frames = @intCast(@max(1, durc)), .target_guid = 0, .kind = .fear } };
         return buf[0..1];
     }
-    // Crowd control (47 Cloak, 51 Mind Blast, 59 Attract, 61 Confuse, 71 Taunt, 79 Conversion): a
-    // brief stun — 47/51 hit an area, the rest the single target.
-    switch (sd.srvdofunc) {
-        47, 51, 59, 61, 71, 79 => {
-            const area = sd.srvdofunc == 47 or sd.srvdofunc == 51;
+    // Crowd control: a brief stun — Cloak / Mind Blast hit an area, the rest the single target.
+    switch (sd.doFunc()) {
+        .cloak_of_shadows, .mind_blast, .attract, .confuse, .taunt, .conversion => {
+            const area = sd.doFunc() == .cloak_of_shadows or sd.doFunc() == .mind_blast;
             buf[0] = .{ .cc_area = .{ .x = target_x, .y = target_y, .radius = if (area) 12 else 0, .frames = 25, .target_guid = target_guid, .kind = .stun } };
             return buf[0..1];
         },
