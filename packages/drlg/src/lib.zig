@@ -456,7 +456,7 @@ fn deflateLevelColl(
     prof.end(.materialize, t_mat);
     if (maybe_lc) |lc| {
         const t_comp = prof.begin();
-        const maybe_rc = try compositeLevelRaw(sa, lc);
+        const maybe_rc = try compositeLevelRaw(sa, lc, true);
         prof.end(.composite, t_comp);
         if (maybe_rc) |rc| {
             // The CollMap is already a u16 array; on a little-endian host its wire form is
@@ -1358,11 +1358,17 @@ pub const ActRawCompositeResult = struct {
 /// come back as 0xFFFF (all bits set), NOT 0x00FF.
 pub const RAW_OOB_FILL: u16 = 0xFFFF;
 
+/// Per-thread composite scratch (see `compositeLevelRaw`'s `transient`).
+threadlocal var composite_buf: []u16 = &.{};
+
 /// Union a level's per-room raw collision grids into ONE level-local u16 grid sized
 /// to the level's WorldSize (in subtiles). Uncovered subtiles keep RAW_OOB_FILL;
 /// covered subtiles carry the OR of every contributing tile's raw Colbit byte.
 /// Returns null only if the level has no size and no grids. Caller owns `cells`.
-fn compositeLevelRaw(alloc: std.mem.Allocator, lc: LevelColl) !?RawLevelComposite {
+/// `transient` returns the cells in a REUSED per-thread buffer, valid only until this thread's
+/// next composite — the render path consumes them immediately (deflate, or a copy into the batch
+/// arena). A caller that RETAINS composites across levels must pass false and get its own memory.
+fn compositeLevelRaw(alloc: std.mem.Allocator, lc: LevelColl, transient: bool) !?RawLevelComposite {
     // Grid dims: the level's WorldSize in subtiles (what DBM reports). Fall back to
     // the room bounding box only if the level size is unknown.
     var W: usize = 0;
@@ -1383,7 +1389,16 @@ fn compositeLevelRaw(alloc: std.mem.Allocator, lc: LevelColl) !?RawLevelComposit
         H = @intCast(maxY);
     }
 
-    const cells = try alloc.alloc(u16, W * H);
+    // A level grid is up to ~1M cells, so taking a fresh one per level means faulting in a
+    // couple of megabytes of new pages 39 times an act. The transient path reuses one buffer,
+    // grown to the largest level seen and kept for the thread's life.
+    const cells = if (transient) blk: {
+        if (composite_buf.len < W * H) {
+            if (composite_buf.len != 0) dpool.default_allocator.free(composite_buf);
+            composite_buf = try dpool.default_allocator.alloc(u16, W * H);
+        }
+        break :blk composite_buf[0 .. W * H];
+    } else try alloc.alloc(u16, W * H);
     // Internal sentinel 0xFFFF marks "uncovered"; every covered write clears it
     // (first writer sets, later writers OR). Real Colbit bytes never reach 0xFFFF.
     @memset(cells, 0xFFFF);
@@ -1391,37 +1406,33 @@ fn compositeLevelRaw(alloc: std.mem.Allocator, lc: LevelColl) !?RawLevelComposit
     for (lc.grids) |g| {
         const gw: usize = @intCast(g.w);
         const gh: usize = @intCast(g.h);
-        if (g.x < 0 or g.y < 0) {} // grids are level-local (>=0); tolerate anyway below
+        // Clamp the grid's span to the level ONCE instead of testing both bounds per cell.
+        if (g.x >= @as(i32, @intCast(W)) or g.y >= @as(i32, @intCast(H))) continue;
+        const x0: usize = @intCast(@max(g.x, 0));
+        const y0: usize = @intCast(@max(g.y, 0));
+        const skip_x: usize = @intCast(@as(i32, @intCast(x0)) - g.x); // source cols cut by a negative origin
+        const skip_y: usize = @intCast(@as(i32, @intCast(y0)) - g.y);
+        if (skip_x >= gw or skip_y >= gh) continue; // entirely left of / above the level
+        const span_w = @min(gw - skip_x, W - x0);
+        const span_h = @min(gh - skip_y, H - y0);
         var y: usize = 0;
-        while (y < gh) : (y += 1) {
-            const dy = g.y + @as(i32, @intCast(y));
-            if (dy < 0 or dy >= @as(i32, @intCast(H))) continue;
-            const src_row = y * gw;
-            var x: usize = 0;
-            while (x < gw) : (x += 1) {
-                const dx = g.x + @as(i32, @intCast(x));
-                if (dx < 0 or dx >= @as(i32, @intCast(W))) continue;
-                const v: u16 = g.cells[src_row + x];
-                const di: usize = @as(usize, @intCast(dy)) * W + @as(usize, @intCast(dx));
-                if (cells[di] == 0xFFFF) cells[di] = v else cells[di] |= v;
-            }
+        while (y < span_h) : (y += 1) {
+            const src = g.cells[(y + skip_y) * gw + skip_x ..][0..span_w];
+            const dst = cells[(y0 + y) * W + x0 ..][0..span_w];
+            for (dst, src) |*d, v| d.* = if (d.* == 0xFFFF) v else d.* | v;
         }
     }
 
-    // Any subtile no room covered is the DBM OOB fill. In-room cells are emitted VERBATIM.
-    //
-    // This used to rewrite COLLIDE_BLANK (0x20) cells to solid rock (block_walk|wall) on the
-    // belief that 0x20 was an internal synthetic marker and "the runtime CollMap has no
-    // walkable void inside a room". Both halves are false: 0x20 is a real eCollisionFlags bit
-    // that the engine's own CollMap carries, and plenty of those cells are walkable. Measured
-    // against the engine at seed 1033089920 act 1, the rewrite corrupted 9975 cells — 5373
-    // `0x25->0x05`, 3258 `0x21->0x05`, and 818 `0x20->0x05` that turned a WALKABLE cell into
-    // solid rock. The per-room grids feeding this composite are byte-exact including 0x20, so
-    // there is nothing to synthesize: pass the cell through.
-    for (cells) |*c| {
-        if (c.* == 0xFFFF) c.* = RAW_OOB_FILL;
-    }
-
+    // No trailing pass: the uncovered sentinel and RAW_OOB_FILL are the same 0xFFFF, and
+    // in-room cells are emitted VERBATIM. There used to be a `if (c.* == 0xFFFF) c.* =
+    // RAW_OOB_FILL` sweep here, which read and rewrote every cell of every level to its own
+    // value. Before that it rewrote COLLIDE_BLANK (0x20) to solid rock, on the belief that
+    // 0x20 was an internal synthetic marker and "the runtime CollMap has no walkable void
+    // inside a room". Both halves are false: 0x20 is a real eCollisionFlags bit the engine's
+    // own CollMap carries, and plenty of those cells are walkable. Measured against the engine
+    // at seed 1033089920 act 1, that rewrite corrupted 9975 cells — 818 of them turning a
+    // WALKABLE cell into solid rock. The per-room grids are byte-exact including 0x20, so
+    // there is nothing to synthesize and nothing left to sweep.
     return .{ .level_id = lc.level_id, .w = W, .h = H, .unresolved = lc.unresolved, .cells = cells };
 }
 
@@ -1445,7 +1456,7 @@ pub fn generateActCompositeRaw(
         out.deinit(out_alloc);
     }
     for (coll.levels) |lc| {
-        if (try compositeLevelRaw(out_alloc, lc)) |lco| try out.append(out_alloc, lco);
+        if (try compositeLevelRaw(out_alloc, lc, false)) |lco| try out.append(out_alloc, lco);
     }
     return .{ .levels = try out.toOwnedSlice(out_alloc) };
 }
