@@ -17,7 +17,7 @@ It is a long reverse-engineering effort and sponsorship is what keeps it moving.
 |-|-|-|
 | **Rust** | `cargo add libd2` | [guide](docs/usage/rust.md) |
 | **.NET** | `dotnet add package LibD2` | [guide](docs/usage/csharp.md) |
-| **Node, Bun, Deno, browser** | `npm install @jaenster/d2drlg` | [guide](docs/usage/node.md) |
+| **Node, Bun, Deno, browser** | `npm install libd2` | [guide](docs/usage/node.md) |
 | **Zig** | add the packages as source modules | [guide](docs/usage/zig.md) |
 | **C** | header + native lib from a Release | [guide](docs/usage/c.md) |
 | **C++** | header + native lib from a Release | [guide](docs/usage/cpp.md) |
@@ -57,18 +57,18 @@ under a second. `GET /health` returns `ok`.
 ### Quick start: TypeScript
 
 ```sh
-npm install @jaenster/d2drlg
+npm install libd2
 ```
 
 ```ts
-import { render, levelShrines } from '@jaenster/d2drlg';
+import { drlg } from 'libd2';
 
 // Cold Plains (level 3) for seed 1337. The wasm loads lazily on first call, so no setup.
-const map = await render(1337, 0, 0);
+const map = await drlg.render(1337, 0, 0);
 const coldPlains = map.levels.find(l => l.levelNo === 3)!;
 
 // Shrines are already among the level's presets, so this is a filter, not a second pass.
-const s = levelShrines(coldPlains);
+const s = drlg.levelShrines(coldPlains);
 console.log(`${s.length} shrines/wells:`);
 for (const sh of s)
   console.log(`  ${sh.isWell ? 'well ' : 'shrine'} class ${sh.classId} at tile (${sh.tileX}, ${sh.tileY})`);
@@ -81,19 +81,22 @@ for (const sh of s)
 //   shrine class 83 at tile (1002, 1090)
 ```
 
-Tiny typed shim, ESM, no native addon and no build step. The same package runs
-in **Node, Bun, Deno and the browser**. The wasm is freestanding and libc-free, so its import
-object is empty and the shim reads it with `fetch` or the filesystem depending on where it finds
-itself. `item` has the same shape, as `@jaenster/d2item`.
+One package for the whole library: each subsystem is a namespace carrying its own wasm, and
+also a subpath export (`import * as drlg from 'libd2/drlg'`) so a bundler can take one instead
+of all. Tiny typed shim, ESM, no native addon and no build step. The same package runs in
+**Node, Bun, Deno and the browser**: the wasm is freestanding and libc-free, so its import
+object is empty and the shim reads it with `fetch` or the filesystem depending on where it
+finds itself.
 
 Where to get the artifacts:
 - **.NET**: `LibD2` on NuGet. One package for the whole library, carrying a native build for
   every platform .NET runs on, so there is nothing to place by hand.
 - **Native libs + headers**: attached to the package's GitHub Release
   (`<pkg>-vX.Y.Z`), one archive per target: linux / macos / windows × x64 / arm64.
-- **WebAssembly**: published to npm as `@jaenster/d2<pkg>` (e.g. `@jaenster/d2drlg`),
-  a tiny typed TypeScript shim over the wasm. ESM; `require()` works from CommonJS on
-  Node 22.12+, which is the floor the package declares.
+- **WebAssembly**: published to npm as `libd2`, one package carrying every subsystem's wasm
+  behind a tiny typed TypeScript shim. ESM; `require()` works from CommonJS on Node 22.12+,
+  which is the floor the package declares. The older per-subsystem `@jaenster/d2<pkg>`
+  packages are deprecated in favour of it.
 
 ## Does it match the game?
 

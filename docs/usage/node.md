@@ -1,64 +1,122 @@
-# libd2 from Node (WebAssembly)
-
-Each package is published to npm as `@jaenster/d2<pkg>` — the libc-free wasm build
-behind a tiny typed shim. Pure Wasm + TypeScript: **no native addon, no build
-step**. Ships ESM and CommonJS with `.d.ts` types; the wasm loads lazily on first
-call, so there's nothing to initialise.
-
-## drlg — generate a map from a seed
+# libd2 from JavaScript
 
 ```sh
-npm install @jaenster/d2drlg
-# or: pnpm add @jaenster/d2drlg
+npm install libd2
 ```
 
-The top-level functions lazily load the wasm and cache a singleton:
+One package for the whole library. Each subsystem is a namespace carrying its own
+WebAssembly build, and the wasm for a namespace is only fetched when you actually call into
+it. No native addon, no build step, nothing to initialise.
+
+The wasm is freestanding and libc-free, so its import object is empty and the same package
+runs in **Node, Bun, Deno and the browser** with no bundler configuration and no polyfills.
+
+## Generate a map from a seed
 
 ```ts
-import { render, levelShrines, generateAct } from '@jaenster/d2drlg';
+import { drlg } from 'libd2';
 
 // A whole act in the map shape: every level with its rooms, presets, adjacents and
-// collision grid (difficulty 0/1/2, actNo 0..4). Cold Plains = level 3.
-const map = await render(1337, 0, 0);
+// collision grid. difficulty 0/1/2, actNo 0-based (Act I = 0). Cold Plains = level 3.
+const map = await drlg.render(1337, 0, 0);
 const coldPlains = map.levels.find(l => l.levelNo === 3)!;
 
-// A level's seeded outdoor shrines/wells are already among its presets, so reading
-// them off a generated level is a filter — no second generation.
-for (const sh of levelShrines(coldPlains))
-  console.log(`${sh.isWell ? 'well ' : 'shrine'} at tile (${sh.tileX}, ${sh.tileY})`);
+console.log(`${map.levels.length} levels`);
+console.log(`${coldPlains.displayName}: ${coldPlains.rooms.length} rooms`);
 
-// Or just an act's room layout, without the per-level map data.
-const act = await generateAct(305419896, 0, 0);
-console.log(`Act I: ${act.levels.length} levels, town has ${act.levels[0].rooms.length} rooms`);
+// Shrines and wells are already among the level's presets, so reading them off a
+// generated level is a filter rather than a second generation.
+for (const sh of drlg.levelShrines(coldPlains))
+  console.log(`${sh.isWell ? 'well  ' : 'shrine'} at tile (${sh.tileX}, ${sh.tileY})`);
 ```
 
-CommonJS is identical via `require`:
-
-```js
-const { render, levelShrines } = require('@jaenster/d2drlg');
-render(1337, 0, 0).then(map => console.log(levelShrines(map.levels.find(l => l.levelNo === 3))));
+```text
+39 levels
+Cold Plains: 97 rooms
+shrine at tile (995, 1124)
+shrine at tile (994, 1114)
+shrine at tile (1050, 1098)
+well   at tile (1010, 1091)
+shrine at tile (1002, 1090)
 ```
 
-`x`/`y` on a shrine are world **subtiles**; `tileX`/`tileY` are `Math.floor(x/5)`;
-`isWell` is `classId === 130`. `levelShrines` is synchronous and touches no wasm — it
-filters the level's own `presets` for the rows the outdoor spawner uses
-(`SHRINE_TXT_FILE_NOS`) and shifts them from level-local into world subtiles.
-`difficulty` is `0` normal / `1` nightmare / `2` hell; `actNo` is 0-based (Act I = 0);
-levels use their `Levels.txt` id.
+The same seed always gives the same world, matching the retail engine cell for cell.
 
-The seed-keyed `shrines(seed, levelId)` still exists and still returns the same values,
-but it is **deprecated**: it generates an entire act to hand back data the level already
-carries. Prefer `levelShrines(level)`.
+`generateAct(seed, difficulty, actNo)` is the cheaper call when you only want room layout
+and not the per-level map data.
 
-For lifecycle control, `open()` returns a reusable instance exposing the same
-methods plus `close()`:
+## Importing one namespace
+
+Every namespace is also a subpath export, so a bundler can pull in one subsystem's wasm
+instead of all of them:
 
 ```ts
-import { open, levelShrines } from '@jaenster/d2drlg';
-const drlg = await open();
-try { console.log(levelShrines(drlg.render(1337, 0).levels.find(l => l.levelNo === 3)!)); }
-finally { drlg.close(); }
+import * as drlg from 'libd2/drlg';
 ```
 
-Every other package (e.g. `@jaenster/d2item`) ships the same shape: lazy
-top-level functions over its own typed shim.
+## ESM, and what that means for `require`
+
+The package is **ESM only**. There is deliberately no CommonJS build: Node can `require()` an
+ESM graph since 22.12 as long as it has no top-level await, and these shims have none. So
+this works from CommonJS without a second build:
+
+```js
+const { drlg } = require('libd2');
+drlg.render(1337, 0, 0).then(map => console.log(map.levels.length));
+```
+
+That sets the floor at **Node 22.12**, which the package declares in `engines`.
+
+## In the browser
+
+The same import works unchanged. The shim resolves its wasm relative to its own module URL
+and feature-detects how to read it, so it uses `fetch` on the web and the filesystem under
+Node without being told which it is:
+
+```html
+<script type="module">
+  import * as drlg from '/node_modules/libd2/drlg/index.js';
+  const map = await drlg.render(1337, 0, 0);
+  document.body.textContent = `${map.levels.length} levels`;
+</script>
+```
+
+## Coordinates and ids
+
+Shrine `x`/`y` are world **subtiles**; `tileX`/`tileY` are `Math.floor(x/5)`; `isWell` is
+`classId === 130`. Preset units come back in **level-local** subtiles, which is the frame the
+level's own map data is authored in — `levelShrines` is what converts them to world subtiles,
+using the level's origin. Levels are addressed by their `Levels.txt` id, which is stable
+across seeds.
+
+## Lifecycle
+
+The top-level functions load the wasm on first call and cache a single instance, which is
+what you want most of the time. For explicit control, `open()` returns an instance exposing
+the same methods plus `close()`:
+
+```ts
+import { drlg } from 'libd2';
+
+const d = await drlg.open();
+try {
+  const map = d.render(1337, 0);
+  console.log(drlg.levelShrines(map.levels.find(l => l.levelNo === 3)!).length);
+} finally {
+  d.close();
+}
+```
+
+## Namespaces
+
+| namespace | what it is |
+|-|-|
+| `drlg` | map generation: rooms, objects, monsters, level adjacency, subtile collision |
+
+More land here as they grow a C ABI.
+
+## The older per-subsystem packages
+
+`@jaenster/d2drlg` was the previous shape, one npm package per subsystem. It is deprecated in
+favour of `libd2`, which carries the same wasm and the same shim under the `drlg` namespace.
+Existing installs keep working; new code should use `libd2`.

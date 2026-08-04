@@ -1,13 +1,16 @@
 name: npm
 
-# The libd2 umbrella package is versioned and released on its own, separately from the
-# per-subsystem @jaenster/d2<name> packages that release.yml ships. It carries no wasm of its
-# own: it depends on those packages and re-exports them under namespaces, so a release here is
-# either a new namespace or a bumped dependency range.
+# The `libd2` npm package: one package for the whole library, matching `libd2` on crates.io
+# and `LibD2` on NuGet. Each subsystem is a namespace carrying its own wasm, and also a
+# subpath export so a bundler can take one instead of all.
+#
+# It is versioned and released on its own, separately from the zig packages, because it has
+# no single package's version to inherit. release.yml still builds the native libs, headers
+# and GitHub Releases; npm publishing lives here.
 #
 # Publishing uses npm trusted publishing (OIDC), so there is no NPM_TOKEN secret. The trusted
 # publisher on npmjs.com must name THIS file (npm.yml) as its workflow, and the package has to
-# exist already: OIDC cannot claim a name, so 0.1.0 was published by hand.
+# exist already: OIDC cannot claim a name.
 
 on:
   workflow_dispatch:
@@ -16,12 +19,8 @@ on:
         description: 'Package version, e.g. 0.2.0'
         required: true
         type: string
-      drlg_range:
-        description: 'Optional new @jaenster/d2drlg range, e.g. ^0.5.0. Blank keeps the current one.'
-        required: false
-        type: string
       dry_run:
-        description: 'Build, smoke-test and pack only — no publish'
+        description: 'Build, pack and smoke-test only — no publish'
         type: boolean
         default: true
 
@@ -29,15 +28,14 @@ permissions:
   contents: read
   id-token: write   # OIDC token issuance for trusted publishing
 
-defaults:
-  run:
-    working-directory: packages/npm/libd2
-
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
 
       - uses: actions/setup-node@v4
         with: { node-version: 22, registry-url: 'https://registry.npmjs.org' }
@@ -45,38 +43,55 @@ jobs:
       - name: Upgrade npm for OIDC trusted publishing
         run: npm install -g npm@latest   # trusted publishing needs npm >= 11.5.1
 
-      - name: Set the version and dependency range
+      - name: Check the version is a semver
         run: |
           v='${{ inputs.version }}'
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "not a semver: $v"; exit 1; }
-          npm pkg set version="$v"
-          range='${{ inputs.drlg_range }}'
-          # Not `[ -n .. ] && ..`: Actions runs this with bash -e, so the blank case would
-          # exit non-zero and fail the step.
-          if [ -n "$range" ]; then npm pkg set dependencies.@jaenster/d2drlg="$range"; fi
-          npm pkg get version dependencies
 
-      # The umbrella is nothing but re-exports, so the only thing that can break it is a
-      # dependency that no longer has what it re-exports. Packing and installing the tarball
-      # for real is what catches that, and it costs seconds.
+      # Fresh wasm rather than anything checked in, into the layout the assembler reads:
+      # dist/<name>/wasm32-freestanding/. A package without a wasm build is skipped there.
+      - name: Build the WebAssembly for every namespace
+        run: |
+          set -euo pipefail
+          for name in drlg item; do
+            dir="packages/$name"
+            [ -f "$dir/build.zig" ] || continue
+            grep -q "is_wasm\|wasm32" "$dir/build.zig" || { echo "skip $name: no wasm target"; continue; }
+            echo "== $name"
+            ( cd "$dir" && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall -Dcli=false \
+                --prefix "$GITHUB_WORKSPACE/dist/$name/wasm32-freestanding" )
+          done
+          find dist -name '*.wasm' -exec ls -la {} +
+
+      - name: Assemble and pack
+        run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh '${{ inputs.version }}' dist
+
+      # Smoke-tests the exact tarball that gets published, so what ships is what was tested.
+      # Both import styles, because the subpath exports are easy to break and silent when they
+      # are: a wrong path only fails at the consumer.
       - name: Smoke-test the packed tarball
         run: |
           set -euo pipefail
-          tarball="$(npm pack --pack-destination "$RUNNER_TEMP" --silent)"
+          tarball="$PWD/libd2-${{ inputs.version }}.tgz"
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           npm init -y >/dev/null
-          npm install --silent "$RUNNER_TEMP/$tarball"
+          npm install --silent "$tarball"
           cat > smoke.mjs <<'JS'
           import { drlg } from 'libd2';
+          import * as sub from 'libd2/drlg';
           const map = await drlg.render(1337, 0, 0);
           const cold = map.levels.find(l => l.levelNo === 3);
+          const shrines = drlg.levelShrines(cold);
           if (map.levels.length !== 39) throw new Error(`expected 39 levels, got ${map.levels.length}`);
           if (cold.displayName !== 'Cold Plains') throw new Error(`expected Cold Plains, got ${cold.displayName}`);
           if (cold.rooms.length !== 97) throw new Error(`expected 97 rooms, got ${cold.rooms.length}`);
-          console.log(`ok: ${map.levels.length} levels, ${cold.displayName} with ${cold.rooms.length} rooms`);
+          if (shrines.length !== 5) throw new Error(`expected 5 shrines, got ${shrines.length}`);
+          const viaSub = await sub.render(1337, 0, 0);
+          if (viaSub.levels.length !== 39) throw new Error('subpath export libd2/drlg is broken');
+          console.log(`ok: ${map.levels.length} levels, ${cold.displayName} ${cold.rooms.length} rooms, ${shrines.length} shrines, subpath ok`);
           JS
           node smoke.mjs
 
       - name: Publish
         if: ${{ !inputs.dry_run }}
-        run: npm publish --access public --provenance
+        run: npm publish "libd2-${{ inputs.version }}.tgz" --access public --provenance
