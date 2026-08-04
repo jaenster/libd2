@@ -40,6 +40,14 @@ typedef struct D2DrlgRoom {
 /* Loads the game tables. Returns NULL on failure. */
 D2DrlgCtx *d2drlg_ctx_create(void);
 
+/*
+ * The loaded tables themselves, for a sibling library linked into the same binary: d2pf's
+ * d2pf_world_create takes this, so routing runs over the very context this handle owns rather
+ * than loading a second copy. NULL for a NULL handle. Not a lifetime transfer — the pointer is
+ * valid exactly as long as `ctx` is.
+ */
+void *d2drlg_ctx_core(D2DrlgCtx *ctx);
+
 /* Frees a context (NULL-safe). */
 void d2drlg_ctx_destroy(D2DrlgCtx *ctx);
 
@@ -202,7 +210,7 @@ int32_t d2drlg_act_level_collision(D2DrlgAct *act, int32_t level_index, uint16_t
 
 /*
  * Like d2drlg_act_level_collision, but ZLIB-DEFLATES (rfc1950) the little-endian u16 RAW
- * CollMap and writes the compressed bytes to `out`. Always sets *out_w/*out_h to the full
+ * CollMap and writes the compressed bytes to `out`. Always sets *out_w / *out_h to the full
  * grid dims. Returns the FULL deflated byte length (>=0, may exceed `cap` => grow+retry),
  * 0 if the level has no collision grid, or a negative error code. The INFLATED grid is
  * byte-for-byte identical to d2drlg_act_level_collision, letting hosts deflate map collision
@@ -215,7 +223,7 @@ int32_t d2drlg_act_level_collision_zlib(D2DrlgAct *act, int32_t level_index, uin
  * Writes up to `cap` bytes of the level-at-`level_index` WALK grid into `out`: one byte per
  * subtile (0 = blocked, 1 = walkable), row-major, SAME dims/origin as the RAW CollMap. Derived
  * during generation from the raw CollMap via the d2bs LevelMap mask (walkable = not
- * BlockWalk(0x01)|BlockPlayer(0x08)|Object(0x400) and not OOB 0xFFFF). Always sets *w/*h to the
+ * BlockWalk(0x01)|BlockPlayer(0x08)|Object(0x400) and not OOB 0xFFFF). Always sets *w / *h to the
  * full grid dims. Returns the FULL cell count (w*h, >=0, may exceed `cap`), 0 if the level has
  * no collision grid, or a negative error code. Path-ready: A* on these bytes directly.
  */

@@ -51,6 +51,15 @@ export fn d2drlg_ctx_create() ?*Ctx {
 }
 
 /// Frees a context (null-safe).
+/// The loaded tables themselves, for a sibling shim linked into the same binary — d2pf's
+/// d2pf_world_create takes this, so pathfinding routes over the very context this handle owns
+/// instead of loading a second copy. Returns NULL for a NULL handle. Not a lifetime transfer:
+/// the pointer stays valid exactly as long as `ctx` does.
+export fn d2drlg_ctx_core(ctx: ?*Ctx) ?*anyopaque {
+    const c = ctx orelse return null;
+    return @ptrCast(&c.inner);
+}
+
 export fn d2drlg_ctx_destroy(ctx: ?*Ctx) void {
     const c = ctx orelse return;
     c.inner.deinit();
