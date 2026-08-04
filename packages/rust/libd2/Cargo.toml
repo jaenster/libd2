@@ -10,7 +10,18 @@ homepage = "https://github.com/jaenster/libd2"
 readme = "README.md"
 keywords = ["diablo2", "map", "procedural-generation", "gamedev", "seed"]
 categories = ["game-development", "api-bindings"]
-exclude = ["/target"]
+# Explicit, because the vendored engine/ is gitignored: without a list cargo falls back to
+# git for the file set and silently drops it, producing a crate that cannot build. Packaging
+# must not depend on whether the working tree happens to be dirty.
+include = [
+    "Cargo.toml",
+    "README.md",
+    "build.rs",
+    "src/**/*.rs",
+    "tests/**/*.rs",
+    "examples/**/*.rs",
+    "engine/**",
+]
 
 [features]
 default = []
