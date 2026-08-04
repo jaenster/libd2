@@ -55,6 +55,8 @@ const Stat = struct {
 pub const PropContext = struct {
     code: []const u8 = "",
     item_level: i32 = 0,
+    /// Classic set items carry only 2 base property slots and no partial-set bonuses.
+    is_expansion: bool = true,
 };
 
 /// ITEMMOD_RollRandomValue @0x65e9e0: `min == max` returns `min` WITHOUT advancing the seed; otherwise
@@ -185,12 +187,11 @@ fn applyFunc(
             try emit(gpa, out, a.stat, @mod(a.param, 3) + @divTrunc(a.param, 3) * 8, v);
             return v;
         },
-        // Charged skill: layer packs skill<<6 | level, value is the charge count.
+        // Skill charges: layer packs skill<<6 | level, value is the charge count.
         11 => {
             const skill = a.param;
             const charges = if (a.min < 1) 5 else a.min;
-            const level = a.max;
-            if (level <= 0) return 0; // derived-from-item-level case: needs Skills.txt (residual)
+            const level = skillLevel(t, skill, a.max, a.ctx.item_level);
             try emit(gpa, out, a.stat, skill * 64 + (level & 0x3f), charges);
             return charges;
         },
@@ -200,7 +201,20 @@ fn applyFunc(
             try emit(gpa, out, a.stat, layer, a.param);
             return a.param;
         },
-        14, 23 => return 0, // sockets / ethereal are item flags, not mod stats
+        // ITEMPROP_SetSockets 0x65f590: the count is the property's `param` when set, else a roll,
+        // clamped to the base item's own socket cap. Also raises ITEMFLAG_SOCKETED, which the drop
+        // model carries as `sockets` rather than a stat.
+        14 => {
+            const n = if (a.param >= 1) a.param else rollValue(seed, a.min, a.max);
+            const cap = socketCap(t, a.ctx.code, a.ctx.item_level);
+            if (cap < 1) return 0;
+            const v = std.math.clamp(n, 1, cap);
+            try emit(gpa, out, a.stat, 0, v);
+            return v;
+        },
+        // ITEMPROP_ApplyEthereal 0x65fd20 delegates to ITEMMOD_ApplyEtherealBonus: it raises
+        // ITEMFLAG_ETHEREAL and scales damage/AC, writing no mod stat of its own.
+        23 => return 0,
         // Fixed damage: the range bound is the value verbatim, no roll.
         15 => {
             if (a.stat == Stat.min_damage) {
@@ -237,13 +251,22 @@ fn applyFunc(
             try emit(gpa, out, a.stat, 0, count + (hi * 0x400 + lo) * 4);
             return hi;
         },
+        // Charged skill: the value packs current | max<<8, and the current count is itself rolled.
         19 => {
             const skill = a.param;
-            const charges = if (a.min == 0) 5 else a.min;
-            const level = a.max;
-            if (level <= 0 or charges < 0) return 0; // derived level/charges: residual
-            try emit(gpa, out, a.stat, skill * 64 + (level & 0x3f), charges);
-            return charges;
+            const level = skillLevel(t, skill, a.max, a.ctx.item_level);
+            var max_charge: i32 = a.min;
+            if (max_charge == 0) {
+                max_charge = 5;
+            } else if (max_charge < 0) {
+                max_charge = -a.min + @divTrunc(-a.min * level, 8);
+            }
+            max_charge = std.math.clamp(max_charge, 1, 0xff);
+            const step = @divTrunc(max_charge + 7, 8);
+            const rolled: i32 = @bitCast(seed.pick(@bitCast(max_charge - step)));
+            const value = ((rolled + 1 + step) & 0xff) + max_charge * 0x100;
+            try emit(gpa, out, a.stat, skill * 64 + (level & 0x3f), value);
+            return value;
         },
         20 => {
             try emit(gpa, out, Stat.indestructible, 0, 1);
@@ -267,6 +290,36 @@ fn applyFunc(
         },
         else => return 0,
     }
+}
+
+/// The skill level a charged/skill-charges property grants (shared by funcs 11 and 19). A positive
+/// stored level is used verbatim; 0 derives it from how far the item level exceeds the skill's own
+/// requirement; a negative stored level spreads that same gap over a divisor. The result is clamped to
+/// the skill's `maxlvl`.
+fn skillLevel(t: *const tables.Tables, skill: i32, stored: i32, item_level: i32) i32 {
+    if (stored > 0) return stored;
+    const sk = &t.skills;
+    const row: usize = if (skill >= 0 and skill < sk.rowCount()) @intCast(skill) else return @max(stored, 1);
+    const req: i32 = @intCast(sk.int(row, "reqlevel"));
+    var max_lvl: i32 = @intCast(sk.int(row, "maxlvl"));
+    if (max_lvl < 1) max_lvl = 20;
+
+    if (stored == 0) {
+        return std.math.clamp(@divTrunc(item_level - req, 4) + 1, 1, max_lvl);
+    }
+    const span: i32 = if (99 - req > 1) 99 - req else 1;
+    var divisor = @divTrunc(-span, stored);
+    if (divisor < 1) divisor = 1;
+    return @max(@divTrunc(item_level - req, divisor), 1);
+}
+
+/// The socket ceiling func 14 clamps to: the inventory footprint, the engine's hard 6, and the base
+/// item's own MaxSock band for this item level.
+fn socketCap(t: *const tables.Tables, code: []const u8, item_level: i32) i32 {
+    const dims = t.itemDims(code) orelse return 0;
+    const area: i32 = @as(i32, dims[0]) * @as(i32, dims[1]);
+    const max_sock = @import("sockets.zig").maxSockForItem(t, code, item_level);
+    return @min(@min(@as(i32, 6), area), max_sock);
 }
 
 fn emit(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), stat: ?i32, layer: i32, value: i32) !void {
@@ -330,12 +383,96 @@ pub fn rollUniqueStats(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(Roll
     try rollTableProps(gpa, out, seed, t, &t.unique_items, unique_id - 1, 12, ctx);
 }
 
-/// Roll a set item's own rolled stats (ApplyRuneAndGemStats(4) @0x65fec0): the SetItems row's 9 prop
-/// slots. The partial-set `aprop` bonuses (worn-piece-count gated) and the full-set Sets.txt bonuses are
-/// applied on EQUIP, not here — a follow-up tied to the equipment model.
+/// Roll a set item's own rolled stats (ApplyRuneAndGemStats(4) @0x65fec0): the SetItems row's base
+/// props — 2 slots on a classic item, 9 on an expansion one — followed, on expansion items, by the 10
+/// `aprop` partial-set slots. Those partial bonuses roll HERE (they are baked into the item) even
+/// though they only take effect once enough set pieces are worn; `add func` decides how many apply.
 pub fn rollSetStats(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), seed: *rng.Seed, t: *const tables.Tables, set_id: u16, ctx: PropContext) !void {
     if (set_id == 0) return;
-    try rollTableProps(gpa, out, seed, t, &t.set_items, set_id - 1, 9, ctx);
+    const row = set_id - 1;
+    try rollTableProps(gpa, out, seed, t, &t.set_items, row, if (ctx.is_expansion) 9 else 2, ctx);
+    if (!ctx.is_expansion) return;
+    try rollSetPartialProps(gpa, out, seed, t, row, ctx);
+}
+
+/// The `aprop{N}{a,b}` pairs — five worn-piece tiers, two properties each, in table order.
+fn rollSetPartialProps(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), seed: *rng.Seed, t: *const tables.Tables, row: usize, ctx: PropContext) !void {
+    const st = &t.set_items;
+    if (row >= st.rowCount()) return;
+    var cbuf: [12]u8 = undefined;
+    var pbuf: [12]u8 = undefined;
+    var lobuf: [12]u8 = undefined;
+    var hibuf: [12]u8 = undefined;
+    var tier: usize = 1;
+    while (tier <= 5) : (tier += 1) {
+        for ([2]u8{ 'a', 'b' }) |half| {
+            const prop = st.str(row, std.fmt.bufPrint(&cbuf, "aprop{d}{c}", .{ tier, half }) catch unreachable);
+            if (prop.len == 0) continue;
+            const par: i32 = @intCast(st.int(row, std.fmt.bufPrint(&pbuf, "apar{d}{c}", .{ tier, half }) catch unreachable));
+            const min: i32 = @intCast(st.int(row, std.fmt.bufPrint(&lobuf, "amin{d}{c}", .{ tier, half }) catch unreachable));
+            const max: i32 = @intCast(st.int(row, std.fmt.bufPrint(&hibuf, "amax{d}{c}", .{ tier, half }) catch unreachable));
+            try applyProperty(gpa, out, seed, t, prop, par, min, max, ctx);
+        }
+    }
+}
+
+/// RollRunewordMostlikely 0x6600a0 — apply a completed runeword's own properties. Walks the Runes.txt
+/// row's seven `T1Code{N}` slots (with T1Param/T1Min/T1Max) and STOPS at the first empty one, rolling
+/// every value off the item's own seed. `runeword_id` is the 1-based row from affix.detectRuneword.
+/// Socket count, rune order and the item-type gate are validated upstream by the detection pass.
+pub fn rollRunewordStats(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), seed: *rng.Seed, t: *const tables.Tables, runeword_id: u16, ctx: PropContext) !void {
+    if (runeword_id == 0) return;
+    const rt = &t.runes;
+    const row = runeword_id - 1;
+    if (row >= rt.rowCount()) return;
+    var cbuf: [12]u8 = undefined;
+    var pbuf: [12]u8 = undefined;
+    var lobuf: [12]u8 = undefined;
+    var hibuf: [12]u8 = undefined;
+    var n: usize = 1;
+    while (n <= 7) : (n += 1) {
+        const code = rt.str(row, std.fmt.bufPrint(&cbuf, "T1Code{d}", .{n}) catch unreachable);
+        if (code.len == 0) break;
+        const par: i32 = @intCast(rt.int(row, std.fmt.bufPrint(&pbuf, "T1Param{d}", .{n}) catch unreachable));
+        const min: i32 = @intCast(rt.int(row, std.fmt.bufPrint(&lobuf, "T1Min{d}", .{n}) catch unreachable));
+        const max: i32 = @intCast(rt.int(row, std.fmt.bufPrint(&hibuf, "T1Max{d}", .{n}) catch unreachable));
+        try applyProperty(gpa, out, seed, t, code, par, min, max, ctx);
+    }
+}
+
+/// Gems.txt — the stats a gem or rune contributes once socketed, chosen by what it sits in. Each of the
+/// three column families carries three mod slots; the walk stops at the first empty one.
+pub const SocketTarget = enum { weapon, helm, shield };
+
+pub fn rollSocketFillerStats(
+    gpa: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(RolledStat),
+    seed: *rng.Seed,
+    t: *const tables.Tables,
+    filler_code: []const u8,
+    target: SocketTarget,
+    ctx: PropContext,
+) !void {
+    const gt = &t.gems;
+    const row = gt.findByStr("code", filler_code) orelse return;
+    const prefix = switch (target) {
+        .weapon => "weapon",
+        .helm => "helm",
+        .shield => "shield",
+    };
+    var cbuf: [24]u8 = undefined;
+    var pbuf: [24]u8 = undefined;
+    var lobuf: [24]u8 = undefined;
+    var hibuf: [24]u8 = undefined;
+    var n: usize = 1;
+    while (n <= 3) : (n += 1) {
+        const code = gt.str(row, std.fmt.bufPrint(&cbuf, "{s}Mod{d}Code", .{ prefix, n }) catch unreachable);
+        if (code.len == 0) break;
+        const par: i32 = @intCast(gt.int(row, std.fmt.bufPrint(&pbuf, "{s}Mod{d}Param", .{ prefix, n }) catch unreachable));
+        const min: i32 = @intCast(gt.int(row, std.fmt.bufPrint(&lobuf, "{s}Mod{d}Min", .{ prefix, n }) catch unreachable));
+        const max: i32 = @intCast(gt.int(row, std.fmt.bufPrint(&hibuf, "{s}Mod{d}Max", .{ prefix, n }) catch unreachable));
+        try applyProperty(gpa, out, seed, t, code, par, min, max, ctx);
+    }
 }
 
 fn rollTableProps(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat), seed: *rng.Seed, t: *const tables.Tables, tbl: *const @import("txt.zig").Table, row: usize, nslots: usize, ctx: PropContext) !void {
@@ -402,6 +539,8 @@ pub fn rollDropStats(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(Rolled
         .superior => try rollQualityItemStats(gpa, out, seed, t, d.quality_id, ctx),
         else => {},
     }
+    // The automagic affix is independent of quality — it rides along on nearly every tier.
+    try rollAffixStats(gpa, out, seed, t, &t.magic_prefix, d.auto_prefix_id, ctx);
 }
 
 /// The superior bonus: ApplyRuneAndGemStats(1) walks the chosen QualityItems.txt row's TWO mod slots.
@@ -577,6 +716,78 @@ test "the full unique table produces far more stats than the single-stat funcs a
     // missing handlers, entire uniques would come back empty.
     try testing.expect(total > 300);
     try testing.expectEqual(total, with_stats);
+}
+
+test "runeword props: every complete runeword rolls stats, deterministically" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    var a: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer a.deinit(testing.allocator);
+    var b: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer b.deinit(testing.allocator);
+
+    var complete: u32 = 0;
+    var with_stats: u32 = 0;
+    for (0..t.runes.rowCount()) |row| {
+        if (t.runes.int(row, "complete") == 0) continue;
+        complete += 1;
+        a.clearRetainingCapacity();
+        b.clearRetainingCapacity();
+        var s1 = rng.Seed.init(0xBEEF, 0x29a);
+        var s2 = rng.Seed.init(0xBEEF, 0x29a);
+        const ctx = PropContext{ .code = "7ls", .item_level = 85 };
+        try rollRunewordStats(testing.allocator, &a, &s1, &t, @intCast(row + 1), ctx);
+        try rollRunewordStats(testing.allocator, &b, &s2, &t, @intCast(row + 1), ctx);
+        try testing.expectEqual(a.items.len, b.items.len);
+        for (a.items, b.items) |x, y| {
+            try testing.expectEqual(x.stat, y.stat);
+            try testing.expectEqual(x.layer, y.layer);
+            try testing.expectEqual(x.value, y.value);
+        }
+        if (a.items.len > 0) with_stats += 1;
+    }
+    try testing.expect(complete > 20);
+    try testing.expectEqual(complete, with_stats); // no runeword comes back empty
+}
+
+test "gem socket fillers give different stats per socket target" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    var w: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer w.deinit(testing.allocator);
+    var h: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer h.deinit(testing.allocator);
+
+    // A perfect ruby: weapon gets fire damage, a helm gets life.
+    var s1 = rng.Seed.init(3, 0x29a);
+    var s2 = rng.Seed.init(3, 0x29a);
+    try rollSocketFillerStats(testing.allocator, &w, &s1, &t, "gpr", .weapon, .{ .code = "7ls" });
+    try rollSocketFillerStats(testing.allocator, &h, &s2, &t, "gpr", .helm, .{ .code = "cap" });
+    try testing.expect(w.items.len > 0);
+    try testing.expect(h.items.len > 0);
+    try testing.expect(w.items[0].stat != h.items[0].stat);
+}
+
+test "charged-skill properties derive their level from the item level" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    var lo: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer lo.deinit(testing.allocator);
+    var hi: std.ArrayListUnmanaged(RolledStat) = .empty;
+    defer hi.deinit(testing.allocator);
+
+    // "charged" (func 19) with no explicit level: a level-1 item and a level-85 item differ.
+    var s1 = rng.Seed.init(0x11, 0x29a);
+    var s2 = rng.Seed.init(0x11, 0x29a);
+    try applyProperty(testing.allocator, &lo, &s1, &t, "charged", 54, -10, 0, .{ .code = "7ls", .item_level = 1 });
+    try applyProperty(testing.allocator, &hi, &s2, &t, "charged", 54, -10, 0, .{ .code = "7ls", .item_level = 85 });
+    try testing.expect(lo.items.len == 1 and hi.items.len == 1);
+    // Skill id lives in the high bits of the layer, the derived level in the low 6.
+    try testing.expectEqual(@as(i32, 54), @divTrunc(lo.items[0].layer, 64));
+    try testing.expectEqual(@as(i32, 54), @divTrunc(hi.items[0].layer, 64));
+    try testing.expect(@mod(hi.items[0].layer, 64) > @mod(lo.items[0].layer, 64));
+    // The value packs current | max<<8, and current never exceeds max.
+    try testing.expect(@mod(hi.items[0].value, 256) <= @divTrunc(hi.items[0].value, 256));
 }
 
 test "applyProperty: a simple +stat property rolls one stat in range" {

@@ -8,7 +8,7 @@
 # — the .version declared in its build.zig.zon (its first release, as-is).
 #
 # Output: a JSON array on stdout, one object per package that needs releasing:
-#   [{"name":"items","version":"0.1.1","tag":"items-v0.1.1","dir":"packages/items"}]
+#   [{"name":"item","version":"0.1.1","tag":"item-v0.1.1","dir":"packages/item"}]
 # Empty array [] when nothing changed. Meant for `$GITHUB_OUTPUT` matrices but
 # runs fine locally too.
 #

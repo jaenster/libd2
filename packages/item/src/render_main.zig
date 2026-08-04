@@ -47,9 +47,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var k: u32 = 0;
     while (k < 24 and drops.items.len < 15) : (k += 1) {
         var drop_seed = lib.Seed.init(seed_val +% k, 0x29a);
-        const rolled = try lib.rollDrop(gpa, &drop_seed, &t, &set, tc_name, mlvl, .{
+        var game_seed = lib.Seed.init((seed_val +% k) ^ 0x5eed, 0x29a);
+        const rolled = try lib.rollDrop(gpa, &drop_seed, &game_seed, &t, &set, tc_name, mlvl, .{
             .magic_find = mf,
-            .item_seed_base = (seed_val +% k) ^ 0x5eed,
         });
         defer gpa.free(rolled);
         for (rolled) |d| {

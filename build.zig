@@ -2,7 +2,7 @@ const std = @import("std");
 
 // libd2 is a monorepo of independent, individually-consumable Zig packages under
 // packages/. Each package has its own build.zig + build.zig.zon and exposes a
-// module (d2-drlg / d2-items / d2-sim). A consumer depends on the one it wants:
+// module (d2-drlg / d2-item / d2-sim). A consumer depends on the one it wants:
 //
 //     .d2_drlg = .{ .path = "path/to/libd2/packages/drlg" },
 //
@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
         .{ .dep = "d2_core", .mod = "d2-core" },
         .{ .dep = "d2_data", .mod = "d2-data" },
         .{ .dep = "d2_game", .mod = "d2-game" },
-        .{ .dep = "d2_items", .mod = "d2-items" },
+        .{ .dep = "d2_item", .mod = "d2-item" },
         .{ .dep = "d2_drlg", .mod = "d2-drlg" },
         .{ .dep = "d2_formats", .mod = "d2-formats" },
         .{ .dep = "d2_save", .mod = "d2-save" },
@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) void {
         b.modules.put(b.graph.arena, b.dupe(e.mod), dep.module(e.mod)) catch @panic("OOM");
     }
 
-    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "items", "game", "net", "data", "util", "pathfinding", "save" };
+    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "item", "game", "net", "data", "util", "pathfinding", "save" };
 
     const test_step = b.step("test", "Run every package's test suite");
 
@@ -49,4 +49,13 @@ pub fn build(b: *std.Build) void {
         one.dependOn(&sub.step);
         test_step.dependOn(&sub.step);
     }
+
+    // `drlg` is the only package with golden harnesses — whole-act regenerations diffed against
+    // captured engine data. They run under `test` like everything else, but are worth a step of
+    // their own: they are the gate a generation change has to clear, and the slowest thing here.
+    const verify_step = b.step("verify", "Run the golden verification gates (drlg)");
+    const verify_sub = b.addSystemCommand(&.{ "zig", "build", "verify" });
+    verify_sub.setCwd(b.path("packages/drlg"));
+    verify_sub.setName("verify:drlg");
+    verify_step.dependOn(&verify_sub.step);
 }

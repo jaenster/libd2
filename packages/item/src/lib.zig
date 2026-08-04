@@ -1,14 +1,18 @@
 //! d2-item public library API — faithful D2 1.14d item-generation port.
 //!
-//! Scope: seed-driven DROP GENERATION — treasure-class resolution (including the
-//! auto-generated `weap3`/`armo24` item-type classes), drop-time quality with
-//! magic find, magic/rare/unique/set/superior selection, sockets, and the
-//! property value rolls each of those feeds. All roll-exact to the reconstructed
-//! 1.14d Game.exe (Ghidra session 62fbfe69); every ported function cites its
-//! address in its module doc-comment.
+//! Scope: seed-driven DROP GENERATION end to end — treasure-class resolution
+//! (including the auto-generated `weap3`/`armo24` item-type classes and the
+//! unique/set link entries), drop-time quality with magic find, item creation off
+//! the game seed, the full quality/affix dispatch with its fallback cascade,
+//! low/superior/magic/rare/unique/set selection, the automagic affix, ethereal,
+//! sockets, gold and stack quantities, and the property value rolls each of those
+//! feeds — plus runeword and socket-filler property application. All roll-exact to
+//! the reconstructed 1.14d Game.exe (Ghidra session 62fbfe69); every ported
+//! function cites its address in its module doc-comment.
 //!
-//! Out of scope: crafted/tempered and runeword APPLICATION (cube and socket
-//! recipes rather than drops). See README.md for the remaining residuals.
+//! Out of scope: the cube recipes that PRODUCE crafted/tempered items (their affix
+//! roll is here, the recipe is not) and the unit/stat layer that would apply the
+//! durability and damage side effects. See README.md for the remaining residuals.
 
 const std = @import("std");
 
@@ -47,6 +51,7 @@ test {
     _ = quality;
     _ = treasure;
     _ = affix;
+    _ = properties;
     _ = sockets;
     _ = item;
     _ = dc6;

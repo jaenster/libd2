@@ -34,6 +34,10 @@ pub const Drop = struct {
     suffix_id: u16 = 0, // magic/first-affix suffix
     rare_prefix_ids: [3]u16 = .{ 0, 0, 0 },
     rare_suffix_ids: [3]u16 = .{ 0, 0, 0 },
+    /// 1-based RarePrefix.txt / RareSuffix.txt rows — the item's rolled NAME, independent of the
+    /// affixes above ("Doom Gorget" is a rare name pair, not a prefix/suffix mod).
+    rare_prefix_name: u16 = 0,
+    rare_suffix_name: u16 = 0,
     /// 1-based UniqueItems.txt / SetItems.txt row of the selected special item (0 = none), the
     /// unique/set analogue of prefix_id. This is the SELECTION; the per-property values are rolled
     /// from `item_seed` on demand by properties.rollDropStats, not stored here.
@@ -42,7 +46,14 @@ pub const Drop = struct {
     /// 1-based QualityItems.txt row picked for a SUPERIOR drop (0 = none) — the engine's item
     /// nFileIndex, chosen by ITEMMOD_GenerateQualityItem 0x5c2970.
     quality_id: u16 = 0,
+    /// 1-based LowQualityItems.txt row (Crude/Cracked/Damaged/Low Quality) for a LOW drop.
+    low_quality_id: u16 = 0,
+    /// 1-based MagicPrefix.txt row of the item's AUTOMAGIC affix — the base's `auto prefix` group
+    /// rolled at the tail of ITEM_ApplyQualityAndAffixes. Independent of prefix_id.
+    auto_prefix_id: u16 = 0,
     sockets: u8 = 0,
+    /// ITEMFLAG_ETHEREAL — rolled for every expansion item by ITEM_ApplyEthereal.
+    ethereal: bool = false,
     quantity: i32 = 0, // gold amount / quiver count
     item_level: i32 = 0,
     /// The low word of this drop's per-item MOD seed (high = 666), so its rolled mod values can be

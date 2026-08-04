@@ -18,12 +18,33 @@ const rng = @import("rng.zig");
 const txt = @import("txt.zig");
 const tables = @import("tables.zig");
 const itemtype = @import("itemtype.zig");
+const model = @import("model.zig");
 
 pub const AffixKind = enum { prefix, suffix };
 
 pub const AffixResult = struct {
     id: u16 = 0, // 1-based row index in the prefix/suffix table (0 = none)
     group: i32 = -1,
+};
+
+/// Everything the affix filter needs about the item being rolled on. Mirrors the fields
+/// ITEMMOD_RollMagicAffixClassic 0x5c1560 reads off the unit + its Items.txt row.
+pub const AffixCtx = struct {
+    types: *const itemtype.TypeSet,
+    ilvl: i32 = 0,
+    /// The base item's Items.txt `level`.
+    qlvl: i32 = 0,
+    /// The base item's Items.txt `magic lvl` — nonzero switches BOTH the alvl formula and the
+    /// candidate weighting (weight becomes frequency * the affix's own `level`).
+    magic_lvl: i32 = 0,
+    /// ItemTypes `Class` token of the base item's type ("ama", "sor", …). Empty is the engine's
+    /// "no class" sentinel and disables the affix `class` gate entirely.
+    item_class: []const u8 = "",
+    is_expansion: bool = true,
+    /// Rows with `rare` == 0 are barred from rare / crafted / tempered items.
+    quality: model.Quality = .magic,
+    /// Groups the item already carries — HasSufixOrPrefix rejects an affix whose group is present.
+    used_groups: []const i32 = &.{},
 };
 
 /// alvl (affix level), inline in RollMagicAffixClassic. `magic_lvl` is the base
@@ -47,32 +68,30 @@ pub fn computeAlvl(ilvl: i32, qlvl: i32, magic_lvl: i32) i32 {
 const Cand = struct { id: u16, group: i32, weight: i32 };
 
 /// Roll one magic prefix OR suffix, frequency-weighted, faithful to
-/// RollMagicAffixClassic. `exclude_group` (>=0) forbids an affix whose group
-/// matches (one affix per group across a rare roll). `forced_id` (>0) forces a
-/// specific table row (still consumes the gate + pick advances). `is_forced`
-/// bypasses the 50% gate (used by forced/auto affixes).
+/// RollMagicAffixClassic 0x5c1560. `exclude_group` (>=0) forbids an affix whose group matches
+/// (the caller's per-roll exclusion, distinct from `ctx.used_groups`). `forced_id` (>0) forces a
+/// specific table row — the engine skips that row's level/maxlevel gates and picks it without a
+/// weighted roll. `is_forced` bypasses the 50% gate (the caller passes a non-null base-item
+/// pointer for rare/auto rolls, which is what really disables it).
 pub fn rollMagicAffix(
     gpa: std.mem.Allocator,
     seed: *rng.Seed,
-    t: *const tables.Tables,
     tbl: *const txt.Table,
-    kind: AffixKind,
-    item_types: *const itemtype.TypeSet,
-    ilvl: i32,
-    qlvl: i32,
-    magic_lvl: i32,
-    is_expansion: bool,
+    ctx: AffixCtx,
     exclude_group: i32,
     forced_id: u16,
     is_forced: bool,
 ) !AffixResult {
-    _ = kind;
     // 1. Gate advance (ALWAYS consumes one LCG step).
     _ = seed.next();
     if ((seed.low & 1) == 0 and !is_forced and forced_id == 0) return .{};
 
-    _ = t; // classspecific restriction not modelled (residual)
-    const alvl = computeAlvl(ilvl, qlvl, magic_lvl);
+    const alvl = computeAlvl(ctx.ilvl, ctx.qlvl, ctx.magic_lvl);
+    // The `rare` column gates rare (6), crafted (8) and tempered (9) items.
+    const needs_rare = switch (ctx.quality) {
+        .rare, .crafted, .tempered => true,
+        else => false,
+    };
 
     var pool: std.ArrayListUnmanaged(Cand) = .empty;
     defer pool.deinit(gpa);
@@ -82,24 +101,38 @@ pub fn rollMagicAffix(
     var etbuf: [8]u8 = undefined;
 
     for (0..tbl.rowCount()) |row| {
+        const id: u16 = @intCast(row + 1);
+        const forced = forced_id != 0 and id == forced_id;
+        if (forced_id != 0 and !forced) continue;
+
         const spawnable = tbl.int(row, "spawnable");
         if (spawnable != 1) continue;
 
         const version = tbl.int(row, "version");
-        if (!(version < 100 or is_expansion)) continue;
+        if (!(version < 100 or ctx.is_expansion)) continue;
 
-        const lvl_min: i32 = @intCast(tbl.int(row, "level"));
-        const lvl_max: i32 = @intCast(tbl.int(row, "maxlevel"));
-        if (alvl < lvl_min) continue;
-        if (lvl_max != 0 and alvl > lvl_max) continue;
+        // A forced row skips only the two level gates.
+        if (!forced) {
+            const lvl_min: i32 = @intCast(tbl.int(row, "level"));
+            const lvl_max: i32 = @intCast(tbl.int(row, "maxlevel"));
+            if (alvl < lvl_min) continue;
+            if (lvl_max != 0 and alvl > lvl_max) continue;
+        }
+
+        if (needs_rare and tbl.int(row, "rare") == 0) continue;
+
+        // Character-class restriction: an affix bound to a class only lands on items of that
+        // class. Both sides unset are sentinels that skip the check.
+        const affix_class = tbl.str(row, "class");
+        if (affix_class.len != 0 and ctx.item_class.len != 0 and
+            !std.mem.eql(u8, affix_class, ctx.item_class)) continue;
 
         const freq: i32 = @intCast(tbl.int(row, "frequency"));
         if (freq <= 0) continue;
 
         const group: i32 = @intCast(tbl.int(row, "group"));
         if (exclude_group >= 0 and group == exclude_group) continue;
-
-        if (forced_id != 0 and @as(u16, @intCast(row + 1)) != forced_id) continue;
+        if (hasGroup(ctx.used_groups, group)) continue;
 
         // itype-include / etype-exclude match (CanApplyAutomod core).
         var itypes: [7][]const u8 = undefined;
@@ -112,16 +145,19 @@ pub fn rollMagicAffix(
             const col = std.fmt.bufPrint(&etbuf, "etype{d}", .{i + 1}) catch unreachable;
             etypes[i] = tbl.str(row, col);
         }
-        if (!itemtype.affixMatchesTypes(item_types, &itypes, &etypes)) continue;
+        if (!itemtype.affixMatchesTypes(ctx.types, &itypes, &etypes)) continue;
 
-        const weight = freq; // magic_lvl!=0 frequency*multiplier: residual
+        // A base item with a magic level weights every candidate by its own `level`.
+        const weight = if (ctx.magic_lvl != 0) freq * @as(i32, @intCast(tbl.int(row, "level"))) else freq;
+        // A forced row is taken immediately, without a weighted roll.
+        if (forced) return .{ .id = id, .group = group };
         sum += weight;
-        try pool.append(gpa, .{ .id = @intCast(row + 1), .group = group, .weight = weight });
+        try pool.append(gpa, .{ .id = id, .group = group, .weight = weight });
     }
 
     if (pool.items.len == 0) return .{};
 
-    // 2. Weighted pick: r in [0, sum]; subtract-walk.
+    // 2. Weighted pick: r in [0, sum]; subtract-walk (strictly < 0 selects).
     var r = seed.rollBetween(0, sum + 1);
     for (pool.items) |c| {
         r -= c.weight;
@@ -130,6 +166,18 @@ pub fn rollMagicAffix(
     // Rounding safety: last candidate.
     const last = pool.items[pool.items.len - 1];
     return .{ .id = last.id, .group = last.group };
+}
+
+fn hasGroup(groups: []const i32, group: i32) bool {
+    for (groups) |g| if (g == group) return true;
+    return false;
+}
+
+/// ItemTypes `Class` token of a base item's type — what the affix `class` gate compares against.
+pub fn itemClassOf(t: *const tables.Tables, code: []const u8) []const u8 {
+    const ref = t.itemRef(code) orelse return "";
+    const row = t.itypeRow(t.itemTable(ref.table).str(ref.row, "type")) orelse return "";
+    return t.item_types.str(row, "Class");
 }
 
 /// Case-insensitive 4-char item-code equality (base `code` vs a table cell), ignoring trailing spaces.
@@ -143,60 +191,134 @@ fn trimTrailingSpace(s: []const u8) []const u8 {
     return s[0..n];
 }
 
+/// The per-player "already found" bitmask ITEM_RollUniqueItem consults at player+0x1b24: one bit per
+/// UniqueItems row, only meaningful for rows below `limit`. ITEM_MarkUniqueAsDropped 0x556530 sets the
+/// bit unless the row is flagged `nolimit` (the repeatable uniques, which never get marked).
+pub const FoundUniques = struct {
+    /// The engine's guard: rows at or above this index can never be rolled at all.
+    pub const limit: usize = 0x1001;
+
+    bits: [(limit + 31) / 32]u32 = .{0} ** ((limit + 31) / 32),
+
+    pub fn isSet(self: *const FoundUniques, row: usize) bool {
+        if (row >= limit) return false;
+        return self.bits[row >> 5] & (@as(u32, 1) << @intCast(row & 31)) != 0;
+    }
+
+    pub fn set(self: *FoundUniques, row: usize) void {
+        if (row >= limit) return;
+        self.bits[row >> 5] |= @as(u32, 1) << @intCast(row & 31);
+    }
+};
+
+/// Player/game context the unique roll needs beyond the pure tables.
+pub const SelectOpts = struct {
+    is_expansion: bool = true,
+    /// Ladder-flagged uniques only spawn when the game is on a ladder realm; the engine reads two
+    /// player fields and, when both are clear, drops every `ladder` row from the pool.
+    is_ladder: bool = true,
+    /// The base item's `quest` flag — a quest item bypasses the found-bitmask entirely.
+    is_quest: bool = false,
+    /// The player's found-uniques bitmask; null means "track nothing" (every unique stays available).
+    found: ?*FoundUniques = null,
+    /// pItemGenCtx+0x40 — force this 1-based row instead of rolling (preset/TC-link drops).
+    forced_id: u16 = 0,
+};
+
 /// ITEM_RollUniqueItem @0x5566b0 — select the specific UniqueItems.txt row for a base `code` that rolled
-/// unique quality. Candidates: `enabled` set, the classic/expansion `version` gate, `code` == base code,
-/// and `lvl` <= ilvl. Weighted by `rarity` (0 -> 1); the pick is `rollBetween(0, sum+1)` then a
-/// subtract-walk — the exact primitive the magic/rare rollers use. Returns the 1-based row, or 0 when no
-/// unique qualifies (the caller downgrades the quality). The ladder gate (flags&8) and the one-per-game
-/// dropped-bitmask (player struct +0x1b24) need player context the pure roll lacks, so every eligible
-/// unique is included and none is marked dropped — documented residuals vs the engine.
-pub fn rollUniqueItem(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.Tables, code: []const u8, ilvl: i32, is_expansion: bool) !u16 {
+/// unique quality. The candidate filter runs in the engine's order: `version` gate, `enabled`, `code` ==
+/// base code, the `ladder` gate, then `lvl` <= ilvl. Each candidate records the running weight total
+/// BEFORE itself and contributes max(`rarity`, 1); the pick is a single `pick(total)` — range [0,total),
+/// NOT the +1 range the magic-affix roller uses — followed by an RNG-free walk. A forced id short-
+/// circuits the roll entirely (no LCG advance).
+///
+/// Post-selection the engine consults the player's found-uniques bitmask: a non-quest unique already
+/// found fails the whole roll (the caller then downgrades), otherwise it is marked found unless the row
+/// is `nolimit`. Returns the 1-based row, or 0 for "no unique".
+pub fn rollUniqueItem(
+    gpa: std.mem.Allocator,
+    seed: *rng.Seed,
+    t: *const tables.Tables,
+    code: []const u8,
+    ilvl: i32,
+    opts: SelectOpts,
+) !u16 {
     const ut = &t.unique_items;
     var pool: std.ArrayListUnmanaged(Cand) = .empty;
     defer pool.deinit(gpa);
     var sum: i32 = 0;
+    var forced: ?u16 = null;
     for (0..ut.rowCount()) |row| {
-        if (ut.int(row, "enabled") == 0) continue;
         const version = ut.int(row, "version");
-        if (!(version < 100 or is_expansion)) continue;
+        if (!(version < 100 or opts.is_expansion)) continue;
+        if (ut.int(row, "enabled") == 0) continue;
         if (!codeEq(ut.str(row, "code"), code)) continue;
+        if (!opts.is_ladder and ut.int(row, "ladder") != 0) continue;
         if (@as(i32, @intCast(ut.int(row, "lvl"))) > ilvl) continue;
+
+        const id: u16 = @intCast(row + 1);
+        if (opts.forced_id != 0 and opts.forced_id == id) forced = id;
         var w: i32 = @intCast(ut.int(row, "rarity"));
         if (w <= 0) w = 1;
         sum += w;
-        try pool.append(gpa, .{ .id = @intCast(row + 1), .group = -1, .weight = w });
+        try pool.append(gpa, .{ .id = id, .group = -1, .weight = w });
     }
     if (pool.items.len == 0) return 0;
-    var r = seed.rollBetween(0, sum + 1);
-    for (pool.items) |c| {
-        r -= c.weight;
-        if (r < 0) return c.id;
+
+    const chosen = forced orelse blk: {
+        var r: i32 = @bitCast(seed.pick(@intCast(sum)));
+        for (pool.items) |c| {
+            r -= c.weight;
+            if (r < 0) break :blk c.id;
+        }
+        break :blk pool.items[pool.items.len - 1].id;
+    };
+
+    // The one-per-game gate: an already-found, non-quest unique fails the roll outright.
+    if (opts.found) |found| {
+        const row = chosen - 1;
+        if (!opts.is_quest) {
+            if (row >= FoundUniques.limit) return 0;
+            if (found.isSet(row)) return 0;
+            if (ut.int(row, "nolimit") == 0) found.set(row);
+        }
     }
-    return pool.items[pool.items.len - 1].id;
+    return chosen;
 }
 
 /// ITEMMOD_GenerateSetItem @0x5c25c0 — select the specific SetItems.txt row for a base `code` that rolled
-/// set quality. Candidates: the classic/expansion `version` gate, `item` (base code) == code, `lvl` <=
-/// ilvl; weighted by `rarity` (0 -> 1), same rollBetween walk. Sets have NO one-per-game bitmask (they
-/// repeat). Returns the 1-based row, or 0 when none qualifies (caller downgrades). Ladder gate not
-/// modelled (all eligible sets included).
-pub fn rollSetItem(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.Tables, code: []const u8, ilvl: i32, is_expansion: bool) !u16 {
+/// set quality. Filter order: `version` gate, `lvl` <= ilvl, then `item` (base code) == code; weighted by
+/// max(`rarity`, 1) with the same single `pick(total)` draw. Sets carry no ladder gate and no found-
+/// bitmask — they repeat freely. Returns the 1-based row, or 0 when none qualifies.
+pub fn rollSetItem(
+    gpa: std.mem.Allocator,
+    seed: *rng.Seed,
+    t: *const tables.Tables,
+    code: []const u8,
+    ilvl: i32,
+    opts: SelectOpts,
+) !u16 {
     const st = &t.set_items;
     var pool: std.ArrayListUnmanaged(Cand) = .empty;
     defer pool.deinit(gpa);
     var sum: i32 = 0;
+    var forced: ?u16 = null;
     for (0..st.rowCount()) |row| {
         const version = st.int(row, "version");
-        if (!(version < 100 or is_expansion)) continue;
-        if (!codeEq(st.str(row, "item"), code)) continue;
+        if (!(version < 100 or opts.is_expansion)) continue;
         if (@as(i32, @intCast(st.int(row, "lvl"))) > ilvl) continue;
+        if (!codeEq(st.str(row, "item"), code)) continue;
+
+        const id: u16 = @intCast(row + 1);
+        if (opts.forced_id != 0 and opts.forced_id == id) forced = id;
         var w: i32 = @intCast(st.int(row, "rarity"));
         if (w <= 0) w = 1;
         sum += w;
-        try pool.append(gpa, .{ .id = @intCast(row + 1), .group = -1, .weight = w });
+        try pool.append(gpa, .{ .id = id, .group = -1, .weight = w });
     }
     if (pool.items.len == 0) return 0;
-    var r = seed.rollBetween(0, sum + 1);
+    if (forced) |f| return f;
+    var r: i32 = @bitCast(seed.pick(@intCast(sum)));
     for (pool.items) |c| {
         r -= c.weight;
         if (r < 0) return c.id;
@@ -256,21 +378,73 @@ pub fn detectRuneword(gpa: std.mem.Allocator, t: *const tables.Tables, item_type
 
 pub const MagicResult = struct { prefix: AffixResult = .{}, suffix: AffixResult = .{} };
 
-/// ITEM_RollMagicPrefixSuffix: prefix first, then suffix. Both independent
-/// (separate tables); each is a full gate+pick. Item is "magic" if either lands.
-pub fn rollMagicPrefixSuffix(
-    gpa: std.mem.Allocator,
-    seed: *rng.Seed,
-    t: *const tables.Tables,
-    item_types: *const itemtype.TypeSet,
-    ilvl: i32,
-    qlvl: i32,
-    magic_lvl: i32,
-    is_expansion: bool,
-) !MagicResult {
-    const pfx = try rollMagicAffix(gpa, seed, t, &t.magic_prefix, .prefix, item_types, ilvl, qlvl, magic_lvl, is_expansion, -1, 0, false);
-    const sfx = try rollMagicAffix(gpa, seed, t, &t.magic_suffix, .suffix, item_types, ilvl, qlvl, magic_lvl, is_expansion, -1, 0, false);
+/// ITEM_RollMagicPrefixSuffix 0x5565e0: prefix first, then suffix. Both independent (separate tables);
+/// each is a full gate+pick, and both are written back even when 0. The roll "fails" (caller downgrades)
+/// only when BOTH come back 0 — there is no retry.
+pub fn rollMagicPrefixSuffix(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.Tables, ctx: AffixCtx) !MagicResult {
+    const pfx = try rollMagicAffix(gpa, seed, &t.magic_prefix, ctx, -1, 0, false);
+    var sctx = ctx;
+    // The suffix roll sees the prefix's group (HasSufixOrPrefix reads both arrays).
+    var groups: [8]i32 = undefined;
+    var n: usize = 0;
+    for (ctx.used_groups) |g| {
+        if (n < groups.len) {
+            groups[n] = g;
+            n += 1;
+        }
+    }
+    if (pfx.id != 0 and pfx.group >= 0 and n < groups.len) {
+        groups[n] = pfx.group;
+        n += 1;
+    }
+    sctx.used_groups = groups[0..n];
+    const sfx = try rollMagicAffix(gpa, seed, &t.magic_suffix, sctx, -1, 0, false);
     return .{ .prefix = pfx, .suffix = sfx };
+}
+
+/// The automagic affix: for an expansion item whose base carries an `auto prefix` group, the tail of
+/// ITEM_ApplyQualityAndAffixes rolls one extra prefix restricted to that group (forced — no 50% gate).
+/// Returns the 1-based MagicPrefix row, or 0.
+pub fn rollAutoPrefix(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.Tables, ctx: AffixCtx, auto_group: i32) !u16 {
+    if (auto_group == 0) return 0;
+    var actx = ctx;
+    actx.used_groups = &.{};
+    const tbl = &t.magic_prefix;
+
+    var pool: std.ArrayListUnmanaged(Cand) = .empty;
+    defer pool.deinit(gpa);
+    var sum: i32 = 0;
+    const alvl = computeAlvl(ctx.ilvl, ctx.qlvl, ctx.magic_lvl);
+    var itbuf: [8]u8 = undefined;
+    var etbuf: [8]u8 = undefined;
+    for (0..tbl.rowCount()) |row| {
+        if (@as(i32, @intCast(tbl.int(row, "group"))) != auto_group) continue;
+        if (tbl.int(row, "spawnable") != 1) continue;
+        const version = tbl.int(row, "version");
+        if (!(version < 100 or ctx.is_expansion)) continue;
+        const lvl_min: i32 = @intCast(tbl.int(row, "level"));
+        const lvl_max: i32 = @intCast(tbl.int(row, "maxlevel"));
+        if (alvl < lvl_min) continue;
+        if (lvl_max != 0 and alvl > lvl_max) continue;
+        const freq: i32 = @intCast(tbl.int(row, "frequency"));
+        if (freq <= 0) continue;
+        var itypes: [7][]const u8 = undefined;
+        inline for (0..7) |i| itypes[i] = tbl.str(row, std.fmt.bufPrint(&itbuf, "itype{d}", .{i + 1}) catch unreachable);
+        var etypes: [5][]const u8 = undefined;
+        inline for (0..5) |i| etypes[i] = tbl.str(row, std.fmt.bufPrint(&etbuf, "etype{d}", .{i + 1}) catch unreachable);
+        if (!itemtype.affixMatchesTypes(ctx.types, &itypes, &etypes)) continue;
+        const weight = if (ctx.magic_lvl != 0) freq * lvl_min else freq;
+        sum += weight;
+        try pool.append(gpa, .{ .id = @intCast(row + 1), .group = auto_group, .weight = weight });
+    }
+    _ = seed.next(); // the gate advance still happens; the forced flag ignores its parity
+    if (pool.items.len == 0) return 0;
+    var r = seed.rollBetween(0, sum + 1);
+    for (pool.items) |c| {
+        r -= c.weight;
+        if (r < 0) return c.id;
+    }
+    return pool.items[pool.items.len - 1].id;
 }
 
 pub const RareResult = struct {
@@ -281,49 +455,53 @@ pub const RareResult = struct {
     ok: bool = false,
 };
 
-/// Rare name pick over the rare-name tables (GetMaxToRoll / GetMaxAffixGroupClassic).
-/// The engine helper's exact eligibility+roll wasn't decompiled; modelled here as
-/// a uniform pick (one advance) over rows whose itype matches — RESIDUAL: exact
-/// internals may weight/filter differently.
-fn rollRareName(gpa: std.mem.Allocator, seed: *rng.Seed, tbl: *const txt.Table, item_types: *const itemtype.TypeSet) !u16 {
+/// GetMaxToRoll 0x5c1ab0 (expansion) / ITEMMOD_GetMaxAffixGroupClassic 0x5c19a0 (classic) — the rare
+/// NAME pick. A two-pass count-then-select over RarePrefix/RareSuffix: collect every row the item
+/// satisfies, then take one UNIFORMLY with a single `pick(count)`. Zero candidates returns 0 without
+/// touching the seed. Unlike the magic-affix roller there is NO level gate at all — only the version
+/// gate and the itype-include / etype-exclude match.
+fn rollRareName(
+    gpa: std.mem.Allocator,
+    seed: *rng.Seed,
+    tbl: *const txt.Table,
+    item_types: *const itemtype.TypeSet,
+    is_expansion: bool,
+) !u16 {
     var pool: std.ArrayListUnmanaged(u16) = .empty;
     defer pool.deinit(gpa);
     var itbuf: [8]u8 = undefined;
     var etbuf: [8]u8 = undefined;
     for (0..tbl.rowCount()) |row| {
+        const version = tbl.int(row, "version");
+        if (!(version < 100 or is_expansion)) continue;
         var itypes: [7][]const u8 = undefined;
         inline for (0..7) |i| itypes[i] = tbl.str(row, std.fmt.bufPrint(&itbuf, "itype{d}", .{i + 1}) catch unreachable);
         var etypes: [4][]const u8 = undefined;
         inline for (0..4) |i| etypes[i] = tbl.str(row, std.fmt.bufPrint(&etbuf, "etype{d}", .{i + 1}) catch unreachable);
         if (itemtype.affixMatchesTypes(item_types, &itypes, &etypes)) try pool.append(gpa, @intCast(row + 1));
+        // The engine's candidate buffer stops at 511 entries.
+        if (pool.items.len == 511) break;
     }
     if (pool.items.len == 0) return 0;
     const idx: usize = @intCast(seed.rollBetween(0, @intCast(pool.items.len)));
     return pool.items[idx];
 }
 
-/// ITEMMOD_RollRareAffixes: rare-name pick + 1..N alternating magic affixes with
-/// per-group no-dup reroll (up to 251 retries). Faithful roll structure.
-pub fn rollRareAffixes(
-    gpa: std.mem.Allocator,
-    seed: *rng.Seed,
-    t: *const tables.Tables,
-    item_types: *const itemtype.TypeSet,
-    ilvl: i32,
-    qlvl: i32,
-    magic_lvl: i32,
-    is_expansion: bool,
-) !RareResult {
+/// ITEMMOD_RollRareAffixes 0x5c21d0: rare-name pick (prefix name, then suffix name) + 1..4 alternating
+/// magic affixes, each retried up to 251 times against the same-kind duplicates. Every retry burns its
+/// own LCG advances, and a slot whose retries all collide is still consumed — it just ends up empty.
+/// Failing to find EITHER rare name aborts the whole roll (the caller downgrades to normal).
+pub fn rollRareAffixes(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.Tables, ctx: AffixCtx) !RareResult {
     var res = RareResult{};
-    res.prefix_name = try rollRareName(gpa, seed, &t.rare_prefix, item_types);
-    res.suffix_name = try rollRareName(gpa, seed, &t.rare_suffix, item_types);
+    res.prefix_name = try rollRareName(gpa, seed, &t.rare_prefix, ctx.types, ctx.is_expansion);
+    res.suffix_name = try rollRareName(gpa, seed, &t.rare_suffix, ctx.types, ctx.is_expansion);
     if (res.prefix_name == 0 or res.suffix_name == 0) return res;
 
-    // Affix count: seed.next(); count = low % 5, clamped up to minRolls(ilvl).
+    // Affix count: one advance, then max(low % 5, minRolls(ilvl)) — so 1..4, never more.
     var min_rolls: i32 = 1;
-    if (ilvl > 30) min_rolls = 2;
-    if (ilvl > 50) min_rolls = 3;
-    if (ilvl > 70) min_rolls = 4;
+    if (ctx.ilvl > 30) min_rolls = 2;
+    if (ctx.ilvl > 50) min_rolls = 3;
+    if (ctx.ilvl > 70) min_rolls = 4;
     _ = seed.next();
     var count: i32 = @intCast(seed.low % 5);
     if (count < min_rolls) count = min_rolls;
@@ -335,20 +513,22 @@ pub fn rollRareAffixes(
         _ = seed.next();
         const want_suffix = (n_prefix == 3) or (n_suffix != 3 and (seed.low & 1) != 0);
 
+        var roll = AffixResult{};
         var retries: u32 = 0;
-        while (retries < 0xfb) : (retries += 1) {
-            if (want_suffix) {
-                const roll = try rollMagicAffix(gpa, seed, t, &t.magic_suffix, .suffix, item_types, ilvl, qlvl, magic_lvl, is_expansion, -1, 0, true);
-                if (collides(res.suffixes[0..n_suffix], roll)) continue;
-                res.suffixes[n_suffix] = roll;
-                n_suffix += 1;
-            } else {
-                const roll = try rollMagicAffix(gpa, seed, t, &t.magic_prefix, .prefix, item_types, ilvl, qlvl, magic_lvl, is_expansion, -1, 0, true);
-                if (collides(res.prefixes[0..n_prefix], roll)) continue;
-                res.prefixes[n_prefix] = roll;
-                n_prefix += 1;
-            }
-            break;
+        while (retries <= 0xfb) : (retries += 1) {
+            const tbl = if (want_suffix) &t.magic_suffix else &t.magic_prefix;
+            const existing = if (want_suffix) res.suffixes[0..n_suffix] else res.prefixes[0..n_prefix];
+            roll = try rollMagicAffix(gpa, seed, tbl, ctx, -1, 0, true);
+            if (!collides(existing, roll)) break;
+            roll = .{};
+        }
+        // The slot is written either way; an exhausted retry budget just leaves it empty.
+        if (want_suffix) {
+            res.suffixes[n_suffix] = roll;
+            n_suffix += 1;
+        } else {
+            res.prefixes[n_prefix] = roll;
+            n_prefix += 1;
         }
     }
     res.ok = true;
@@ -460,8 +640,9 @@ test "magic affix: deterministic + pulled from the correct table/type" {
 
     var s1 = rng.Seed.init(0x777, 0x29a);
     var s2 = rng.Seed.init(0x777, 0x29a);
-    const a = try rollMagicPrefixSuffix(testing.allocator, &s1, &t, &types, 50, 10, 0, true);
-    const b = try rollMagicPrefixSuffix(testing.allocator, &s2, &t, &types, 50, 10, 0, true);
+    const ctx = AffixCtx{ .types = &types, .ilvl = 50, .qlvl = 10 };
+    const a = try rollMagicPrefixSuffix(testing.allocator, &s1, &t, ctx);
+    const b = try rollMagicPrefixSuffix(testing.allocator, &s2, &t, ctx);
     try testing.expectEqual(a.prefix.id, b.prefix.id);
     try testing.expectEqual(a.suffix.id, b.suffix.id);
     try testing.expectEqual(s1.low, s2.low);
@@ -478,7 +659,7 @@ test "magic affix: over many seeds at least one prefix and one suffix land, vali
     var n: u32 = 0;
     while (n < 300) : (n += 1) {
         var s = rng.Seed.init(n +% 1, 0x29a);
-        const r = try rollMagicPrefixSuffix(testing.allocator, &s, &t, &types, 60, 10, 0, true);
+        const r = try rollMagicPrefixSuffix(testing.allocator, &s, &t, .{ .types = &types, .ilvl = 60, .qlvl = 10 });
         if (r.prefix.id != 0) {
             got_prefix = true;
             try testing.expect(r.prefix.id <= t.magic_prefix.rowCount());
@@ -497,8 +678,8 @@ test "unique select: deterministic, matches the base code and respects ilvl" {
     // A Cap ("cap") has several uniques; at a generous ilvl at least one qualifies.
     var s1 = rng.Seed.init(0x555, 0x29a);
     var s2 = rng.Seed.init(0x555, 0x29a);
-    const a = try rollUniqueItem(testing.allocator, &s1, &t, "cap", 40, true);
-    const b = try rollUniqueItem(testing.allocator, &s2, &t, "cap", 40, true);
+    const a = try rollUniqueItem(testing.allocator, &s1, &t, "cap", 40, .{});
+    const b = try rollUniqueItem(testing.allocator, &s2, &t, "cap", 40, .{});
     try testing.expectEqual(a, b); // deterministic
     try testing.expect(a != 0);
     // The chosen unique really is a Cap unique within the item level.
@@ -511,10 +692,10 @@ test "unique select: no unique below its level; a code with no uniques returns 0
     defer t.deinit();
     // ilvl 0 -> nothing qualifies (every unique has lvl >= 1).
     var s = rng.Seed.init(0x9, 0x29a);
-    try testing.expectEqual(@as(u16, 0), try rollUniqueItem(testing.allocator, &s, &t, "cap", 0, true));
+    try testing.expectEqual(@as(u16, 0), try rollUniqueItem(testing.allocator, &s, &t, "cap", 0, .{}));
     // A nonsense base code has no uniques.
     var s2 = rng.Seed.init(0x9, 0x29a);
-    try testing.expectEqual(@as(u16, 0), try rollUniqueItem(testing.allocator, &s2, &t, "zzz", 99, true));
+    try testing.expectEqual(@as(u16, 0), try rollUniqueItem(testing.allocator, &s2, &t, "zzz", 99, .{}));
 }
 
 test "set select: deterministic, matches the base code and respects ilvl" {
@@ -534,7 +715,7 @@ test "set select: deterministic, matches the base code and respects ilvl" {
     }
     if (probe_code.len == 0) return; // no set data (shouldn't happen)
     var s = rng.Seed.init(0x321, 0x29a);
-    const sid = try rollSetItem(testing.allocator, &s, &t, probe_code, probe_lvl + 50, true);
+    const sid = try rollSetItem(testing.allocator, &s, &t, probe_code, probe_lvl + 50, .{});
     try testing.expect(sid != 0);
     try testing.expect(codeEq(st.str(sid - 1, "item"), probe_code));
 }
@@ -592,7 +773,7 @@ test "rare affixes: deterministic, respects 3/type cap and no dup group" {
     defer types.deinit(testing.allocator);
 
     var s = rng.Seed.init(0x424242, 0x29a);
-    const r = try rollRareAffixes(testing.allocator, &s, &t, &types, 80, 10, 0, true);
+    const r = try rollRareAffixes(testing.allocator, &s, &t, .{ .types = &types, .ilvl = 80, .qlvl = 10, .quality = .rare });
     try testing.expect(r.ok);
     try testing.expect(r.prefix_name != 0 and r.suffix_name != 0);
     // No duplicate group among chosen prefixes.

@@ -13,8 +13,10 @@
 //! field. A single mismatched field means a desynced roll (extra/missing advance
 //! or wrong weight) — the exact failure the roll-exact discipline guards against.
 //!
-//! The capture provides BOTH seed streams, which closes the one modelling gap in
-//! this port (the drop-seed -> item-seed derivation in SUnit::CreateUnit).
+//! The capture provides all three seed streams. The item seeds are now derived
+//! rather than supplied — SUnit::CreateUnit steps the GAME seed twice per item —
+//! so a capture that also records the game seed lets the harness check the
+//! derivation itself, not just the rolls downstream of it.
 //!
 //! NOTE: not run here (no oracle in this repo). The struct below documents the
 //! golden record so a future harness can decode the srvtrace JSONL directly.
