@@ -17,7 +17,7 @@ public sealed class DrlgException : Exception
 /// <example>
 /// <code>
 /// using var drlg = new MapGenerator();
-/// var act = drlg.GenerateAct(seed: 1337);
+/// var act = drlg.GenerateAct(seed: 1337, actNumber: 0);   // 0 is Act I, 4 is Act V
 /// foreach (var level in act.Levels)
 ///     Console.WriteLine($"{level.Name}: {level.Rooms.Count} rooms");
 /// </code>
@@ -208,7 +208,11 @@ public sealed class Act
     /// <summary>The difficulty it was generated at.</summary>
     public Difficulty Difficulty { get; }
 
-    /// <summary>0 for Act I through 4 for Act V.</summary>
+    /// <summary>
+    /// 0 for Act I through 4 for Act V, matching the argument you passed to
+    /// <see cref="MapGenerator.GenerateAct"/>. Note that <see cref="ToString"/> renders it the
+    /// way people say it, so this is 0 where that prints "Act 1".
+    /// </summary>
     public int Number { get; }
 
     /// <summary>Every level of the act.</summary>
