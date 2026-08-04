@@ -1,26 +1,10 @@
-//! Engine skill vocabulary owned by d2-core — currently the server do-function index.
-//!
-//! Pure constants (no logic, no deps): the same role as the collision/stat vocabularies that live
-//! here so every consumer shares one source of truth instead of vendoring the numbers. The behaviour
-//! that reads these (SkillData.kind/serverMissile/…) stays in d2-sim; only the NAMED value space is
-//! here. Pure Zig, libc-free.
+//! Engine skill vocabulary — the server do-function index. Pure constants, like the collision/stat
+//! vocabularies here; the behaviour that reads them stays in d2-sim.
 
 const std = @import("std");
 
-/// The engine's server-skill do-function index (Skills.txt `srvdofunc`): the value that selects
-/// which `SKILLSRVDOFUNCS[]` handler the 1.14d engine runs (dispatcher SKILLS_DispatchSrvDoFunc
-/// @0x56d810, 191-entry table @0x7322b0, indices 1..152 populated). Every populated index is named
-/// after its engine function so a branch can be self-documenting.
-///
-/// These names follow the SKILL that uses each srvdofunc — the authoritative mapping is Skills.txt,
-/// which IS the engine's runtime dispatch data (a skill row's `srvdofunc` selects SKILLSRVDOFUNCS[N]).
-/// CAUTION: several of Ghidra's auto-named `Skills_SrvDoFunc_NNN_*` symbols DISAGREE with that data and
-/// WERE misnamed — verified from Skills.txt: 44=Blade Sentinel, 45=trap sentries (Lightning/Death
-/// Sentry), 48=Blade Fury, 49=Shadow Warrior/Master, 56=golems (Clay/Blood/Fire), 60=Bone Wall,
-/// 62=Bone Prison, 117=Firestorm, 118=Twister/Tornado. These were all corrected in the Ghidra project
-/// (117/118 in v630; 31/44/45/48/49/56/60/62 in v631, renamed by reading the SKILLSRVDOFUNCS table
-/// index directly). Rule that caught them: trust Skills.txt + the function reached THROUGH the table
-/// index, never a Ghidra symbol name.
+/// Skills.txt `srvdofunc` — the index dispatched through SKILLSRVDOFUNCS[] @0x7322b0. Entries are
+/// named after the SKILL that uses each index (Skills.txt is authoritative, not the Ghidra symbol).
 pub const DoFunc = enum(i32) {
     none = 0,
     attack = 1,
