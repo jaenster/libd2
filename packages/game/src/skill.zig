@@ -662,6 +662,26 @@ pub fn resolve(
             return buf[0..1];
         }
     }
+    // Melee weapon strikes. Precedence mirrors the host: the ed%/reposition/multi-hit specials first,
+    // then the generic strike group (meleeHitCount plain rolls). The 34/35 charge-ups are resolved
+    // separately (they stack charges) and are not handled here.
+    {
+        const lvl = book.get(skill_id);
+        const calc1 = skills.evalCalc(book, 0, skill_id, lvl, "calc1");
+        const ws: ?effect_mod.Effect = switch (sd.doFunc()) {
+            .multi_hit_attack => .{ .weapon_strike = .{ .target_guid = target_guid, .skill_id = skill_id, .ed_percent = 0, .hits = 1, .reposition = false, .use_melee_skill = true } },
+            .sacrifice, .smite, .generic_melee_hit => .{ .weapon_strike = .{ .target_guid = target_guid, .skill_id = skill_id, .ed_percent = calc1, .hits = 1, .reposition = false, .use_melee_skill = false } },
+            .charge => .{ .weapon_strike = .{ .target_guid = target_guid, .skill_id = skill_id, .ed_percent = calc1, .hits = 1, .reposition = true, .use_melee_skill = false } },
+            .frenzy_melee_hit, .double_swing => .{ .weapon_strike = .{ .target_guid = target_guid, .skill_id = skill_id, .ed_percent = calc1, .hits = 2, .reposition = false, .use_melee_skill = false } },
+            .dragon_flight => .{ .weapon_strike = .{ .target_guid = target_guid, .skill_id = skill_id, .ed_percent = 0, .hits = 1, .reposition = true, .use_melee_skill = false } },
+            .throw_weapon_left_hand, .throw_weapon_right_hand, .jab, .charged_strike, .lightning_strike, .dragon_talon, .dragon_claw, .dragon_tail_fire_explosion, .double_throw, .melee_attack_with_missile_wrapper, .feral_rage, .rabies, .hunger => .{ .weapon_strike = .{ .target_guid = target_guid, .skill_id = skill_id, .ed_percent = 0, .hits = meleeHitCount(skills, book, skill_id, lvl), .reposition = false, .use_melee_skill = false } },
+            else => null,
+        };
+        if (ws) |e| {
+            buf[0] = e;
+            return buf[0..1];
+        }
+    }
     // Area elemental burst: Meteor (28 WITH a radius) + Fist of the Heavens (80) hit hostiles at the
     // cursor; Static Field (20) drains %-current-life from monsters around the caster.
     if (sd.doFunc() == .fist_of_the_heavens or
