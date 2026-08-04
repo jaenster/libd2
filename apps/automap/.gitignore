@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# Built by scripts/build-wasm.mjs from packages/wasm — a build artifact, not a source.
+public/libd2.wasm

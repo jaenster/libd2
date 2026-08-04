@@ -1,0 +1,7 @@
+# esbuild ships a prebuilt native binary that its postinstall links into place; without this pnpm 10+
+# refuses to run that script and vite then has no bundler. Both spellings are listed because the key
+# was renamed in pnpm 11 and this app is installed with whatever the developer has.
+allowBuilds:
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild
