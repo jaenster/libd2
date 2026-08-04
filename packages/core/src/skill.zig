@@ -15,11 +15,12 @@ const std = @import("std");
 /// These names follow the SKILL that uses each srvdofunc — the authoritative mapping is Skills.txt,
 /// which IS the engine's runtime dispatch data (a skill row's `srvdofunc` selects SKILLSRVDOFUNCS[N]).
 /// CAUTION: several of Ghidra's auto-named `Skills_SrvDoFunc_NNN_*` symbols DISAGREE with that data and
-/// are misnamed — verified from Skills.txt: 44=Blade Sentinel, 45=trap sentries (Lightning/Death
+/// WERE misnamed — verified from Skills.txt: 44=Blade Sentinel, 45=trap sentries (Lightning/Death
 /// Sentry), 48=Blade Fury, 49=Shadow Warrior/Master, 56=golems (Clay/Blood/Fire), 60=Bone Wall,
-/// 62=Bone Prison, 117=Firestorm, 118=Twister/Tornado. (117/118 were corrected in Ghidra v630; the
-/// rest still carry Ghidra's wrong symbol names — do NOT trust the Ghidra label, trust Skills.txt +
-/// the function body reached THROUGH the table index, not through the symbol name.)
+/// 62=Bone Prison, 117=Firestorm, 118=Twister/Tornado. These were all corrected in the Ghidra project
+/// (117/118 in v630; 31/44/45/48/49/56/60/62 in v631, renamed by reading the SKILLSRVDOFUNCS table
+/// index directly). Rule that caught them: trust Skills.txt + the function reached THROUGH the table
+/// index, never a Ghidra symbol name.
 pub const DoFunc = enum(i32) {
     none = 0,
     attack = 1,
