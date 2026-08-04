@@ -15,61 +15,22 @@
 //! tiles in DT1 files not part of the base set).
 
 const std = @import("std");
+const core = @import("d2-core");
 const ds1 = @import("d2-formats").ds1;
 const dt1 = @import("d2-formats").dt1;
 
 /// Each DS1 tile is a 5x5 block of subtiles.
 pub const SUBTILES_PER_TILE = 5;
 
-/// 1.14d collision-map bit names, matching how the in-game botting layer (d2bs
-/// `LevelMap::CollisionFlag`) reads the runtime CollMap (Room1.pColl.pMapStart, one
-/// u16 per subtile). The low static-terrain bits (BlockWalk/BlockLoS/Wall/BlockPlayer/
-/// AlternateTile) come straight from each covering DT1 tile's per-subtile flag byte;
-/// the higher bits are runtime unit occupancy set during play, never at room init.
-/// The VALUES are unchanged from the DBM-verified grid — only the names now carry the
-/// d2bs walkability semantics (BlockWalk 0x01, Wall 0x04) instead of the old inverted
-/// labels. `walkable()` below is the exact mask a pather applies.
-pub const Colbit = struct {
-    pub const block_walk: u16 = 0x01;
-    pub const block_los: u16 = 0x02;
-    pub const wall: u16 = 0x04;
-    pub const block_player: u16 = 0x08;
-    pub const alternate_tile: u16 = 0x10;
-    /// Also used as a synthetic render marker: a subtile whose tile has no floor tile is
-    /// stamped `blank` so the collision view draws it void; the raw-composite pass then
-    /// promotes it to solid rock. NOT set by the engine at room init for real terrain.
-    pub const blank: u16 = 0x20;
-    pub const missile: u16 = 0x40;
-    pub const player: u16 = 0x80;
-    pub const npc_loc: u16 = 0x100;
-    pub const item: u16 = 0x200;
-    pub const object: u16 = 0x400;
-    pub const closed_door: u16 = 0x800;
-    pub const npc_coll: u16 = 0x1000;
-    pub const friendly_npc: u16 = 0x2000;
-    pub const dead_body: u16 = 0x8000;
-};
-
-/// Walkable per d2bs `LevelMap` semantics: a subtile is walkable unless BlockWalk (0x01),
-/// BlockPlayer (0x08) or Object (0x400) is set — and the all-bits OOB sentinel 0xFFFF is
-/// never walkable. This is exactly the mask path consumers apply to the raw u16 CollMap.
-pub inline fn walkable(v: u16) bool {
-    return (v & (Colbit.block_walk | Colbit.block_player | Colbit.object)) == 0 and v != 0xFFFF;
-}
-
-/// Collision bit combinations the engine names as masks.
-pub const Colmask = struct {
-    pub const monster_missile: u16 = 0x101;
-    pub const misplaymoster: u16 = 0x1c0;
-    pub const monster_path: u16 = 0x3c01;
-    pub const player_flying: u16 = 0x804;
-    pub const radial_barrier: u16 = 0x805;
-    pub const player_path: u16 = 0x1c09;
-    pub const spawn: u16 = 0x3e01;
-    pub const placement: u16 = 0x3f11;
-    pub const blocks_door: u16 = 0x8180;
-    pub const any: u16 = 0xffff;
-};
+/// The collision-map vocabulary lives in d2-core, because it is the shared language of the
+/// producer (this package), the consumer (d2-pathfinding) and any runtime host that ORs unit
+/// occupancy into a grid. Re-exported here so `collision.Colbit` keeps resolving for everything
+/// that already reads it through drlg.
+pub const Colbit = core.collision.Colbit;
+pub const Colmask = core.collision.Colmask;
+pub const VOID = core.collision.VOID;
+pub const walkable = core.collision.walkable;
+pub const passable = core.collision.passable;
 
 /// A borrowed set of parsed DT1 files, indexed by (orientation, main, sub) for
 /// O(1) tile resolution. Does not own the DT1s.
@@ -273,29 +234,16 @@ pub fn asciiMap(grid: *const CollisionGrid, allocator: std.mem.Allocator) ![]u8 
 
 const testing = std.testing;
 
-test "walkable(): d2bs LevelMap mask over the raw u16 CollMap" {
-    // Blocking bits: BlockWalk (0x01), BlockPlayer (0x08), Object (0x400) each block.
-    try testing.expect(!walkable(Colbit.block_walk));
-    try testing.expect(!walkable(Colbit.block_player));
-    try testing.expect(!walkable(Colbit.object));
-    try testing.expect(!walkable(Colbit.block_walk | Colbit.wall)); // solid rock 0x05
-    // Non-blocking bits stay walkable: LoS, the wall (missile-barrier) bit alone,
-    // alternate_tile, blank, missile, and unit-occupancy bits do NOT block walking.
-    try testing.expect(walkable(0));
-    try testing.expect(walkable(Colbit.block_los));
-    try testing.expect(walkable(Colbit.wall)); // 0x04 alone: blocks missiles, not walk
-    try testing.expect(walkable(Colbit.alternate_tile));
-    try testing.expect(walkable(Colbit.blank));
-    try testing.expect(walkable(Colbit.missile));
-    try testing.expect(walkable(Colbit.player));
-    // The all-bits OOB sentinel is never walkable, even though it carries no "clean" state.
-    try testing.expect(!walkable(0xFFFF));
-    // Bit values are the DBM-verified layout (unchanged): confirm the load-bearing few.
-    try testing.expectEqual(@as(u16, 0x01), Colbit.block_walk);
-    try testing.expectEqual(@as(u16, 0x04), Colbit.wall);
-    try testing.expectEqual(@as(u16, 0x08), Colbit.block_player);
-    try testing.expectEqual(@as(u16, 0x20), Colbit.blank);
+test "the re-exported vocabulary is core's, values unchanged" {
+    // The bit/mask semantics are tested where they are defined (d2-core collision.zig). All this
+    // package has to guarantee is that the names it re-exports still carry the DBM-verified
+    // values the generated grids and goldens were built against.
+    try testing.expectEqual(@as(u16, 0x01), Colbit.wall);
+    try testing.expectEqual(@as(u16, 0x08), Colbit.noplayer);
     try testing.expectEqual(@as(u16, 0x400), Colbit.object);
+    try testing.expectEqual(@as(u16, 0x1c09), Colmask.player_path);
+    try testing.expect(!walkable(0xFFFF));
+    try testing.expect(walkable(0));
 }
 
 test "rasterize town DS1 into a subtile collision grid" {
