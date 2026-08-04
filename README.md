@@ -144,6 +144,7 @@ installation.
 | app | built on | what it is |
 |-|-|-|
 | [`drlg-server`](apps/drlg-server) | `drlg` | Serves a generated act as JSON over HTTP. A live instance runs at [libd2.typeguru.nl](https://libd2.typeguru.nl); see below. |
+| [`automap`](apps/automap) | `pathfinding`, `drlg` | Browser SPA: a level's automap drawn from the generated collision, with routes on it — click two points to path between them, or overlay every route across a whole act. Generation and routing both run in one wasm module in the page. |
 
 ## About the baked assets
 

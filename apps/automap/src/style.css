@@ -1,0 +1,126 @@
+:root {
+  --bg: #0b0d12;
+  --panel: #12151d;
+  --line: #232936;
+  --fg: #d7dbe4;
+  --muted: #8a92a3;
+  --accent: #e8b04b;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+}
+
+header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 12px;
+}
+
+h1 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  letter-spacing: 0.02em;
+}
+
+h1 .sub {
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 8px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.controls + .controls { margin-top: 8px; }
+
+.controls .gap { flex: 1; }
+
+label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+label.check { text-transform: none; letter-spacing: 0; font-size: 12px; }
+
+input, select, button {
+  background: #191d27;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 12px;
+}
+
+input[type="checkbox"] { padding: 0; }
+
+input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; width: 11ch; }
+
+select { max-width: 24ch; }
+
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: #3a4356; }
+button:disabled { opacity: 0.45; cursor: default; }
+
+.tabs { display: inline-flex; }
+.tabs button { border-radius: 0; }
+.tabs button:first-child { border-radius: 4px 0 0 4px; }
+.tabs button:last-child { border-radius: 0 4px 4px 0; margin-left: -1px; }
+.tabs button.on { background: var(--accent); color: #16120a; border-color: var(--accent); }
+
+.note { color: var(--muted); font-size: 12px; }
+.err { color: #ff7b6b; }
+
+main { position: relative; min-height: 0; }
+
+canvas.map {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+}
+
+footer {
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  padding: 6px 12px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+footer b { color: var(--fg); }
+footer .exits { color: #c98bff; }
