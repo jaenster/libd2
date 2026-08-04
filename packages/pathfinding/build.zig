@@ -22,6 +22,35 @@ pub fn build(b: *std.Build) void {
     });
     _ = mod;
 
+    // C-ABI shim: consumable from C/C++/C#/Node as native shared+static libs, or as part of a
+    // combined wasm reactor alongside d2drlg. Off for wasm here because the useful wasm is the
+    // COMBINED one (see packages/wasm): routing needs a generated act, and a module of its own
+    // would have its own linear memory with no way to reach one.
+    const capi = b.option(bool, "capi", "Build the C-ABI shim") orelse true;
+    if (capi and !target.result.cpu.arch.isWasm()) {
+        const capi_mod = b.createModule(.{
+            .root_source_file = b.path("src/capi.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &imports,
+        });
+        // A static library ends up inside somebody else's binary, and on Linux those link as
+        // PIE, which cannot take a non-PIC object. Same reason as d2drlg's.
+        capi_mod.pic = true;
+        for (imports) |imp| imp.module.pic = true;
+        const static_lib = b.addLibrary(.{ .name = "d2pf", .linkage = .static, .root_module = capi_mod });
+        const shared_mod = b.createModule(.{
+            .root_source_file = b.path("src/capi.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &imports,
+        });
+        const shared_lib = b.addLibrary(.{ .name = "d2pf", .linkage = .dynamic, .root_module = shared_mod });
+        b.installArtifact(static_lib);
+        b.installArtifact(shared_lib);
+        b.getInstallStep().dependOn(&b.addInstallHeaderFile(b.path("include/d2pf.h"), "d2pf.h").step);
+    }
+
     const test_filter = b.option([]const u8, "test-filter", "Only run tests whose name contains this substring");
     const tests = b.addTest(.{
         .filters = if (test_filter) |f| &.{f} else &.{},
