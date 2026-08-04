@@ -48,10 +48,11 @@
 //!     between them — Blood Moor to Cold Plains, and every other overworld border) can never be
 //!     teleported: those rooms are never in each other's lists. It is a walk, and `world.zig`
 //!     routes it as one.
-//!   * Crossing a WARP-LINKED border may be teleportable, but only when the destination room
-//!     happens to be loaded. That is runtime state a map-level router cannot know, and a planned
-//!     cast that fails is worse than a slightly longer route — so the planner does not use it.
-//!     A caller with live room state can consult `RoomSet` itself and add the hop.
+//!   * Crossing a WARP-LINKED border can be teleported, and `world.zig` will do it behind
+//!     `Options.teleport_across_levels` (off by default, because it needs the destination room to
+//!     be loaded — moot when the whole act is resident). `d2-drlg` supplies the actual link pairs;
+//!     the distance gate is then applied in WORLD coordinates, which is what rules out the many
+//!     linked-but-distant pairs.
 
 const std = @import("std");
 

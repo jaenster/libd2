@@ -382,6 +382,144 @@ test "Lut Gholein routes the length of the Act 2 desert to the Valley of Snakes"
     }
 }
 
+test "the diagonal reach of the cast gate is actually used" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // The gate is per-axis, so a cast may span (50,50) — about 70 subtiles of ground. A router that
+    // modelled the limit as a 50-radius circle would never emit one. Prove we do.
+    const max_cast = pf.teleport.ENGINE_MAX_CAST;
+    var longest_euclidean: f64 = 0;
+    for (f.world.levels.items) |*lv| {
+        if (lv.teleport == .forbidden) continue;
+        const pm = try lv.passMap(pf.Colmask.player_path);
+        const a = pf.grid.nearestPassable(pm, @divTrunc(lv.w, 8), @divTrunc(lv.h, 8), 64) orelse continue;
+        const b = pf.grid.nearestPassable(pm, lv.w - @divTrunc(lv.w, 8), lv.h - @divTrunc(lv.h, 8), 64) orelse continue;
+        var r = f.world.route(
+            .{ .level = lv.id, .x = a.x, .y = a.y },
+            .{ .level = lv.id, .x = b.x, .y = b.y },
+            .{ .teleport = true },
+        ) catch continue;
+        defer r.deinit();
+        for (r.legs) |leg| {
+            var i: usize = 1;
+            while (i < leg.moves.len) : (i += 1) {
+                if (leg.moves[i].kind != .teleport) continue;
+                const dx: f64 = @floatFromInt(leg.moves[i].x - leg.moves[i - 1].x);
+                const dy: f64 = @floatFromInt(leg.moves[i].y - leg.moves[i - 1].y);
+                longest_euclidean = @max(longest_euclidean, @sqrt(dx * dx + dy * dy));
+            }
+        }
+    }
+    // Strictly further than the gate's own number, which is only possible on the diagonal.
+    try testing.expect(longest_euclidean > @as(f64, @floatFromInt(max_cast)));
+}
+
+test "the engine's cross-level room links come through, and gate a boundary cast" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // The links are harvested from ppDrlgRoomsExNear, which only DRLGROOMEX_LinkNearRoomsByVis
+    // fills — so a non-empty total proves the vis-slot linking ran and reached us.
+    var total_links: usize = 0;
+    for (f.world.levels.items) |*lv| total_links += lv.links.len;
+    try testing.expect(total_links > 0);
+
+    // Every link must name a level we loaded and a room index that exists there.
+    for (f.world.levels.items) |*lv| {
+        for (lv.links) |link| {
+            try testing.expect(link.from_room < lv.rooms.rooms.len);
+            const dst = f.world.level(link.to_level) orelse continue;
+            try testing.expect(link.to_room < dst.rooms.rooms.len);
+            try testing.expect(link.to_level != lv.id); // cross-level only
+        }
+    }
+
+    // And where a cast across a boundary is offered, it must clear the distance gate in WORLD
+    // coordinates — the two cells live in different level-local frames.
+    var offered: usize = 0;
+    for (f.world.levels.items) |*lv| {
+        for (f.world.levels.items) |*other| {
+            if (other.id == lv.id) continue;
+            const c = (try pf.World.crossLevelCast(lv, other, .{})) orelse continue;
+            offered += 1;
+            const a = lv.toWorld(c.at);
+            const b = other.toWorld(c.land);
+            try testing.expect(@abs(a.x - b.x) <= pf.teleport.ENGINE_MAX_CAST);
+            try testing.expect(@abs(a.y - b.y) <= pf.teleport.ENGINE_MAX_CAST);
+        }
+    }
+    // Not asserting `offered > 0`: whether any linked pair is ALSO within 50 subtiles is a
+    // property of the seed's level placement, and most warp destinations sit far away in the
+    // world frame. The gate check above is what matters.
+}
+
+test "crossing by cast never makes a route longer than crossing on foot" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    const from = try centre(f.world.level(1).?, pf.Colmask.player_path);
+    const to = try centre(f.world.level(7).?, pf.Colmask.player_path);
+    const a = pf.Pos{ .level = 1, .x = from.x, .y = from.y };
+    const b = pf.Pos{ .level = 7, .x = to.x, .y = to.y };
+
+    var walked = try f.world.route(a, b, .{ .teleport = true });
+    defer walked.deinit();
+    var cast = try f.world.route(a, b, .{ .teleport = true, .teleport_across_levels = true });
+    defer cast.deinit();
+
+    try testing.expectEqual(walked.legs.len, cast.legs.len);
+    try testing.expect(cast.moveCount() <= walked.moveCount());
+}
+
+test "the cast gate is per-axis and inclusive, exactly as the handler spells it" {
+    const o = pf.Point{ .x = 100, .y = 100 };
+    const max = pf.teleport.ENGINE_MAX_CAST;
+
+    // Straight: 50 accepted, 51 not.
+    try testing.expect(pf.teleport.withinCastGate(o, .{ .x = 150, .y = 100 }, max));
+    try testing.expect(!pf.teleport.withinCastGate(o, .{ .x = 151, .y = 100 }, max));
+
+    // Diagonal: (50,50) accepted even though it is ~70 subtiles of ground. This is the whole
+    // reason the metric matters — a radial reading of the same limit would reject it.
+    try testing.expect(pf.teleport.withinCastGate(o, .{ .x = 150, .y = 150 }, max));
+    const euclidean = @sqrt(@as(f64, 50 * 50 + 50 * 50));
+    try testing.expect(euclidean > 70.0);
+
+    // But one subtile past on either axis is out, however short the other axis is.
+    try testing.expect(!pf.teleport.withinCastGate(o, .{ .x = 150, .y = 151 }, max));
+    // Symmetric in the negative direction: x = 49 is 51 away and fails; x = 50 is exactly 50.
+    try testing.expect(!pf.teleport.withinCastGate(o, .{ .x = 49, .y = 100 }, max));
+    try testing.expect(pf.teleport.withinCastGate(o, .{ .x = 50, .y = 100 }, max));
+}
+
+test "Duriel's Lair gates the destination with COLMASK_PLAYER_FLYING" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{1});
+    defer f.deinit();
+
+    // Levels.txt Teleport == 2 for exactly one level, and the branch it selects tests the
+    // destination with 0x804 (PUSH 0x804 at 0x5ca3a6) — door | missile_barrier.
+    const lair = f.world.level(pf.portals.DURIELS_LAIR) orelse return error.NoLair;
+    try testing.expectEqual(pf.TeleportRule.gated, lair.teleport);
+
+    const base = pf.Colmask.player_path;
+    try testing.expectEqual(base | pf.Colmask.player_flying, lair.teleport.destinationMask(base));
+    // A door is already in the player mask, but the missile barrier is NOT — that bit is the
+    // difference this level makes, and it must actually block.
+    try testing.expect(pf.collision.passable(pf.Colbit.missile_barrier, base));
+    try testing.expect(!pf.collision.passable(pf.Colbit.missile_barrier, lair.teleport.destinationMask(base)));
+
+    // Every other level leaves the mask alone.
+    for (f.world.levels.items) |*lv| {
+        if (lv.id == pf.portals.DURIELS_LAIR) continue;
+        try testing.expectEqual(base, lv.teleport.destinationMask(base));
+    }
+}
+
 test "an unreachable level fails fast instead of searching" {
     const alloc = testing.allocator;
     var f = try Fixture.load(alloc, &.{0});

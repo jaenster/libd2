@@ -49,7 +49,19 @@ pub const Crossing = struct {
     at: Point,
 };
 
-/// One level's worth of a route. `exit` is how you leave for the next leg; null on the last.
+/// A single teleport cast that crosses a level boundary: where you cast from, and where you land
+/// on the other side. Both in their own level's local subtiles.
+pub const LevelCast = struct {
+    at: Point,
+    land: Point,
+};
+
+/// One level's worth of a route.
+///
+/// `moves` starts where you enter the level and ends where you leave it; `exit` says how you leave,
+/// and is null on the last leg. A transition therefore always runs from this leg's LAST move to the
+/// next leg's FIRST move — true for a staircase, a border and a teleport cast alike — so a consumer
+/// never has to special-case where the far side is.
 pub const Leg = struct {
     level: i32,
     moves: []Move,
@@ -81,11 +93,22 @@ pub const Options = struct {
     /// Teleport instead of walking wherever the level permits it. Levels that forbid teleport
     /// (Levels.txt Teleport = 0) fall back to walking automatically.
     teleport: bool = false,
+    /// Cross a level boundary with a single teleport cast where the engine allows one (an actual
+    /// cross-level near-room link, and both cells inside the cast gate). Requires `teleport`.
+    ///
+    /// Off by default because it depends on the destination room being LOADED server-side: the
+    /// runtime adjacent list is activation-filtered (`GetRealRoomsNearCount` 0x66bd00), so a
+    /// planned cast into a room the server has not allocated silently does nothing. Turn it on
+    /// when the whole act is resident — which is the normal case for a server that eager-loads.
+    teleport_across_levels: bool = false,
     /// Maximum CHEBYSHEV cast distance in subtiles (`max(|dx|,|dy|)`), the metric the packet
     /// handler's anti-exploit gate `CheckIfCoordsAreInRange` (0x548ef0) applies with nRange = 0x32.
     /// Defaults to that 50; lower it for margin against server/client position lag. Null drops the
     /// distance gate and leaves only the adjacent-room rule. See teleport.zig.
     teleport_max_cast: ?i32 = teleport.ENGINE_MAX_CAST,
+    /// Shape of the cast limit. `.chebyshev` is the engine's own per-axis test; `.euclidean` models
+    /// the radial cap conventional bots apply, which is strictly more conservative.
+    teleport_metric: teleport.Metric = .chebyshev,
     /// Accept a passable cell this far from a blocked start or goal. Kept tight: the caller named
     /// a specific spot, so wandering far from it is not helpful.
     snap_radius: i32 = 8,
@@ -144,7 +167,7 @@ pub const World = struct {
     pub fn loadAct(self: *World, ctx: *drlg.Ctx, act_no: i32) !void {
         if (self.teleport_rule.len == 0) self.teleport_rule = try parseTeleportColumn(self.alloc);
 
-        var full = try drlg.generateActFull(ctx, self.alloc, act_no, self.seed, self.difficulty, null, false);
+        var full = try drlg.generateActFull(ctx, self.alloc, act_no, self.seed, self.difficulty, .{ .room_links = true });
         defer full.deinit(self.alloc);
 
         for (full.levels) |lf| {
@@ -197,6 +220,11 @@ pub const World = struct {
             },
         };
 
+        const links = try self.alloc.dupe(drlg.RoomLink, lf.room_links);
+        errdefer self.alloc.free(links);
+        const presets = try self.alloc.dupe(drlg.PresetUnit, lf.presets);
+        errdefer self.alloc.free(presets);
+
         const id = lf.meta.level_id;
         try self.levels.append(self.alloc, .{
             .id = id,
@@ -206,6 +234,8 @@ pub const World = struct {
             .h = h,
             .cells = cells,
             .rooms = room_set,
+            .links = links,
+            .presets = presets,
             .exits = exits,
             .teleport = self.teleportRuleFor(id),
             .alloc = self.alloc,
@@ -296,28 +326,76 @@ pub const World = struct {
             const lv = self.level(level_id) orelse return error.UnknownLevel;
             const last = i + 1 == chain.items.len;
 
-            // Where this leg ends: the caller's goal on the final level, otherwise the tile that
-            // leads to the next one.
-            var exit: ?Exit = null;
-            const target: Point = if (last) .{ .x = to.x, .y = to.y } else blk: {
-                const next = chain.items[i + 1];
-                const picked = try self.chooseExit(lv, next, entry, opts) orelse {
-                    // A portal edge: quest code places it, so there is no tile to walk to. End the
-                    // leg where we stand and let the caller drive the portal.
-                    exit = .{ .to_level = next, .x = -1, .y = -1, .kind = .portal };
-                    break :blk entry;
-                };
-                exit = picked.exit;
-                break :blk picked.at;
-            };
-
-            var moves: std.ArrayListUnmanaged(Move) = .empty;
-            errdefer moves.deinit(self.alloc);
             // The two ends of a leg are different kinds of thing and get different snaps: a
             // position the caller named is exact, a level-transition tile is approximate.
             const snap_from: i32 = if (i == 0) opts.snap_radius else opts.exit_snap_radius;
             const snap_to: i32 = if (last) opts.snap_radius else opts.exit_snap_radius;
-            try self.pathWithin(lv, entry, target, opts, snap_from, snap_to, &moves);
+
+            var exit: ?Exit = null;
+            // Set when this leg leaves by casting into the next level rather than walking out.
+            var cast_arrival: ?Point = null;
+            var moves: std.ArrayListUnmanaged(Move) = .empty;
+            errdefer moves.deinit(self.alloc);
+
+            if (last) {
+                try self.pathWithin(lv, entry, .{ .x = to.x, .y = to.y }, opts, snap_from, snap_to, &moves);
+            } else {
+                const next = chain.items[i + 1];
+
+                // Two ways out can exist: walk to the staircase/border, or cast straight across
+                // where the engine permits it. Casting is usually the shorter one — it skips the
+                // whole walk to the exit — but not always: the link room may be further away than
+                // the exit is. So build BOTH legs and keep the cheaper, rather than assuming.
+                const walk_out: ?Crossing = try self.chooseExit(lv, next, entry, opts);
+                const cast_out: ?LevelCast = if (opts.teleport and opts.teleport_across_levels)
+                    if (self.level(next)) |nlv| try crossLevelCast(lv, nlv, opts) else null
+                else
+                    null;
+
+                if (walk_out == null and cast_out == null) {
+                    // A portal edge: quest code places it, so there is no tile to walk to. End the
+                    // leg where we stand and let the caller drive the portal.
+                    exit = .{ .to_level = next, .x = -1, .y = -1, .kind = .portal };
+                    try self.pathWithin(lv, entry, entry, opts, snap_from, snap_to, &moves);
+                } else {
+                    if (walk_out) |wc| {
+                        try self.pathWithin(lv, entry, wc.at, opts, snap_from, snap_to, &moves);
+                        exit = wc.exit;
+                    }
+                    if (cast_out) |cc| skip: {
+                        // Searching the alternative costs as much as the leg we already have, so
+                        // first ask whether it could possibly win. In teleport mode a leg's cost is
+                        // its cast count, and no route to `cc.at` can use fewer than
+                        // ceil(distance / max_cast) of them — an admissible bound, so if even that
+                        // plus the boundary cast cannot beat what we have, the search is pointless.
+                        if (walk_out != null and opts.teleport) {
+                            if (opts.teleport_max_cast) |m| {
+                                const d: i32 = @intCast(opts.teleport_metric.distance(entry.x, entry.y, cc.at.x, cc.at.y));
+                                const floor_casts = std.math.divCeil(i32, d, m) catch 0;
+                                // +1 start move, +1 for the boundary cast itself.
+                                if (floor_casts + 2 > @as(i32, @intCast(moves.items.len))) break :skip;
+                            }
+                        }
+
+                        var alt: std.ArrayListUnmanaged(Move) = .empty;
+                        defer alt.deinit(self.alloc);
+                        try self.pathWithin(lv, entry, cc.at, opts, snap_from, snap_to, &alt);
+                        // +1 for the cast itself, which the leg's moves do not contain.
+                        if (walk_out == null or alt.items.len + 1 <= moves.items.len) {
+                            moves.clearRetainingCapacity();
+                            try moves.appendSlice(self.alloc, alt.items);
+                            exit = .{ .to_level = next, .x = cc.at.x, .y = cc.at.y, .kind = .teleport };
+                            cast_arrival = cc.land;
+                        }
+                    }
+                }
+            }
+
+            const leg_end: Point = if (moves.items.len != 0)
+                .{ .x = moves.items[moves.items.len - 1].x, .y = moves.items[moves.items.len - 1].y }
+            else
+                entry;
+
             try legs.append(self.alloc, .{
                 .level = level_id,
                 .moves = try moves.toOwnedSlice(self.alloc),
@@ -327,11 +405,80 @@ pub const World = struct {
             // Entering the next level, we arrive at its own side of the link.
             if (!last) {
                 const next = chain.items[i + 1];
-                entry = try self.arrivalOn(next, lv, target, exit, opts);
+                entry = cast_arrival orelse try self.arrivalOn(next, lv, leg_end, exit, opts);
             }
         }
 
         return .{ .alloc = self.alloc, .legs = try legs.toOwnedSlice(self.alloc) };
+    }
+
+    /// Can we leave `from` for `to` with a single teleport cast, and if so between which cells?
+    ///
+    /// Both of the engine's gates have to hold, and the interesting part is that they pull in
+    /// opposite directions:
+    ///
+    ///   * TOPOLOGY says yes only where a cross-level near-room link exists. Those come from
+    ///     `DRLGROOMEX_LinkNearRoomsByVis` (0x66c220) following a vis slot, so they connect a room
+    ///     to a room of the level its warp leads to — regardless of where that level sits.
+    ///   * DISTANCE says yes only within 50 subtiles, Chebyshev. Levels of an act share one world
+    ///     frame, and a warp destination is usually placed far away in it, so most linked pairs
+    ///     are thousands of subtiles apart and fail here.
+    ///
+    /// The two therefore agree only where a linked pair also happens to be physically adjacent —
+    /// which is precisely the case worth taking, and the check has to run in WORLD coordinates
+    /// because the two cells live in different level-local frames.
+    ///
+    /// Picks the pair with the shortest cast among all candidate links.
+    pub fn crossLevelCast(from: *Level, to: *Level, opts: Options) !?LevelCast {
+        const max_cast = opts.teleport_max_cast orelse return null;
+        // The Levels.txt rule that applies is the CASTER'S — `Skills_SrvDoFunc_027_Teleport` reads
+        // it from `GetRoom(pUnit)`, the room you are standing in — so `from` decides both whether
+        // the cast happens at all and what extra mask the DESTINATION is tested with. The
+        // destination level's own rule is irrelevant to this cast.
+        if (from.teleport == .forbidden) return null;
+
+        const from_pm = try from.passMap(opts.mask);
+        const to_pm = try to.passMap(from.teleport.destinationMask(opts.mask));
+
+        var best: ?LevelCast = null;
+        var best_cost: i32 = std.math.maxInt(i32);
+
+        for (from.links) |link| {
+            if (link.to_level != to.id) continue;
+            if (link.from_room >= from.rooms.rooms.len or link.to_room >= to.rooms.rooms.len) continue;
+            const src_box = from.rooms.rooms[link.from_room];
+            const dst_box = to.rooms.rooms[link.to_room];
+
+            // Cheap exact prune FIRST. Snapping a candidate costs two ring searches out to
+            // `exit_snap_radius`, and a level can carry hundreds of links of which almost none are
+            // physically close — a warp destination is usually placed far away in the shared world
+            // frame. The closest any cell of one room can be to any cell of the other is a
+            // subtraction on the boxes, so reject on that before touching the grid.
+            if (boxGap(from, src_box, to, dst_box) > max_cast) continue;
+
+            // Aim each room at the other, in world coordinates, then snap to real ground.
+            const src_c = from.toWorld(roomCentre(src_box));
+            const dst_c = to.toWorld(roomCentre(dst_box));
+            const at = grid.nearestPassable(from_pm, from.fromWorld(dst_c).x, from.fromWorld(dst_c).y, opts.exit_snap_radius) orelse continue;
+            const land = grid.nearestPassable(to_pm, to.fromWorld(src_c).x, to.fromWorld(src_c).y, opts.exit_snap_radius) orelse continue;
+
+            // BOTH ends must really be in the linked rooms. The engine's rule is that the
+            // destination lies in the CASTER'S room or one adjacent to it, so the link only
+            // authorises this cast when we are standing in `from_room` and land in `to_room`;
+            // snapping can easily have pulled either cell into a neighbouring room instead.
+            if (from.rooms.atSubtile(at.x, at.y) != @as(?u16, @intCast(link.from_room))) continue;
+            if (to.rooms.atSubtile(land.x, land.y) != @as(?u16, @intCast(link.to_room))) continue;
+
+            const a = from.toWorld(at);
+            const b = to.toWorld(land);
+            if (!opts.teleport_metric.within(a.x, a.y, b.x, b.y, max_cast)) continue;
+            const cost: i32 = @intCast(opts.teleport_metric.distance(a.x, a.y, b.x, b.y));
+            if (cost < best_cost) {
+                best_cost = cost;
+                best = .{ .at = at, .land = land };
+            }
+        }
+        return best;
     }
 
     /// The crossing to take out of `lv` towards `dest`, and the reachable subtile that stands for
@@ -430,6 +577,7 @@ pub const World = struct {
             defer hops.deinit(self.alloc);
             teleport.find(self.alloc, lv, from.x, from.y, to.x, to.y, .{
                 .max_cast = opts.teleport_max_cast,
+                .metric = opts.teleport_metric,
                 .landing_mask = opts.mask,
                 .snap_radius = snap_from,
                 .goal_snap_radius = snap_to,
@@ -471,6 +619,31 @@ pub const World = struct {
         for (pts.items) |p| try out.append(self.alloc, .{ .x = p.x, .y = p.y, .kind = .walk });
     }
 };
+
+/// The smallest Chebyshev distance any cell of `a` (on level `la`) can have to any cell of `b` (on
+/// `lb`), in world subtiles. Zero when the boxes overlap.
+fn boxGap(la: *const Level, a: rooms_mod.Room, lb: *const Level, b: rooms_mod.Room) i32 {
+    const S = grid.SUBTILES_PER_TILE;
+    const ax0 = (la.origin_x + a.x) * S;
+    const ay0 = (la.origin_y + a.y) * S;
+    const ax1 = ax0 + a.w * S;
+    const ay1 = ay0 + a.h * S;
+    const bx0 = (lb.origin_x + b.x) * S;
+    const by0 = (lb.origin_y + b.y) * S;
+    const bx1 = bx0 + b.w * S;
+    const by1 = by0 + b.h * S;
+
+    const gap_x = @max(@as(i32, 0), @max(ax0 - bx1, bx0 - ax1));
+    const gap_y = @max(@as(i32, 0), @max(ay0 - by1, by0 - ay1));
+    return @max(gap_x, gap_y);
+}
+
+fn roomCentre(box: rooms_mod.Room) Point {
+    return .{
+        .x = (box.x + @divTrunc(box.w, 2)) * grid.SUBTILES_PER_TILE,
+        .y = (box.y + @divTrunc(box.h, 2)) * grid.SUBTILES_PER_TILE,
+    };
+}
 
 /// The bridge tile on `lv` that leads to `dest`, preferring a warp door over a seam: a warp is a
 /// real doorway you step into, a seam is a wide border you can cross anywhere, so the warp is the
@@ -527,7 +700,7 @@ fn parseTeleportColumn(alloc: std.mem.Allocator) ![]level_mod.TeleportRule {
         if (rows.items.len < want) try rows.appendNTimes(alloc, .allowed, want - rows.items.len);
         rows.items[@intCast(lid)] = switch (tele) {
             0 => .forbidden,
-            2 => .los_gated,
+            2 => .gated,
             else => .allowed,
         };
     }
@@ -544,7 +717,7 @@ test "Levels.txt Teleport parses to the rule the engine applies" {
     // Only the Null level refuses teleport outright, and only Duriel's Lair gates the
     // destination — that is what Skills_SrvDoFunc_027_Teleport's two branches key on.
     try testing.expectEqual(level_mod.TeleportRule.forbidden, rules[0]);
-    try testing.expectEqual(level_mod.TeleportRule.los_gated, rules[portals.DURIELS_LAIR]);
+    try testing.expectEqual(level_mod.TeleportRule.gated, rules[portals.DURIELS_LAIR]);
     try testing.expectEqual(level_mod.TeleportRule.allowed, rules[portals.ARCANE_SANCTUARY]);
     try testing.expectEqual(level_mod.TeleportRule.allowed, rules[1]);
 
@@ -552,7 +725,7 @@ test "Levels.txt Teleport parses to the rule the engine applies" {
     var gated: usize = 0;
     for (rules) |r| {
         if (r == .forbidden) forbidden += 1;
-        if (r == .los_gated) gated += 1;
+        if (r == .gated) gated += 1;
     }
     try testing.expectEqual(@as(usize, 1), forbidden);
     try testing.expectEqual(@as(usize, 1), gated);

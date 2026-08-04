@@ -66,8 +66,15 @@ pub const VOID: u16 = 0xFFFF;
 ///   * `missile_flight` — `SKILL_CheckMissileCollisionAtTarget` (0x4c7b20) tests a missile's
 ///     cell with missile_barrier|wall. Missiles ignore noplayer/object/door, which is why they
 ///     must not be traced with the player mask.
-///   * `line_of_sight` — the `eCollisionFlag` the skill layer hands `SKILLS_HasLineOfSight`
-///     (0x645910), which is a thin wrapper over `Collision::TestCollision`.
+///   * `player_flying` — what `Skills_SrvDoFunc_027_Teleport` (0x5ca360) tests the destination
+///     with on a `Levels.txt Teleport == 2` level: `PUSH 0x804` at 0x5ca3a6 into
+///     `TestCollisionByCoordinates`. A teleporting player is stopped by doors and missile
+///     barriers, and nothing else.
+///
+/// There is deliberately NO "line of sight" mask here. `SKILLS_HasLineOfSight` (0x645910) is a
+/// thin wrapper over `Collision::TestCollision` that takes the mask from its CALLER, and the
+/// call sites do not agree on one — so naming a canonical LOS mask would be inventing a
+/// constant the game does not have.
 pub const Colmask = struct {
     pub const monster_missile: u16 = 0x101;
     pub const misplaymoster: u16 = 0x1c0;
@@ -80,9 +87,9 @@ pub const Colmask = struct {
     pub const blocks_door: u16 = 0x8180;
     pub const any: u16 = 0xffff;
 
-    /// Spelled inline by the engine rather than named in the overlay table.
+    /// Spelled inline by the engine rather than named in the overlay table:
+    /// `SKILL_CheckMissileCollisionAtTarget` (0x4c7b20) passes `COLBIT_MISSILE_BARRIER|COLBIT_WALL`.
     pub const missile_flight: u16 = Colbit.missile_barrier | Colbit.wall;
-    pub const line_of_sight: u16 = Colbit.visible | Colbit.wall;
 };
 
 /// True when a unit whose collision model is `mask` may occupy `cell`. `VOID` fails for every

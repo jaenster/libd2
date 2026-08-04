@@ -6,6 +6,7 @@
 //! player query and the first missile query on the same level share everything except one bitset.
 
 const std = @import("std");
+const drlg = @import("d2-drlg");
 const grid = @import("grid.zig");
 const rooms = @import("rooms.zig");
 const collision = @import("d2-core").collision;
@@ -27,6 +28,15 @@ pub const Exit = struct {
         /// A portal that map generation cannot see, because a quest creates it at runtime.
         /// See portals.zig.
         portal,
+        /// A single teleport cast straight into the next level. Legal only where the engine's own
+        /// cross-level near-room link exists AND the two cells are within the cast gate — see
+        /// `World.crossLevelCast`.
+        ///
+        /// Like every other kind, `x`/`y` are where the transition happens ON THIS LEVEL — the cell
+        /// you cast FROM, which is also this leg's last move. Where you land is the next leg's
+        /// first move, in that level's own frame; convert both through `toWorld` to get the cast
+        /// as the server sees it.
+        teleport,
     };
 };
 
@@ -43,6 +53,14 @@ pub const Level = struct {
     /// room covers. Owned.
     cells: []u16,
     rooms: rooms.RoomSet,
+    /// The engine's CROSS-LEVEL near-room links for this level's rooms (`drlg.RoomLink`,
+    /// harvested from `ppDrlgRoomsExNear`). `from_room` indexes `rooms.rooms`. Same-level
+    /// adjacency is not in here — `RoomSet` derives that geometrically.
+    links: []drlg.RoomLink,
+    /// Preset units placed by the DS1s of this level, in LEVEL-LOCAL subtiles — the same frame as
+    /// everything else here. `etype` 2 is an object, and then `txt_file_no` is its Objects.txt id,
+    /// which is how a caller finds a waypoint, a seal or a chest to path to.
+    presets: []drlg.PresetUnit,
     exits: []Exit,
     /// Levels.txt `Teleport`: 0 refuses teleport outright, 1 allows it, 2 gates the destination.
     teleport: TeleportRule,
@@ -66,6 +84,8 @@ pub const Level = struct {
         self.tile_reps.deinit(self.alloc);
         self.alloc.free(self.cells);
         self.alloc.free(self.exits);
+        self.alloc.free(self.links);
+        self.alloc.free(self.presets);
         self.rooms.deinit(self.alloc);
         self.* = undefined;
     }
@@ -144,6 +164,13 @@ pub const Level = struct {
         };
     }
 
+    /// Every preset OBJECT with this Objects.txt id, appended to `out`.
+    pub fn findObjects(self: *const Level, class_id: i32, out: *std.ArrayListUnmanaged(Point), alloc: std.mem.Allocator) !void {
+        for (self.presets) |u| {
+            if (u.etype == 2 and u.txt_file_no == class_id) try out.append(alloc, .{ .x = u.x, .y = u.y });
+        }
+    }
+
     pub fn fromWorld(self: *const Level, p: Point) Point {
         return .{
             .x = p.x - self.origin_x * grid.SUBTILES_PER_TILE,
@@ -154,23 +181,24 @@ pub const Level = struct {
 
 /// Levels.txt `Teleport`, as `Skills_SrvDoFunc_027_Teleport` (0x5ca360) reads it:
 ///
-///     if (!pLevelTxt->Teleport) return 0;                              // .forbidden
-///     if (pLevelTxt->Teleport == 2 && TestCollisionByCoordinates(...))  // .los_gated
-///         return 0;
-///     return SUNIT_RelocateUnit(...);                                   // .allowed
+///     if (!pLevelTxt->Teleport) return 0;                                    // .forbidden
+///     if (pLevelTxt->Teleport == 2 &&
+///         TestCollisionByCoordinates(pUnit, x, y, 0x804)) return 0;          // .gated
+///     return SUNIT_RelocateUnit(...);                                        // .allowed
 ///
 /// In 1.14d only level 0 (Null) is 0 and only Duriel's Lair (73) is 2 — everything else is 1.
 pub const TeleportRule = enum(u8) {
     forbidden = 0,
     allowed = 1,
-    los_gated = 2,
+    gated = 2,
 
-    /// The extra mask a `.los_gated` level applies to the destination. `TestCollisionByCoordinates`
-    /// is called with the line-of-sight flags, so a cell carrying them refuses the cast.
+    /// The extra mask a `.gated` level applies to the destination. Read off the instruction
+    /// itself: `PUSH 0x804` at 0x5ca3a6 feeds `TestCollisionByCoordinates`, and 0x804 is
+    /// `COLMASK_PLAYER_FLYING` — door | missile_barrier. A cell carrying either refuses the cast.
     pub fn destinationMask(self: TeleportRule, base: u16) u16 {
         return switch (self) {
             .forbidden, .allowed => base,
-            .los_gated => base | collision.Colmask.line_of_sight,
+            .gated => base | collision.Colmask.player_flying,
         };
     }
 };

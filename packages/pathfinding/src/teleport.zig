@@ -68,14 +68,51 @@ pub const Error = error{
 /// subtiles, applied per axis.
 pub const ENGINE_MAX_CAST: i32 = 50;
 
+/// How a cast's length is measured against `max_cast`.
+pub const Metric = enum {
+    /// What the engine does: `max(|dx|,|dy|) <= max_cast`, per axis. The legal region is a SQUARE,
+    /// so a diagonal cast reaches `max_cast * sqrt(2)` of actual ground.
+    chebyshev,
+    /// What a bot that computes a distance does: `sqrt(dx^2+dy^2) <= max_cast`. The legal region is
+    /// a DISK inscribed in the engine's square, so this is strictly more conservative — it never
+    /// produces an illegal cast, it just declines legal ones. Provided to measure what the
+    /// widespread "teleport 40" convention actually costs.
+    euclidean,
+
+    pub fn within(self: Metric, ax: i32, ay: i32, bx: i32, by: i32, max_cast: i32) bool {
+        const dx: i64 = ax - bx;
+        const dy: i64 = ay - by;
+        return switch (self) {
+            .chebyshev => @max(@abs(dx), @abs(dy)) <= max_cast,
+            .euclidean => dx * dx + dy * dy <= @as(i64, max_cast) * @as(i64, max_cast),
+        };
+    }
+
+    /// Distance under this metric, for the search heuristic. Must not overestimate, or A* stops
+    /// being admissible.
+    pub fn distance(self: Metric, ax: i32, ay: i32, bx: i32, by: i32) u32 {
+        const dx: i64 = ax - bx;
+        const dy: i64 = ay - by;
+        return switch (self) {
+            .chebyshev => @intCast(@max(@abs(dx), @abs(dy))),
+            .euclidean => @intCast(std.math.sqrt(@as(u64, @intCast(dx * dx + dy * dy)))),
+        };
+    }
+};
+
 pub const Options = struct {
     /// Maximum CHEBYSHEV cast distance in subtiles (`max(|dx|,|dy|)`), matching
-    /// `CheckIfCoordsAreInRange`. Null drops gate 1 entirely and leaves only the room rule — useful
-    /// for asking what the relocate code alone would permit, not for planning real casts.
-    /// Lower it below the engine's 50 to leave margin for server/client position lag.
+    /// `CheckIfCoordsAreInRange`. Lower it below the engine's 50 to leave margin for server/client
+    /// position lag.
+    ///
+    /// Null drops gate 1 entirely and leaves only the room rule. Such a route WILL contain casts a
+    /// real server rejects outright (packet dropped, position resynced) — it answers "what would
+    /// the relocate code alone permit", and must not be used to drive a character.
     max_cast: ?i32 = ENGINE_MAX_CAST,
+    /// Which shape `max_cast` describes. Defaults to the engine's per-axis test.
+    metric: Metric = .chebyshev,
     /// Landing-cell collision mask. `SUNIT_RelocateUnit` snaps with COLMASK_PLAYER_PATH; a
-    /// `.los_gated` level ORs in the line-of-sight bits on top (see `TeleportRule`).
+    /// `.gated` level ORs in `COLMASK_PLAYER_FLYING` (0x804) on top (see `TeleportRule`).
     landing_mask: u16 = collision.Colmask.player_path,
     /// Accept a passable cell this far from a blocked start, as the engine's
     /// `GetFreeCoordinates_WithNeighboorRooms` snap does.
@@ -88,8 +125,18 @@ pub const Options = struct {
 
 /// Chebyshev (max-norm) subtile distance — the metric `CheckIfCoordsAreInRange` (0x548ef0) applies,
 /// which tests each axis separately rather than the radial distance.
-inline fn chebyshev(ax: i32, ay: i32, bx: i32, by: i32) i32 {
+pub inline fn chebyshev(ax: i32, ay: i32, bx: i32, by: i32) i32 {
     return @max(@as(i32, @intCast(@abs(ax - bx))), @as(i32, @intCast(@abs(ay - by))));
+}
+
+/// Would the packet handler accept a cast from `from` to `to`? This is gate 1 on its own, exactly
+/// as `CheckIfCoordsAreInRange` (0x548ef0) spells it:
+///
+///     |dx| <= nRange && |dy| <= nRange        with nRange = 0x32 (MOV EBX,0x32 at 0x549742)
+///
+/// Note the comparison is INCLUSIVE — a cast of exactly 50 on an axis is accepted.
+pub inline fn withinCastGate(from: Point, to: Point, max_cast: i32) bool {
+    return Metric.chebyshev.within(from.x, from.y, to.x, to.y, max_cast);
 }
 
 /// Squared Euclidean subtile distance. Not a gate — only used to break ties when picking the
@@ -128,7 +175,7 @@ pub fn find(
     if (start.x == goal.x and start.y == goal.y) return;
 
     // One cast is enough whenever the goal clears both gates.
-    if (canHop(level, start, goal, start_room, goal_room, opts.max_cast)) {
+    if (canHop(level, start, goal, start_room, goal_room, opts.max_cast, opts.metric)) {
         try out.append(alloc, goal);
         return;
     }
@@ -144,9 +191,9 @@ pub fn find(
 
 /// Is a single cast from `from` to `to` legal? Both gates: the packet handler's per-axis distance
 /// limit, and the room topology `SUNIT_RelocateUnit` enforces.
-fn canHop(level: *const Level, from: Point, to: Point, from_room: u16, to_room: u16, max_cast: ?i32) bool {
+fn canHop(level: *const Level, from: Point, to: Point, from_room: u16, to_room: u16, max_cast: ?i32, metric: Metric) bool {
     if (max_cast) |m| {
-        if (chebyshev(from.x, from.y, to.x, to.y) > m) return false;
+        if (!metric.within(from.x, from.y, to.x, to.y, m)) return false;
     }
     return level.rooms.canTeleportBetween(from_room, to_room);
 }
@@ -175,6 +222,7 @@ fn findBounded(
     // disk — the corners are legal, and they are where the reach is greatest (a (50,50) cast covers
     // ~70 subtiles of ground). A tile is a candidate when its nearest corner is within the limit on
     // both axes; the exact per-cell distance is re-checked against the real landing subtiles.
+    const metric = opts.metric;
     const reach_tiles = @divTrunc(max_cast, grid.SUBTILES_PER_TILE) + 1;
     var offsets: std.ArrayListUnmanaged([2]i32) = .empty;
     defer offsets.deinit(alloc);
@@ -190,7 +238,7 @@ fn findBounded(
                 const ady: i32 = @intCast(@abs(dy));
                 const near_x = @max(adx - 1, 0) * grid.SUBTILES_PER_TILE;
                 const near_y = @max(ady - 1, 0) * grid.SUBTILES_PER_TILE;
-                if (@max(near_x, near_y) > max_cast) continue;
+                if (!metric.within(0, 0, near_x, near_y, max_cast)) continue;
                 try offsets.append(alloc, .{ dx, dy });
             }
         }
@@ -209,9 +257,8 @@ fn findBounded(
     // Lower bound on the casts still needed: each one closes at most `max_cast` on the wider axis.
     // Admissible and consistent, so no node is ever re-expanded.
     const castsTo = struct {
-        fn h(from: Point, to: Point, m: i32) u32 {
-            const d: u32 = @intCast(chebyshev(from.x, from.y, to.x, to.y));
-            return std.math.divCeil(u32, d, @intCast(m)) catch 0;
+        fn h(from: Point, to: Point, m: i32, mt: Metric) u32 {
+            return std.math.divCeil(u32, mt.distance(from.x, from.y, to.x, to.y), @intCast(m)) catch 0;
         }
     }.h;
 
@@ -224,11 +271,11 @@ fn findBounded(
         const ti: usize = @intCast(ty * tw + tx);
         const land = repPoint(pm, reps, ti) orelse continue;
         const land_room = level.rooms.atSubtile(land.x, land.y) orelse continue;
-        if (!canHop(level, start, land, start_room, land_room, max_cast)) continue;
+        if (!canHop(level, start, land, start_room, land_room, max_cast, opts.metric)) continue;
         if (g[ti] <= 1) continue;
         g[ti] = 1;
         came[ti] = -1; // parent is the start cell
-        try push(alloc, &heap, 1 + castsTo(land, goal, max_cast), @intCast(ti));
+        try push(alloc, &heap, 1 + castsTo(land, goal, max_cast, metric), @intCast(ti));
         seeded += 1;
     }
     if (seeded == 0) return error.Unreachable;
@@ -237,11 +284,11 @@ fn findBounded(
     while (pop(&heap)) |entry| {
         const cur: usize = @intCast(entry & 0xFFFF_FFFF);
         const cur_g = g[cur];
-        if (@as(u32, @intCast(entry >> 32)) != cur_g + castsTo(repPoint(pm, reps, cur).?, goal, max_cast)) continue;
+        if (@as(u32, @intCast(entry >> 32)) != cur_g + castsTo(repPoint(pm, reps, cur).?, goal, max_cast, metric)) continue;
 
         const cur_pt = repPoint(pm, reps, cur).?;
         const cur_room = level.rooms.atSubtile(cur_pt.x, cur_pt.y).?;
-        if (canHop(level, cur_pt, goal, cur_room, goal_room, max_cast)) {
+        if (canHop(level, cur_pt, goal, cur_room, goal_room, max_cast, opts.metric)) {
             try emit(alloc, pm, reps, came, cur, out);
             try out.append(alloc, goal);
             return;
@@ -260,10 +307,10 @@ fn findBounded(
             if (g[ni] <= cur_g + 1) continue;
             const land = repPoint(pm, reps, ni) orelse continue;
             const land_room = level.rooms.atSubtile(land.x, land.y) orelse continue;
-            if (!canHop(level, cur_pt, land, cur_room, land_room, max_cast)) continue;
+            if (!canHop(level, cur_pt, land, cur_room, land_room, max_cast, opts.metric)) continue;
             g[ni] = cur_g + 1;
             came[ni] = @intCast(cur);
-            try push(alloc, &heap, cur_g + 1 + castsTo(land, goal, max_cast), @intCast(ni));
+            try push(alloc, &heap, cur_g + 1 + castsTo(land, goal, max_cast, metric), @intCast(ni));
         }
     }
     return error.Unreachable;

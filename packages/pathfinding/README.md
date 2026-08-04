@@ -47,6 +47,26 @@ topological: `SUNIT_RelocateUnit` resolves the destination room and fails unless
 one adjacent to it, which is the binding one inside small dungeon rooms. See
 **[docs/teleport.md](docs/teleport.md)** for the full writeup with addresses.
 
+**Crossing a level boundary by cast.** Where the engine actually permits it — a real cross-level
+near-room link, and both cells within the gate measured in world coordinates — `route` will cross a
+boundary with a single cast instead of walking to the staircase. It builds both legs and keeps the
+cheaper, since the link room is not always closer than the exit. Behind `teleport_across_levels`
+(off by default; it needs the destination room loaded, which a whole-act server satisfies).
+
+How much this actually buys varies by act, because it depends on where the placement graph put each
+warp destination in the shared world frame. At seed `0x13572468`, level pairs a cast can bridge:
+
+| Act | cross-level room links | pairs a cast can bridge |
+|-|-|-|
+| 1 | 440 | 18 |
+| 2 | 196 | 10 |
+| 3 | 44 | 0 |
+| 4 | 140 | 8 |
+| 5 | 30 | 0 |
+
+Zero is the right answer for acts 3 and 5 here, not a failure: their linked rooms are all further
+apart than the cast gate allows. `zig build bench` prints these counts.
+
 **Collision is a mask, not a boolean.** Every search is `cell & mask == 0`, so a walking player, a
 walking monster and a missile in flight are one implementation with three different `u16`s:
 
@@ -55,7 +75,7 @@ walking monster and a missile in flight are one implementation with three differ
 | Walking player | `Colmask.player_path` | `0x1c09` |
 | Walking monster | `Colmask.monster_path` | `0x3c01` |
 | Missile in flight | `Colmask.missile_flight` | `0x05` |
-| Line of sight | `Colmask.line_of_sight` | `0x03` |
+| Teleporting player | `Colmask.player_flying` | `0x804` |
 
 **Runtime portals are in the graph.** The Arcane Sanctuary has `Vis0-7 = 0` and `Warp0-7 = -1` in
 `Levels.txt`, so map generation reports it with zero neighbours — an island. Quest code spawns the
@@ -101,9 +121,11 @@ sub-millisecond even corner-to-corner on a 1000×1000-subtile level.
   opened by item combinations rather than by quest progress.
 - Which of the seven Tal Rasha tombs holds the real orifice down to Duriel's Lair. All seven appear
   in the portal table as candidates; a caller that knows the real one should filter the rest.
+- Multi-subtile unit footprints. The engine snaps a teleport landing using `GetUnitSizeX`; the
+  search models a single subtile. Since the engine snaps rather than rejects, this shifts where a
+  cast lands rather than whether it is legal.
 - Runtime occupancy — objects, doors, monsters. Generated collision carries terrain only; a host
   that tracks units ORs those bits into `Level.cells` and rebuilds the affected mask.
-- Teleporting ACROSS a level boundary. It is possible in the engine, but only over a warp/vis link
-  and only while the destination room is loaded server-side — runtime state a map-level router
-  cannot know. Seam borders (every overworld border) can never be teleported and are routed as
-  walks. A caller with live room state can add the hop itself.
+- Teleporting across a SEAM border (every overworld border). Those rooms are never linked, so no
+  cast can cross them; they are routed as walks. Warp-linked borders *are* supported — see
+  `teleport_across_levels` above.
