@@ -227,12 +227,87 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const near_level: i32 = if (near_mode) try std.fmt.parseInt(i32, args.next() orelse "3", 10) else 0;
     const near_dist: i32 = if (near_mode) try std.fmt.parseInt(i32, args.next() orelse "120", 10) else 0;
     const near_count: usize = if (near_mode) try std.fmt.parseInt(usize, args.next() orelse "80", 10) else 0;
-    const explicit = !near_mode and !run_mode and !chaos_mode and !game_mode and !objs_mode;
+    const prof_mode = arg3 != null and std.mem.eql(u8, arg3.?, "prof");
+    const chains_mode = arg3 != null and std.mem.eql(u8, arg3.?, "chains");
+    const chains_from: i32 = if (chains_mode) try std.fmt.parseInt(i32, args.next() orelse "75", 10) else 0;
+    const chains_to: i32 = if (chains_mode) try std.fmt.parseInt(i32, args.next() orelse "102", 10) else 0;
+    const chains_count: u32 = if (chains_mode) try std.fmt.parseInt(u32, args.next() orelse "100", 10) else 0;
+    const explicit = !near_mode and !run_mode and !chaos_mode and !game_mode and !objs_mode and
+        !prof_mode and !chains_mode;
     const from_level: ?i32 = if (!explicit) null else if (arg3) |a| try std.fmt.parseInt(i32, a, 10) else null;
     const to_level: ?i32 = if (!explicit) null else if (args.next()) |a| try std.fmt.parseInt(i32, a, 10) else null;
 
     var ctx = try drlg.Ctx.init(gpa);
     defer ctx.deinit();
+
+    // Level placement is seeded, so which levels end up edge-to-edge — and therefore which pairs
+    // the engine's warp-connection sweep stitches — varies. This walks N seeds and prints the
+    // level chain each one produces, to see how much the topology actually moves.
+    if (chains_mode) {
+        var chain: std.ArrayListUnmanaged(i32) = .empty;
+        defer chain.deinit(gpa);
+        var i: u32 = 0;
+        while (i < chains_count) : (i += 1) {
+            const s = seed +% i *% 0x9e3779b1;
+            var w = pf.World.init(gpa, s, .normal);
+            defer w.deinit();
+            try w.loadAct(&ctx, act);
+            chain.clearRetainingCapacity();
+            print("0x{x:0>8}", .{s});
+            if (w.levelRoute(chains_from, chains_to, &chain)) |_| {
+                for (chain.items) |c| print(" {d}", .{u(c)});
+            } else |e| {
+                print(" FAIL {s}", .{@errorName(e)});
+            }
+            print("\n", .{});
+        }
+        return;
+    }
+
+    if (prof_mode) {
+        drlg.prof.clock = &struct {
+            fn f() i64 {
+                return @intCast(monoNs());
+            }
+        }.f;
+        drlg.prof.reset();
+        var t = Timer.begin();
+        var bare = try drlg.generateActFull(&ctx, gpa, act, seed, .normal, .{ .raw_collision = true });
+        const bare_ns = t.read();
+        bare.deinit(gpa);
+        inline for (@typeInfo(drlg.prof.Phase).@"enum".fields) |f| {
+            const v = drlg.prof.get(@enumFromInt(f.value));
+            if (v != 0) print("    {s:<14}{d:7.1} ms\n", .{ f.name, @as(f64, @floatFromInt(v)) / 1e6 });
+        }
+
+        t.reset();
+        var full = try drlg.generateActFull(&ctx, gpa, act, seed, .normal, .{ .room_links = true, .raw_collision = true });
+        const gen_ns = t.read();
+        var cells: usize = 0;
+        for (full.levels) |lf| {
+            if (lf.coll_w <= 0 or lf.coll_h <= 0) continue;
+            const n: usize = @intCast(lf.coll_w * lf.coll_h);
+            cells += n;
+        }
+        full.deinit(gpa);
+
+        var t2 = Timer.begin();
+        var w2 = pf.World.init(gpa, seed, .normal);
+        try w2.loadAct(&ctx, act);
+        const load_ns = t2.read();
+        w2.deinit();
+
+        const ms = struct {
+            fn f(ns: u64) f64 {
+                return @as(f64, @floatFromInt(ns)) / 1e6;
+            }
+        }.f;
+        print("act {d}: {d} levels, {d} subtiles\n", .{ act_1based, full.levels.len, cells });
+        print("  generateActFull   {d:7.1} ms  (no room_links: {d:.1} ms)\n", .{ ms(gen_ns), ms(bare_ns) });
+        print("  World.loadAct     {d:7.1} ms\n", .{ms(load_ns)});
+        print("  pathfinding layer {d:7.1} ms\n", .{ms(load_ns) - ms(gen_ns)});
+        return;
+    }
 
     var timer = Timer.begin();
     var world = pf.World.init(gpa, seed, .normal);
@@ -261,6 +336,43 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
         print("cross-level room links: {d}; level pairs a cast can bridge: {d}\n\n", .{ links, usable });
+    }
+
+    // Where each level of the act actually sits, and which neighbours it is geometrically adjacent
+    // to. Separates "placed wrong" from "placed right but never stitched".
+    if (objs_mode and objs_level == 0) {
+        print("  lvl   origin(tiles)   size(tiles)   exits\n", .{});
+        for (world.levels.items) |*lv| {
+            print("  {d:3}  ({d:5},{d:5})  {d:4}x{d:<4}  ", .{
+                u(lv.id), u(lv.origin_x), u(lv.origin_y), u(lv.tileW()), u(lv.tileH()),
+            });
+            for (lv.exits) |e| print("{d}({s}) ", .{ u(e.to_level), @tagName(e.kind) });
+            print("\n", .{});
+        }
+        print("\n  geometric adjacency (bbox gap < 6 tiles on both axes = the seam rule):\n", .{});
+        for (world.levels.items) |*a| {
+            for (world.levels.items) |*b| {
+                if (b.id <= a.id) continue;
+                const ax1 = a.origin_x + a.tileW();
+                const ay1 = a.origin_y + a.tileH();
+                const bx1 = b.origin_x + b.tileW();
+                const by1 = b.origin_y + b.tileH();
+                const gx = @max(@as(i32, 0), @max(a.origin_x - bx1, b.origin_x - ax1));
+                const gy = @max(@as(i32, 0), @max(a.origin_y - by1, b.origin_y - ay1));
+                if (gx >= 6 or gy >= 6) continue;
+                var linked = false;
+                for (a.exits) |e| {
+                    if (e.to_level == b.id) linked = true;
+                }
+                for (b.exits) |e| {
+                    if (e.to_level == a.id) linked = true;
+                }
+                print("  {d:3} <-> {d:3}  gap {d},{d}  {s}\n", .{
+                    u(a.id), u(b.id), u(gx), u(gy), if (linked) "linked" else "NOT STITCHED",
+                });
+            }
+        }
+        return;
     }
 
     // Every preset object on a level, with its Objects.txt name.

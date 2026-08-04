@@ -700,7 +700,7 @@ test "the Jail and Catacombs runs report the doors they pass" {
     }
 }
 
-test "the whole game connects, bar two known holes" {
+test "the whole game connects, bar one known hole" {
     const alloc = testing.allocator;
     var f = try Fixture.load(alloc, &.{ 0, 1, 2, 3, 4 });
     defer f.deinit();
@@ -730,11 +730,28 @@ test "the whole game connects, bar two known holes" {
     // routable even while the link is not.
     try testing.expect((try f.world.questPortalSite(131, 132)) != null);
 
-    // KNOWN GAP 2 -- Act 3's outdoor levels are not stitched. Kurast Docks -> Spider Forest and the
-    // rest of the Kurast chain produce no adjacency, so a forward playthrough cannot cross Act 2
-    // into Act 3 on foot. That is a d2-drlg placement/seam gap, not a routing one.
+    // Act 3 has no placement chain and no Levels.txt Vis between its outdoor levels; the engine
+    // stitches them by testing level boxes pairwise (DRLGACT_SetWarpConnectionsBetweenTwoAreas),
+    // so which levels are neighbours depends on where this seed placed them. Docks to Durance 3
+    // must connect, in ascending order, through the Kurast levels — but not necessarily all of
+    // them: on roughly half of all seeds Spider Forest touches Flayer Jungle and Great Marsh (77)
+    // drops out of the chain, exactly as it does in the real game.
     chain.clearRetainingCapacity();
-    try testing.expectError(error.NoLevelRoute, f.world.levelRoute(75, 76, &chain));
+    try f.world.levelRoute(75, 102, &chain);
+    const kurast = [_]i32{ 75, 76, 77, 78, 79, 80, 81, 82, 83, 100, 101, 102 };
+    try testing.expectEqual(@as(i32, 75), chain.items[0]);
+    try testing.expectEqual(@as(i32, 102), chain.items[chain.items.len - 1]);
+    var k: usize = 0;
+    for (chain.items) |lid| {
+        while (k < kurast.len and kurast[k] != lid) k += 1;
+        if (k == kurast.len) return error.NotAKurastChain; // out of order, or not a Kurast level
+        k += 1;
+    }
+    // Only Great Marsh may be missing; everything else on the way is mandatory.
+    for (kurast) |lid| {
+        if (lid == 77) continue;
+        try testing.expect(std.mem.indexOfScalar(i32, chain.items, lid) != null);
+    }
 
     // Every Levels.txt Vis pair must still produce an adjacency, except the quest-gated one.
     //
