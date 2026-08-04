@@ -160,12 +160,6 @@ test "coll: masked-CRC holdout across seeds (Act 1, Nightmare)" {
     // Cross-seed gate. A fix tuned to seed 1 cannot hold here, so this is the one that makes
     // "works on any seed" mean something — and it is now EQUALITY: every per-level checksum
     // of every level on every seed matches the engine. Nothing to raise, nothing to concede.
-    // ONE known deviation, named so that any OTHER one still fails this test. Seed 98 act 4
-    // level 107 (Chaos Sanctuary) does not match the engine capture. It is not a regression:
-    // the same level produces the same CRC at b57daac, before the 2026-08-04 performance work
-    // — the gate only sampled 25 seeds until then, and seed 98 was never among them. Fixing it
-    // is its own investigation; until then this asserts we are exactly one level off, so a new
-    // deviation moves the number and trips the test.
-    const known_deviations: u32 = 1;
+    const known_deviations: u32 = 0;
     try std.testing.expectEqual(grand_total - known_deviations, grand_match);
 }

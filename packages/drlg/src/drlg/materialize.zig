@@ -681,11 +681,11 @@ fn processTile(nFlags_in: i32, pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nPar
         nGridFlags = (nFlags & ~CELLFLAGS_0x80) | CELLFLAGS_0x80000000;
         const nBlank: u32 = if (pRoom.*.pLevel.?.eD2LevelId == .ArcaneSanctuary) 0x1e00100 else 0x1e00000;
         const eBlank = tilegen.getTileLibraryEntry(pRoom, 0, nBlank);
-        pushFloor(pRoom, nX, nY, nGridFlags, eBlank);
+        _ = pushFloor(pRoom, nX, nY, nGridFlags, eBlank);
     } else {
         nGridFlags = nFlags;
         const e = tilegen.getTileLibraryEntry(pRoom, 0, @bitCast(nFlags));
-        pushFloor(pRoom, nX, nY, nGridFlags, e);
+        _ = pushFloor(pRoom, nX, nY, nGridFlags, e);
     }
     if ((nFlags & CELLFLAGS_0x01) != CELLFLAGS_NONE) processWallBlock(pRoom, nX, nY, nFlags, nOtherFlags);
     if ((nFlags & CELLFLAGS_0x8000000) == CELLFLAGS_NONE) return;
@@ -733,28 +733,34 @@ fn updateOrAddTile(pRoom: [*c]s.D2RoomExStrc, nTileType: i32, nX: i32, nY: i32, 
         }
         g_ctx.linked.shrinkRetainingCapacity(kept);
     }
+    // The DRAW flags the create computes carry the tile's LAYER index
+    // (nFlags |= ((gf>>0x12)&3) * 0x4000 + 0x4000), and FindTileAtPosition 0x66e4c0
+    // filters every candidate on it: a tile with layer bits only answers a visitor
+    // whose own (gf>>0x12)&3 matches. Publishing a placeholder 0 here made every
+    // published tile answer every visitor, so a seam cell whose owner belongs to
+    // another layer was silently taken over instead of being resolved (and rolled)
+    // by the visiting room, the way the engine does.
+    var created: ?*s.D2DrlgTileDataStrc = null;
+    if (nTileType == 0) {
+        created = pushFloor(pRoom, nX, nY, nFlags, e);
+    } else if (nTileType == 0xd) {
+        created = tilegen.createShadowTileData(pRoom, null, nX, nY, @bitCast(nFlags), e);
+    } else {
+        const pTileGrid: [*c]s.D2DrlgTileGridStrc = @ptrCast(pRoom.*.pRoomTiles);
+        const before: usize = @intCast(pTileGrid.*.nWalls);
+        created = tilegen.createWallTileData(pRoom, null, nX, nY, @bitCast(nFlags), e, nTileType);
+        var c: usize = before + 1;
+        while (c < @as(usize, @intCast(pTileGrid.*.nWalls))) : (c += 1) {
+            if (c < g_ctx.companion.len) g_ctx.companion[c] = true;
+        }
+    }
     if (g_ctx.near != null) g_ctx.linked.append(g_ctx.link_alloc, .{
         .wx = g_ctx.room_wx + nX,
         .wy = g_ctx.room_wy + nY,
         .n_tile_type = nTileType,
-        .n_flags = 0,
+        .n_flags = if (created) |t| t.nFlags else 0,
         .is_blank = nTileType == 0 and e != null and e.?.main == 30 and e.?.sub == 0,
     }) catch {};
-    if (nTileType == 0) {
-        pushFloor(pRoom, nX, nY, nFlags, e);
-        return;
-    }
-    if (nTileType == 0xd) {
-        _ = tilegen.createShadowTileData(pRoom, null, nX, nY, @bitCast(nFlags), e);
-        return;
-    }
-    const pTileGrid: [*c]s.D2DrlgTileGridStrc = @ptrCast(pRoom.*.pRoomTiles);
-    const before: usize = @intCast(pTileGrid.*.nWalls);
-    _ = tilegen.createWallTileData(pRoom, null, nX, nY, @bitCast(nFlags), e, nTileType);
-    var c: usize = before + 1;
-    while (c < @as(usize, @intCast(pTileGrid.*.nWalls))) : (c += 1) {
-        if (c < g_ctx.companion.len) g_ctx.companion[c] = true;
-    }
     if ((nTileType == 0xb or nTileType == 10) and pRoom.*.pLevel.?.eD2LevelId != .MatronsDen) {
         g_ctx.warp_setup_skipped += 1;
         setupWarpTile(pRoom, nX, nY, nFlags, nTileType);
@@ -763,13 +769,14 @@ fn updateOrAddTile(pRoom: [*c]s.D2RoomExStrc, nTileType: i32, nX: i32, nY: i32, 
 
 /// The RoomTile.cpp floor push (direct array append + fillTileData, not
 /// createFloorTileData — as the engine does inside processTile).
-fn pushFloor(pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nGridFlags: i32, e: ?*const dt1.Tile) void {
+fn pushFloor(pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nGridFlags: i32, e: ?*const dt1.Tile) *s.D2DrlgTileDataStrc {
     const pTileGrid: [*c]s.D2DrlgTileGridStrc = @ptrCast(pRoom.*.pRoomTiles);
     const nFloorCount = pTileGrid.*.nFloors;
     const pFloor: [*]s.D2DrlgTileDataStrc = @ptrCast(@alignCast(pTileGrid.*.pFloorTiles.?));
     pFloor[@intCast(nFloorCount)].pNext = null;
     pTileGrid.*.nFloors += 1;
     tilegen.fillTileData(pRoom, &pFloor[@intCast(nFloorCount)], nX, nY, @bitCast(nGridFlags), e);
+    return &pFloor[@intCast(nFloorCount)];
 }
 
 /// RoomTile.cpp:789 (0066ec10). Walks the grid, driving processTile per cell.
