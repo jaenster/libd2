@@ -28,6 +28,7 @@ const spell = @import("spell.zig");
 const calc = @import("calc.zig");
 const monskill = @import("monskill.zig");
 const difficulty = @import("difficulty.zig");
+const effect_mod = @import("effect.zig");
 const d2data = @import("d2-data");
 
 const Seed = rng.Seed;
@@ -595,6 +596,45 @@ pub fn applyOutcome(out: Outcome, target: ?*Unit) ?missile.Missile {
             return null;
         },
     }
+}
+
+/// Resolve a skill cast to Effects the host applies (the castSkill retrofit — see effect.zig). Handles
+/// the migrated branches; returns [] for skills still resolved by the host's legacy inline path, so it
+/// can grow branch-by-branch without a big-bang rewrite. Effects are written into `buf`.
+pub fn resolve(
+    skills: *const Skills,
+    book: SkillBook,
+    skill_id: u16,
+    target_x: i32,
+    target_y: i32,
+    target_guid: u32,
+    buf: []effect_mod.Effect,
+) []effect_mod.Effect {
+    const sd = skills.byId(skill_id) orelse return buf[0..0];
+    // Curses (30 Necro curses; 6 Inner Sight / Slow Missiles): a debuff over hostiles in radius.
+    if (sd.srvdofunc == 30 or sd.srvdofunc == 6) {
+        const lvl = book.get(skill_id);
+        buf[0] = .{ .curse_area = .{
+            .x = target_x,
+            .y = target_y,
+            .radius = skills.evalCalc(book, 0, skill_id, lvl, "aurarangecalc"),
+            .skill_id = skill_id,
+            .level = lvl,
+            .duration = skills.evalCalc(book, 0, skill_id, lvl, "auralencalc"),
+        } };
+        return buf[0..1];
+    }
+    // Crowd control (47 Cloak, 51 Mind Blast, 59 Attract, 61 Confuse, 71 Taunt, 79 Conversion): a
+    // brief stun — 47/51 hit an area, the rest the single target.
+    switch (sd.srvdofunc) {
+        47, 51, 59, 61, 71, 79 => {
+            const area = sd.srvdofunc == 47 or sd.srvdofunc == 51;
+            buf[0] = .{ .cc_area = .{ .x = target_x, .y = target_y, .radius = if (area) 12 else 0, .frames = 25, .target_guid = target_guid } };
+            return buf[0..1];
+        },
+        else => {},
+    }
+    return buf[0..0];
 }
 
 /// A monster acts: pick the first damaging skill from its `mc` assignments and produce the Outcome —
