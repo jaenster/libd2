@@ -33,13 +33,176 @@ const d2data = @import("d2-data");
 const Seed = rng.Seed;
 const Unit = unit.Unit;
 
-/// srvdofunc values we act on (Skills.txt). Names follow the engine's DOFUNC_* space;
-/// only the slice's value is enumerated, the rest fall through to `unknown`.
+/// The engine's server-skill do-function index (Skills.txt `srvdofunc`): the value that selects
+/// which `SKILLSRVDOFUNCS[]` handler the 1.14d engine runs (dispatcher SKILLS_DispatchSrvDoFunc
+/// @0x56d810, 191-entry table @0x7322b0, indices 1..152 populated). Every populated index is named
+/// after its engine function so a branch can be self-documenting.
+///
+/// CAUTION: the names are the engine's Ghidra symbols and are occasionally MISLEADING — e.g. index
+/// 45 is the assassin trap-sentry handler (Lightning/Death Sentry) and 49 the shadow-clone handler
+/// (Shadow Warrior/Master), the REVERSE of what the `shadow_master`/`sentry_spawn` labels suggest;
+/// likewise 44/48 (Blade Sentinel vs Blade Fury). The AUTHORITATIVE skill→func mapping is Skills.txt
+/// `srvdofunc`, and behaviour comes from the function body — never derive semantics from the label.
 pub const DoFunc = enum(i32) {
     none = 0,
-    attack = 1, // DOFUNC_ATTACK — normal melee/direct attack
-    teleport = 27, // DOFUNC_TELEPORT — instant reposition to a passable target cell (Teleport Id 54)
+    attack = 1,
+    apply_aura_on_hit = 2,
+    throw_weapon_left_hand = 3,
+    remove_pet_by_skill_param = 4,
+    throw_weapon_right_hand = 5,
+    phoenix_strike_area_bolt = 6,
+    power_strike_melee_hit = 7,
+    strafe_missile_spread = 8,
+    frenzy_melee_hit = 9,
+    guided_arrow_launch = 10,
+    charged_strike = 11,
+    strafe_continue = 12,
+    impale_or_fend_hit = 13,
+    phoenix_strike_charged_release = 14,
+    summon_decoy = 15,
+    summon_valkyrie = 16,
+    charged_bolt = 17,
+    armor = 18,
+    inferno = 19,
+    static = 20,
+    telekinesis = 21,
+    nova_frost_nova = 22,
+    blaze_energy_shield = 23,
+    fire_wall = 24,
+    enchant = 25,
+    chain_lightning = 26,
+    teleport = 27,
+    meteor_blizzard = 28,
+    thunder_storm = 29,
+    cast_curse_aoe = 30,
+    raise_from_corpse = 31,
+    apply_direct_damage = 32,
+    tiger_strike = 33,
+    charge_up_stack_melee = 34,
+    dragon_claw = 35,
+    charge_release_missile_ring = 36,
+    charge_release_multi_element_scatter = 37,
+    dragon_tail_kick_aoe = 38,
+    charge_release_circle_spawn = 39,
+    charge_release_single_missile = 40,
+    blade_fury_scatter = 41,
+    dragon_talon = 42,
+    charge_release_scatter_missiles = 43,
+    summon_trap_or_creeper = 44,
+    summon_trap_sentry = 45,
+    cobra_strike = 46,
+    cloak_of_shadows = 47,
+    blade_fury = 48,
+    summon_shadow_clone = 49,
+    dragon_tail_fire_explosion = 50,
+    mind_blast_psychic_hammer = 51,
+    dragon_flight = 52,
+    venom_blade_shield_area_pulse = 53,
+    blade_shield_activate = 54,
+    corpse_explosion = 55,
+    summon_minion = 56,
+    iron_golem = 57,
+    revive_corpse_check = 58,
+    cast_corpse_skill = 59,
+    summon_golem_at_cursor = 60,
+    cast_convert_aoe = 61,
+    spawn_bone_structure = 62,
+    corpse_radial_missiles = 63,
+    sacrifice = 64,
+    prayer_aura = 65,
+    conviction_aura = 66,
+    charge = 67,
+    war_cry = 68,
+    find_potion = 69,
+    find_item = 70,
+    iron_maiden_generic_curse = 71,
+    find_gold = 72,
+    fist_of_the_heavens = 73,
+    double_throw = 74,
+    grim_ward = 75,
+    leap_attack = 76,
+    leap_attack_impact = 77,
+    whirlwind = 78,
+    conversion = 79,
+    smite_80 = 80,
+    holy_freeze_aura = 81,
+    holy_shock_aura = 82,
+    monster_melee_attack = 83,
+    spawn_minions_and_suicide = 84,
+    fire_upgraded_missile = 85,
+    self_heal = 86,
+    spawn_behind_target = 87,
+    fire_missile_from_body_part = 88,
+    charge_leap_attack = 89,
+    set_anim_frame_from_calc = 90,
+    spawn_minion_at_coords = 91,
+    melee_attack_with_missile_wrapper = 92,
+    fire_leading_missile = 93,
+    reset_anim_frame = 94,
+    spawn_trap_missile = 95,
+    heal_target = 96,
+    resurrect_dead_monster = 97,
+    teleport_to_stored_position = 98,
+    fire_missile_ring8_dir = 99,
+    freezing_melee_attack = 100,
+    fire_directional_missile_101 = 101,
+    fire_random_multi_missile = 102,
+    charge_and_melee_strike = 103,
+    spawn_predefined_at_target = 104,
+    fire_parallel_missile_volley = 105,
+    fire_missile_ring_on_target = 106,
+    leech_melee_multi_hit = 107,
+    devour_minion_for_hp = 108,
+    monster_frenzy_attack = 109,
+    fire_arrow_mod_missile = 110,
+    apply_fetish_aura = 111,
+    random_curse = 112,
+    use_scroll_or_book = 113,
+    summon_raven = 114,
+    summon_poison_creeper = 115,
+    werewolf = 116,
+    firestorm = 117,
+    twister = 118,
+    summon_dire_wolf = 119,
+    feral_rage = 120,
+    fury = 121,
+    maul = 122,
+    tornado = 123,
+    armageddon = 124,
+    catapult_fire_bomb = 125,
+    baal_tentacle_grab = 126,
+    nihlathak_corpse_explosion = 127,
+    monster_create_minion = 128,
+    attach_or_detach_from_host = 129,
+    spawn_sub_missiles = 130,
+    conditional_transform_or_buff = 131,
+    fire_class_upgraded_missile = 132,
+    set_death_spawn_state = 133,
+    area_explosion_attack = 134,
+    spawn_minion_from_params = 135,
+    fire_speed_scaled_missile = 136,
+    corpse_consumption_aura = 137,
+    fire_perpendicular_missile_line = 138,
+    fire_orthogonal_missile = 139,
+    scatter_minion_spawn = 140,
+    baal_corpse_explosion_wave = 141,
+    blade_shield_spin_damage = 142,
+    charge_release_ground_strike = 143,
+    hydra = 144,
+    hurricane = 145,
+    cyclone_armor = 146,
+    return_to_owner = 147,
+    fire_missile_body_part10 = 148,
+    fire_missile_body_part11 = 149,
+    smite_150 = 150,
+    fire_directional_missile_151 = 151,
+    spawn_trap_missile_variant = 152,
     _,
+
+    /// The engine symbol name for this do-func (for logging/tests). Unknown values render "?<n>".
+    pub fn label(self: DoFunc) []const u8 {
+        return std.enums.tagName(DoFunc, self) orelse "?";
+    }
 };
 
 /// One Skills.txt row, reduced to the dispatch-relevant fields plus the elemental-damage
@@ -51,6 +214,12 @@ pub const SkillData = struct {
     srvdofunc: i32 = 0,
     /// srvmissile — the Missiles.txt "Missile" name spawned server-side ("" = none).
     srvmissile: []const u8 = "",
+    /// srvmissilea — the SECONDARY server missile column. Many skills (and nearly every monster
+    /// skill) leave `srvmissile` empty and deliver their projectile through `srvmissilea` instead:
+    /// the engine do-func fires srvmissilea (Inferno flame, Chain Lightning bolt, Thunder Storm
+    /// strike, Firestorm/Twister, the monster missile family, ...). `serverMissile()` picks
+    /// srvmissile first, else srvmissilea — the projectile the server actually spawns.
+    srvmissilea: []const u8 = "",
     mana: i32 = 0,
     manashift: i32 = 0,
     /// lvlmana — mana cost added per skill level above 1 (can be negative: Teleport gets cheaper).
@@ -83,10 +252,41 @@ pub const SkillData = struct {
         if (self.is_passive) return .passive;
         if (self.is_summon) return .summon;
         if (self.srvdofunc == @intFromEnum(DoFunc.teleport)) return .teleport;
-        if (self.srvmissile.len != 0) return .missile;
+        // A skill that spawns a server projectile is a missile — UNLESS the projectile is only a
+        // secondary/visual for a do-func whose primary effect is something else (direct-area nova,
+        // war-cry buff+ring, druid armor buff). Those keep their real classification (.direct via
+        // the EType fallback below, or .other for pure buffs) and are resolved by their own path.
+        if (self.serverMissile().len != 0 and !self.missileIsSecondary()) return .missile;
         if (self.srvdofunc == @intFromEnum(DoFunc.attack)) return .melee;
         if (self.dmg.etype != .none) return .direct; // direct elemental (Nova / Static Field / ...)
         return .other;
+    }
+
+    /// True for the do-funcs that carry a `srvmissilea` only as a secondary effect — the projectile
+    /// is NOT how they deal their damage, so they must not classify as `.missile`:
+    ///   * 20 Static Field / 22 Nova, Frost Nova — instant AREA pulse (ring GFX only); host resolves
+    ///     via castDirectAreaElemental.
+    ///   * 68 War Cry family (Shout/Battle Orders/Battle Command/Battle Cry/War Cry) — a party
+    ///     buff/curse; the ring missile is the War-Cry stun carrier, applied separately.
+    ///   * 146 Cyclone Armor — an absorb buff that spawns purely cosmetic orbiting missiles.
+    /// (Paladin/druid auras are already caught earlier by `is_aura`.)
+    pub fn missileIsSecondary(self: SkillData) bool {
+        return switch (self.srvdofunc) {
+            @intFromEnum(DoFunc.static),
+            @intFromEnum(DoFunc.nova_frost_nova),
+            @intFromEnum(DoFunc.war_cry),
+            @intFromEnum(DoFunc.cyclone_armor),
+            => true,
+            else => false,
+        };
+    }
+
+    /// The projectile the server spawns for this skill: `srvmissile` if set, else `srvmissilea`.
+    /// Skills whose do-func fires the secondary column (Inferno, Chain Lightning, Thunder Storm,
+    /// Firestorm, Twister, and the whole monster missile family) leave `srvmissile` empty — without
+    /// this fallback they'd never fire their real missile. `""` when the skill spawns no missile.
+    pub fn serverMissile(self: SkillData) []const u8 {
+        return if (self.srvmissile.len != 0) self.srvmissile else self.srvmissilea;
     }
 
     /// The flat base mana column (whole). Prefer `manaCostAt` for the real per-level cost.
@@ -147,6 +347,7 @@ pub const Skills = struct {
             .id = id,
             .srvdofunc = t.getInt(i32, row, "srvdofunc") orelse 0,
             .srvmissile = t.get(row, "srvmissile"),
+            .srvmissilea = t.get(row, "srvmissilea"),
             .mana = t.getInt(i32, row, "mana") orelse 0,
             .manashift = t.getInt(i32, row, "manashift") orelse 0,
             .lvlmana = t.getInt(i32, row, "lvlmana") orelse 0,
@@ -509,7 +710,7 @@ pub fn execute(
             return .{ .melee = combat.resolveAttack(caster, t, seed, .{}) };
         },
         .missile => {
-            const md = missiles.byName(sd.srvmissile) orelse return .none;
+            const md = missiles.byName(sd.serverMissile()) orelse return .none;
             // Damage: explicit Missiles.txt damage if present, else derive the bounds
             // from the caster's physical damage (skill elemental scaling is a TODO).
             var dmin = md.min_damage;
@@ -551,7 +752,7 @@ pub fn cast(
     elem_cast: spell.Cast,
 ) Outcome {
     const sd = skills.byId(skill_id) orelse return .none;
-    const md = missiles.byName(sd.srvmissile) orelse return .none;
+    const md = missiles.byName(sd.serverMissile()) orelse return .none;
     const tx = if (target.unit) |u| u.x else target.x;
     const ty = if (target.unit) |u| u.y else target.y;
     var m = missile.Missile.create(md, caster.unit_id, caster.x, caster.y, tx, ty, 0, 0);
@@ -1277,6 +1478,17 @@ test "classify: every category resolves from the real Skills.txt columns" {
     try testing.expectEqual(Kind.direct, byName(&s, "Frost Nova")); // EType, no missile
     try testing.expectEqual(Kind.direct, byName(&s, "Static Field"));
     try testing.expectEqual(Kind.other, byName(&s, "Battle Orders")); // utility buff
+    // srvmissilea-delivered skills: the engine do-func fires the SECONDARY missile column (these
+    // leave `srvmissile` empty). Without the serverMissile() fallback they'd never fire — verify
+    // they now classify as `.missile` and expose their real projectile.
+    try testing.expectEqual(Kind.missile, byName(&s, "Inferno")); // srvmissilea = infernoflame1
+    try testing.expectEqual(Kind.missile, byName(&s, "Chain Lightning")); // srvmissilea = chainlightning
+    try testing.expectEqual(Kind.missile, byName(&s, "Thunder Storm")); // srvmissilea = thunderstorm1
+    try testing.expectEqualStrings("chainlightning", s.byId(s.idByName("Chain Lightning").?).?.serverMissile());
+    // ...but Nova/Static (direct-area) and War Cry (buff+ring) keep their non-missile classification
+    // despite carrying a srvmissilea ring.
+    try testing.expectEqual(Kind.direct, byName(&s, "Nova")); // srvdofunc 22, ring GFX only
+    try testing.expectEqual(Kind.other, byName(&s, "War Cry")); // srvdofunc 68, ring is stun carrier
     // Every non-divider skill must classify without crashing (no unreachable category).
     var count: usize = 0;
     for (0..s.table.rowCount()) |r| {
@@ -1529,16 +1741,16 @@ test "monsterCast produces a damaging outcome (direct hit + elemental missile)" 
     caster.unit_id = 5;
     var seed = Seed.fromValue(7);
 
-    // Will-o-Wisp -> Chain Lightning is a DIRECT elemental hit resolved vs the target.
+    // Will-o-Wisp -> Chain Lightning: a lightning MISSILE (the chaining bolt), faithful to the
+    // engine's srvmissilea='chainlightning' delivery — resolved per-victim when the bolt hits.
     const nw = monskill.forMonster(&mt, "willowisp1", &buf);
     const wmc = resolveMonsterCaster(&s, buf[0..nw]);
     var tgt = Unit.init(.player);
     tgt.setLife(5000);
     const out = monsterCast(&s, &m, &caster, wmc, &tgt, &seed);
-    try testing.expect(out == .elemental);
-    try testing.expectEqual(spell.Element.lightning, out.elemental.element);
-    _ = applyOutcome(out, &tgt); // host applies it -> the monster hurt the player
-    try testing.expect(tgt.life() <= 5000);
+    try testing.expect(out == .missile);
+    try testing.expect(out.missile.caster_derived); // carries the monster's lightning cast
+    _ = applyOutcome(out, &tgt);
 
     // Vampire -> VampireFireball is an elemental MISSILE aimed at the target.
     const nv = monskill.forMonster(&mt, "vampire1", &buf);
