@@ -714,6 +714,20 @@ pub fn resolve(
         buf[0] = .{ .elemental_area = .{ .skill_id = skill_id, .level = lvl, .x = caster_x, .y = caster_y, .radius = skills.evalCalc(book, 0, skill_id, lvl, "aurarangecalc"), .static = true } };
         return buf[0..1];
     }
+    // Missile spawns: Blessed Hammer's spiral grid + the bow/bolt fans (Multiple Shot/Charged Bolt/
+    // Guided Arrow). resolve() picks count/homing/pattern; applyEffect builds + spawns via the missiles.
+    if (sd.doFunc() == .blessed_hammer) {
+        const lvl = book.get(skill_id);
+        buf[0] = .{ .spawn_missiles = .{ .skill_id = skill_id, .level = lvl, .x = caster_x, .y = caster_y, .tx = target_x, .ty = target_y, .count = 0, .homing = false, .kind = .spiral } };
+        return buf[0..1];
+    }
+    if (sd.doFunc() == .multi_shot or sd.doFunc() == .charged_bolt or sd.doFunc() == .guided_arrow_launch) {
+        const lvl = book.get(skill_id);
+        const homing = sd.doFunc() == .guided_arrow_launch;
+        const cnt: u8 = if (homing) 1 else @intCast(@min(24, @max(1, skills.evalCalc(book, 0, skill_id, lvl, "calc1"))));
+        buf[0] = .{ .spawn_missiles = .{ .skill_id = skill_id, .level = lvl, .x = caster_x, .y = caster_y, .tx = target_x, .ty = target_y, .count = cnt, .homing = homing, .kind = .spread } };
+        return buf[0..1];
+    }
     // Corpse skills: consume the nearest corpse at the cast point (host finds it) and do the mechanic.
     {
         const kind: ?@FieldType(@FieldType(effect_mod.Effect, "corpse_skill"), "kind") = switch (sd.doFunc()) {
