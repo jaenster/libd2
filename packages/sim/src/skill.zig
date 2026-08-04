@@ -1501,6 +1501,23 @@ test "classify: every category resolves from the real Skills.txt columns" {
     try testing.expect(count > 300); // the whole catalog classified
 }
 
+test "DoFunc names every srvdofunc the real Skills.txt uses (1..152 vocabulary is complete)" {
+    var s = try Skills.load(testing.allocator);
+    defer s.deinit();
+    var seen: usize = 0;
+    for (0..s.table.rowCount()) |r| {
+        const df = s.table.getInt(i32, r, "srvdofunc") orelse continue;
+        if (df == 0) continue; // no server do-func
+        // Every populated srvdofunc must be a NAMED DoFunc value — label() returns "?" only for a
+        // value outside the enumerated 1..152 space, which would mean the engine table grew.
+        const name = @as(DoFunc, @enumFromInt(df)).label();
+        try testing.expect(!std.mem.eql(u8, name, "?"));
+        try testing.expect(df >= 1 and df <= 152);
+        seen += 1;
+    }
+    try testing.expect(seen > 250); // most of the catalog carries a server do-func
+}
+
 test "calc VM resolves the elemental-damage codes (edmn/edmx/edns) from the staged element row" {
     var s = try Skills.load(testing.allocator);
     defer s.deinit();
