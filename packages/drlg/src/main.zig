@@ -8,6 +8,7 @@ const dpool = @import("drlg/pool.zig");
 const fogmem = @import("d2-core").memory;
 const presettables = @import("drlg/presettables.zig");
 const drlglib = @import("lib.zig");
+const memcheck = @import("memcheck.zig");
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = std.heap.page_allocator;
@@ -64,6 +65,18 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
         std.debug.print("bench: act {d} seed {d} diff {d} | {d} levels/act | {d} iters done | chk {d}\n", .{ act_no, seed, diff_n, nlevels, iters, checksum });
         return;
+    }
+
+    if (std.mem.eql(u8, cmd, "memcheck")) {
+        // memcheck [acts] [--traced] — two equal batches of act generation; the second must not
+        // cost measurably more peak RSS than the first. Exits non-zero when it does, so CI (or a
+        // shell one-liner) can gate on it. See memcheck.zig.
+        var acts: usize = 5;
+        var traced = false;
+        while (args.next()) |a| {
+            if (std.mem.eql(u8, a, "--traced")) traced = true else acts = std.fmt.parseInt(usize, a, 10) catch acts;
+        }
+        std.process.exit(memcheck.run(gpa, acts, traced));
     }
 
     if (std.mem.eql(u8, cmd, "verify-seeds-recon")) {
@@ -565,6 +578,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         \\  d2-drlg level <id>          level table info
         \\  d2-drlg ds1 <file.ds1>      parse + ASCII-render a DS1 map
         \\  d2-drlg verify-seeds-recon <f>  cross-seed scoreboard via the recon->Zig transform closure
+        \\  d2-drlg memcheck [acts] [--traced]  act generation must not grow memory (non-zero on failure)
         \\
     , .{});
 }
