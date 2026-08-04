@@ -96,6 +96,131 @@ pub fn canTeleportTo(lv: *Level, from: Point, to: Point, max_cast: i32) !bool {
     return pm.passable(to.x, to.y);
 }
 
+/// Radii are clamped here before anything else — `Units::TestCollision` (0x622920) does the same,
+/// so a Baal and a Fallen are treated identically once both are at least this wide.
+pub const MAX_UNIT_RADIUS: i32 = 2;
+
+/// Can a unit at `a` of radius `a_size` reach one at `b` of radius `b_size` without the terrain
+/// in between stopping it? This is `Units::TestCollision` (0x622920), which backs
+/// `TestCollisionBetweenInteractingUnits` (0x622b50) and so `UNITMODE_IsTargetInActionRange` and
+/// `PLAYER_InteractWithObject`/`InteractWithUnit`.
+///
+/// It is not a plain trace between two points. Both radii are clamped to 2; if the MANHATTAN
+/// distance is under their sum the units are already close enough that the engine reports no
+/// collision at all; otherwise each endpoint is pulled in by its own radius along the dominant
+/// axis before the segment is traced — you aim at a monster's edge, not its centre.
+pub fn unitsCanReach(pm: *const grid.PassMap, a: Point, a_size: i32, b: Point, b_size: i32) bool {
+    const ra = @min(a_size, MAX_UNIT_RADIUS);
+    const rb = @min(b_size, MAX_UNIT_RADIUS);
+    const dx: i32 = @intCast(@abs(b.x - a.x));
+    const dy: i32 = @intCast(@abs(b.y - a.y));
+    if (dx + dy < ra + rb) return true;
+
+    var ax = a.x;
+    var ay = a.y;
+    var bx = b.x;
+    var by = b.y;
+    if (ra != 0 or rb != 0) {
+        var done = false;
+        if (dy <= dx) {
+            if (a.x < b.x) {
+                ax += ra;
+                bx -= rb;
+            } else {
+                ax -= ra;
+                bx += rb;
+            }
+            done = dy < dx;
+        }
+        // On a perfect diagonal the engine adjusts BOTH axes: the dy <= dx branch falls through.
+        if (!done) {
+            if (a.y < b.y) {
+                ay += ra;
+                by -= rb;
+            } else {
+                ay -= ra;
+                by += rb;
+            }
+        }
+    }
+    return !grid.trace(pm, .{ .x = ax, .y = ay }, .{ .x = bx, .y = by }).blocked;
+}
+
+/// A cell you could stand in and attack from.
+pub const Spot = struct {
+    at: Point,
+    /// Chebyshev distance to the target, which is the axis the range gate measures.
+    dist: i32,
+    /// Distance to the nearest wall. Higher is roomier — see `ranking` below.
+    clearance: u8,
+};
+
+pub const AttackOptions = struct {
+    /// Closest you are willing to stand. 0 for melee.
+    min_range: i32 = 0,
+    /// Furthest. Capped by the packet handler's gate for anything cast at a location.
+    max_range: i32 = grid.ENGINE_MAX_COMMAND_RANGE,
+    /// The mask the skill's line of sight is traced with.
+    los: LineOfSight = .barrier,
+    /// The shape the attacker occupies while standing there.
+    footprint: grid.Footprint = .point,
+    /// Radii for the `unitsCanReach` segment shrink.
+    self_size: i32 = 1,
+    target_size: i32 = 1,
+    /// Stop after this many, best first.
+    limit: usize = 32,
+};
+
+/// Cells within range of `target` that the attacker fits in and can see it from, best first.
+///
+/// The gates are the engine's: the footprint must fit (`CheckCollision_*_Type`), the range is the
+/// packet handler's per-axis Chebyshev, and the sight line is `Units::TestCollision`'s shrunk
+/// segment traced target-to-attacker, the direction the server uses.
+///
+/// The RANKING is ours and not the engine's: roomier first (a cell hugging a wall is where the
+/// client and server disagree about where you ended up), then closer. Caller owns the result.
+pub fn attackPositions(
+    alloc: std.mem.Allocator,
+    lv: *Level,
+    target: Point,
+    opts: AttackOptions,
+) ![]Spot {
+    var out: std.ArrayListUnmanaged(Spot) = .empty;
+    errdefer out.deinit(alloc);
+
+    const mask = opts.los.mask() orelse return out.toOwnedSlice(alloc);
+    const sight = try lv.passMapFor(mask, .point);
+    const stand = try lv.passMapFor(collision.Colmask.player_path, opts.footprint);
+    const clear = stand.clearance();
+
+    var y = target.y - opts.max_range;
+    while (y <= target.y + opts.max_range) : (y += 1) {
+        var x = target.x - opts.max_range;
+        while (x <= target.x + opts.max_range) : (x += 1) {
+            const d: i32 = @intCast(@max(@abs(x - target.x), @abs(y - target.y)));
+            if (d < opts.min_range or d > opts.max_range) continue;
+            if (!stand.passable(x, y)) continue;
+            const at = Point{ .x = x, .y = y };
+            if (!unitsCanReach(sight, target, opts.target_size, at, opts.self_size)) continue;
+            try out.append(alloc, .{
+                .at = at,
+                .dist = d,
+                .clearance = clear[stand.index(x, y)],
+            });
+        }
+    }
+
+    const rank = struct {
+        fn lessThan(_: void, a: Spot, b: Spot) bool {
+            if (a.clearance != b.clearance) return a.clearance > b.clearance;
+            return a.dist < b.dist;
+        }
+    }.lessThan;
+    std.mem.sort(Spot, out.items, {}, rank);
+    if (out.items.len > opts.limit) out.shrinkRetainingCapacity(opts.limit);
+    return out.toOwnedSlice(alloc);
+}
+
 const testing = std.testing;
 
 test "the lineofsight column maps to the masks the jump table selects" {
