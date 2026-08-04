@@ -1,10 +1,12 @@
 // Tiny typed shim over the d2drlg wasm C-ABI. Pure TypeScript — runs natively on
-// Node (>=23.6 / --experimental-strip-types), Bun, Deno, and any TS bundler.
-// Construction "just happens on usage": the top-level functions lazily load and
-// instantiate the wasm on first call and cache a singleton. No open()/close()
+// Node (>=23.6 / --experimental-strip-types), Bun, Deno, THE BROWSER, and any TS
+// bundler. Construction "just happens on usage": the top-level functions lazily load
+// and instantiate the wasm on first call and cache a singleton. No open()/close()
 // needed — but they are exported for those who want lifecycle control.
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+//
+// Nothing is imported from the host at module scope. The wasm is freestanding and
+// libc-free (its import object is `{}`), so the only thing that ever needed a host was
+// reading the file — see `wasmBytes`.
 
 // Base64-encode raw bytes with ZERO host dependency. The collision grid is now
 // deflated INSIDE the wasm (std.compress.flate, zlib container), so the shim only
@@ -219,10 +221,27 @@ function dbmDisplayName(levelNo: number, raw: string): string {
   return DBM_DISPLAY_OVERRIDE[levelNo] ?? raw;
 }
 
+// Fetch the wasm next to this module, whatever the host is. A `file:` URL means a
+// filesystem (Node, Bun, Deno running a local file), and only THEN is node:fs pulled in
+// — dynamically, so a browser bundler never has to resolve it. Anything else is served
+// over a URL and `fetch` handles it, which is the browser and Deno-over-http case.
+async function wasmBytes(): Promise<BufferSource> {
+  const url = new URL('./d2drlg.wasm', import.meta.url);
+  if (url.protocol !== 'file:') {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`d2drlg: fetching ${url} failed with ${res.status}`);
+    return await res.arrayBuffer();
+  }
+  const [{ readFile }, { fileURLToPath }] = await Promise.all([
+    import('node:fs/promises'),
+    import('node:url'),
+  ]);
+  return await readFile(fileURLToPath(url));
+}
+
 /** Load the wasm + game tables and return a generator. */
 export async function open(): Promise<Drlg> {
-  const bytes = await readFile(fileURLToPath(new URL('./d2drlg.wasm', import.meta.url)));
-  const { instance } = await WebAssembly.instantiate(bytes, {});
+  const { instance } = await WebAssembly.instantiate(await wasmBytes(), {});
   const ex = instance.exports as unknown as Exports;
   const ctx = ex.d2drlg_ctx_create();
   if (!ctx) throw new Error('d2drlg: ctx_create failed');

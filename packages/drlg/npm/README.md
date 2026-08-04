@@ -1,13 +1,14 @@
 # @jaenster/d2drlg
 
-Faithful, clean-room **Diablo II 1.14d DRLG** (Diablo Resource Level Generation) —
-the deterministic, seed-driven map generator — compiled to WebAssembly behind a
+Faithful, clean-room **Diablo II 1.14d DRLG** (Diablo Resource Level Generation),
+the deterministic, seed-driven map generator, compiled to WebAssembly behind a
 tiny typed shim. Given a seed it reproduces the room/tile layout and seeded object
 placement for every level in all five acts, byte-for-byte with the original engine.
 
-Pure Wasm + TypeScript: **no native addon, no build step**. Ships ESM and CommonJS
-with `.d.ts` types; the wasm loads lazily on first call, so there's nothing to
-initialise.
+Pure Wasm + TypeScript: **no native addon, no build step**. Runs in Node, Bun, Deno
+and the browser. The wasm is freestanding, so the shim loads it with `fetch` or the
+filesystem depending on where it finds itself. ESM with `.d.ts` types; the wasm loads
+lazily on first call, so there's nothing to initialise.
 
 ## Install
 
@@ -33,7 +34,8 @@ const act = await generateAct(305419896, 0, 0);
 console.log(`Act I: ${act.levels.length} levels, town has ${act.levels[0].rooms.length} rooms`);
 ```
 
-CommonJS is identical via `require`:
+CommonJS is identical via `require`. Node has been able to `require()` an ESM graph
+since 22.12, and this shim has no top-level await, so there is no separate CJS build:
 
 ```js
 const { shrines } = require('@jaenster/d2drlg');
@@ -42,18 +44,18 @@ shrines(1337, 3).then(list => console.log(list));
 
 ## API
 
-- `shrines(seed, levelId, difficulty?=0, actNo?=0): Promise<D2Shrine[]>` — a level's
+- `shrines(seed, levelId, difficulty?=0, actNo?=0): Promise<D2Shrine[]>`: a level's
   seeded shrines/wells. `x`/`y` are world **subtiles**; `tileX`/`tileY` are
   `Math.floor(x/5)`; `isWell` is `classId === 130`.
-- `generateAct(seed, difficulty?=0, actNo?=0): Promise<D2Act>` — every level in an act
+- `generateAct(seed, difficulty?=0, actNo?=0): Promise<D2Act>`: every level in an act
   with its generated rooms.
-- `abiVersion(): Promise<number>` — the module's C-ABI version.
-- `open(): Promise<Drlg>` — a reusable instance with the same methods plus `close()`,
+- `abiVersion(): Promise<number>`: the module's C-ABI version.
+- `open(): Promise<Drlg>`: a reusable instance with the same methods plus `close()`,
   for lifecycle control.
 
 `difficulty` is `0` normal / `1` nightmare / `2` hell; `actNo` / `act` are 0-based
 (Act I = 0); levels use their `Levels.txt` id (Cold Plains = 3).
 
-Reproduces 1.14d generation faithfully — positions are the original engine's. Ships
+Reproduces 1.14d generation faithfully; positions are the original engine's. Ships
 no Blizzard assets, only the clean-room generator and the read-only data tables it
 needs. MIT · part of [libd2](https://github.com/jaenster/libd2).
