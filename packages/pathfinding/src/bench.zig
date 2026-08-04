@@ -227,13 +227,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const near_level: i32 = if (near_mode) try std.fmt.parseInt(i32, args.next() orelse "3", 10) else 0;
     const near_dist: i32 = if (near_mode) try std.fmt.parseInt(i32, args.next() orelse "120", 10) else 0;
     const near_count: usize = if (near_mode) try std.fmt.parseInt(usize, args.next() orelse "80", 10) else 0;
+    const viz_mode = arg3 != null and std.mem.eql(u8, arg3.?, "viz");
+    const viz_level: i32 = if (viz_mode) try std.fmt.parseInt(i32, args.next() orelse "74", 10) else 0;
     const prof_mode = arg3 != null and std.mem.eql(u8, arg3.?, "prof");
     const chains_mode = arg3 != null and std.mem.eql(u8, arg3.?, "chains");
     const chains_from: i32 = if (chains_mode) try std.fmt.parseInt(i32, args.next() orelse "75", 10) else 0;
     const chains_to: i32 = if (chains_mode) try std.fmt.parseInt(i32, args.next() orelse "102", 10) else 0;
     const chains_count: u32 = if (chains_mode) try std.fmt.parseInt(u32, args.next() orelse "100", 10) else 0;
     const explicit = !near_mode and !run_mode and !chaos_mode and !game_mode and !objs_mode and
-        !prof_mode and !chains_mode;
+        !prof_mode and !chains_mode and !viz_mode;
     const from_level: ?i32 = if (!explicit) null else if (arg3) |a| try std.fmt.parseInt(i32, a, 10) else null;
     const to_level: ?i32 = if (!explicit) null else if (args.next()) |a| try std.fmt.parseInt(i32, a, 10) else null;
 
@@ -261,6 +263,156 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
             print("\n", .{});
         }
+        return;
+    }
+
+    // Dump one level as JSON for an external renderer: the walkable bitmap cropped to its own
+    // bounding box, the pads, and a route across it. Written to stdout so it can be piped.
+    if (viz_mode) {
+        var world = pf.World.init(gpa, seed, .normal);
+        defer world.deinit();
+        try world.loadAct(&ctx, act);
+        const lv = world.level(viz_level) orelse {
+            print("level {d} not in this act\n", .{u(viz_level)});
+            return;
+        };
+        const pm = try lv.passMap(pf.Colmask.player_path);
+
+        var x0: i32 = lv.w;
+        var y0: i32 = lv.h;
+        var x1: i32 = 0;
+        var y1: i32 = 0;
+        var yy: i32 = 0;
+        while (yy < lv.h) : (yy += 1) {
+            var xx: i32 = 0;
+            while (xx < lv.w) : (xx += 1) {
+                if (!pm.passable(xx, yy)) continue;
+                x0 = @min(x0, xx);
+                y0 = @min(y0, yy);
+                x1 = @max(x1, xx);
+                y1 = @max(y1, yy);
+            }
+        }
+        if (x1 < x0) return;
+        const cw = x1 - x0 + 1;
+        const ch = y1 - y0 + 1;
+
+        // Anchors: the entry portal, and the Summoner (MonPreset act-2 index 17).
+        var start: ?pf.Point = null;
+        var goal: ?pf.Point = null;
+        for (lv.presets) |up| {
+            if (up.etype == 2 and up.txt_file_no == 298) start = .{ .x = up.x, .y = up.y };
+            if (up.etype == 1 and up.txt_file_no == 250) goal = .{ .x = up.x, .y = up.y }; // MonStats 250 = the Summoner
+        }
+        if (start == null or goal == null) {
+            print("// anchors: start={any} goal={any}; preset etypes present:", .{ start, goal });
+            var seen_et: [8]usize = @splat(0);
+            for (lv.presets) |up| {
+                if (up.etype >= 0 and up.etype < 8) seen_et[@intCast(up.etype)] += 1;
+            }
+            for (seen_et, 0..) |n, et| {
+                if (n != 0) print(" et{d}={d}", .{ et, n });
+            }
+            print("\n", .{});
+            if (goal == null) {
+                print("// monster presets on this level:", .{});
+                for (lv.presets) |up| {
+                    if (up.etype != 2) print(" {d}@({d},{d})", .{ up.txt_file_no, u(up.x), u(up.y) });
+                }
+                print("\n", .{});
+            }
+            return;
+        }
+
+        const from = pf.grid.nearestPassable(pm, start.?.x, start.?.y, 48) orelse return;
+        const to = pf.grid.nearestPassable(pm, goal.?.x, goal.?.y, 48) orelse return;
+        var r = try world.route(
+            .{ .level = lv.id, .x = from.x, .y = from.y },
+            .{ .level = lv.id, .x = to.x, .y = to.y },
+            .{},
+        );
+        defer r.deinit();
+        // The same route with wall aversion switched off, so the two can be compared directly
+        // instead of the aversion being taken on trust.
+        var raw = try world.route(
+            .{ .level = lv.id, .x = from.x, .y = from.y },
+            .{ .level = lv.id, .x = to.x, .y = to.y },
+            .{ .wall_aversion = .{ .weight = 0 } },
+        );
+        defer raw.deinit();
+
+        // 1 bit per cell, rows padded to a byte boundary, base64'd.
+        const stride: usize = @intCast(@divTrunc(cw + 7, 8));
+        const bits = try gpa.alloc(u8, stride * @as(usize, @intCast(ch)));
+        defer gpa.free(bits);
+        @memset(bits, 0);
+        var by: i32 = 0;
+        while (by < ch) : (by += 1) {
+            var bx: i32 = 0;
+            while (bx < cw) : (bx += 1) {
+                if (!pm.passable(x0 + bx, y0 + by)) continue;
+                const bi: usize = @intCast(by);
+                const xi: usize = @intCast(bx);
+                bits[bi * stride + xi / 8] |= @as(u8, 0x80) >> @intCast(xi % 8);
+            }
+        }
+        // Clearance, clamped to 0..3 and packed 4 per byte: 0 blocked, 1 touching a wall, 2 one
+        // cell off it, 3 clear. Enough to SEE whether the route hugs the edges.
+        const cl = pm.clearance();
+        const cstride: usize = @intCast(@divTrunc(cw + 3, 4));
+        const cbits = try gpa.alloc(u8, cstride * @as(usize, @intCast(ch)));
+        defer gpa.free(cbits);
+        @memset(cbits, 0);
+        var cy: i32 = 0;
+        while (cy < ch) : (cy += 1) {
+            var cx: i32 = 0;
+            while (cx < cw) : (cx += 1) {
+                const v: u8 = @min(cl[pm.index(x0 + cx, y0 + cy)], 3);
+                const bi: usize = @intCast(cy);
+                const xi: usize = @intCast(cx);
+                cbits[bi * cstride + xi / 4] |= v << @intCast(6 - 2 * (xi % 4));
+            }
+        }
+
+        const enc = std.base64.standard.Encoder;
+        const b64 = try gpa.alloc(u8, enc.calcSize(bits.len));
+        defer gpa.free(b64);
+        _ = enc.encode(b64, bits);
+        const c64 = try gpa.alloc(u8, enc.calcSize(cbits.len));
+        defer gpa.free(c64);
+        _ = enc.encode(c64, cbits);
+
+        print("{{\"level\":{d},\"x0\":{d},\"y0\":{d},\"w\":{d},\"h\":{d},\"regions\":{d},\n", .{
+            u(lv.id), u(x0), u(y0), u(cw), u(ch), pm.comp_count,
+        });
+        print(" \"walk\":\"{s}\",\n \"clear\":\"{s}\",\n \"pads\":[", .{ b64, c64 });
+        for (lv.pads, 0..) |pd, i| {
+            if (i != 0) print(",", .{});
+            print("[{d},{d},{d},{d}]", .{ u(pd.at.x), u(pd.at.y), u(pd.to.x), u(pd.to.y) });
+        }
+        print("],\n \"start\":[{d},{d}],\"goal\":[{d},{d}],\n \"route\":[", .{
+            u(from.x), u(from.y), u(to.x), u(to.y),
+        });
+        var first = true;
+        for (r.legs) |leg| {
+            for (leg.moves) |m| {
+                if (!first) print(",", .{});
+                first = false;
+                const c: u8 = if (pm.inBounds(m.x, m.y)) pm.clearance()[pm.index(m.x, m.y)] else 0;
+                print("[{d},{d},\"{s}\",{d}]", .{ u(m.x), u(m.y), @tagName(m.kind), c });
+            }
+        }
+        print("],\n \"routeRaw\":[", .{});
+        first = true;
+        for (raw.legs) |leg| {
+            for (leg.moves) |m| {
+                if (!first) print(",", .{});
+                first = false;
+                const c: u8 = if (pm.inBounds(m.x, m.y)) pm.clearance()[pm.index(m.x, m.y)] else 0;
+                print("[{d},{d},\"{s}\",{d}]", .{ u(m.x), u(m.y), @tagName(m.kind), c });
+            }
+        }
+        print("]}}\n", .{});
         return;
     }
 

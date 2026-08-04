@@ -4,3 +4,6 @@ zig-out/
 .env
 **/zig-cache
 **/zig-out
+
+# Generated visualisations (large embedded map data)
+packages/pathfinding/viz/
