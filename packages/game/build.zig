@@ -8,6 +8,7 @@ pub fn build(b: *std.Build) void {
     const data = b.dependency("d2_data", .{ .target = target, .optimize = optimize });
     const net = b.dependency("d2_net", .{ .target = target, .optimize = optimize });
     const drlg = b.dependency("d2_drlg", .{ .target = target, .optimize = optimize });
+    const item = b.dependency("d2_item", .{ .target = target, .optimize = optimize });
 
     // Library module: the faithful D2 1.14d runtime game-simulation port.
     // Consumers depend on this via `.d2sim = .{ .path = "../d2-sim" }`.
@@ -20,6 +21,7 @@ pub fn build(b: *std.Build) void {
     mod.addImport("d2-data", data.module("d2-data"));
     mod.addImport("d2-net", net.module("d2-net"));
     mod.addImport("d2-drlg", drlg.module("d2-drlg"));
+    mod.addImport("d2-item", item.module("d2-item"));
 
     // Smoke/demo CLI: resolve a single attack (attacker vs defender, seed).
     const exe = b.addExecutable(.{
@@ -34,6 +36,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("d2-data", data.module("d2-data"));
     exe.root_module.addImport("d2-net", net.module("d2-net"));
     exe.root_module.addImport("d2-drlg", drlg.module("d2-drlg"));
+    exe.root_module.addImport("d2-item", item.module("d2-item"));
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -53,6 +56,7 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addImport("d2-data", data.module("d2-data"));
     tests.root_module.addImport("d2-net", net.module("d2-net"));
     tests.root_module.addImport("d2-drlg", drlg.module("d2-drlg"));
+    tests.root_module.addImport("d2-item", item.module("d2-item"));
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
