@@ -64,9 +64,9 @@ pub const Error = error{
     NodeLimit,
 } || std.mem.Allocator.Error;
 
-/// `CheckIfCoordsAreInRange`'s `nRange` argument at the teleport call site (0x5496f0): 0x32
-/// subtiles, applied per axis.
-pub const ENGINE_MAX_CAST: i32 = 50;
+/// The cast gate. It is not teleport-specific — it is the packet layer's command range, which
+/// gates walk and run the same way; see `grid.ENGINE_MAX_COMMAND_RANGE`.
+pub const ENGINE_MAX_CAST: i32 = grid.ENGINE_MAX_COMMAND_RANGE;
 
 /// How a cast's length is measured against `max_cast`.
 pub const Metric = enum {

@@ -51,6 +51,11 @@ pub const Options = struct {
     /// Collapse runs of identical direction into single waypoints. This is what a mover wants
     /// (walk to the corner, then the next corner); turn it off to get every subtile.
     compress: bool = true,
+    /// Cap on how far apart two consecutive waypoints may be, Chebyshev. Compression alone happily
+    /// produces a 100-subtile straight run, and a movement command that far is DROPPED by the
+    /// server — see `grid.ENGINE_MAX_COMMAND_RANGE`. Null removes the cap (useful only when the
+    /// caller is not driving a real character).
+    max_step: ?i32 = grid.ENGINE_MAX_COMMAND_RANGE,
 };
 
 /// Reusable search scratch. One per thread; `ensure` grows it to the biggest level you search.
@@ -233,13 +238,13 @@ pub const Pather = struct {
             cur = self.came[cur];
         }
         std.mem.reverse(Point, out.items[first..]);
-        if (opts.compress) compressRuns(out, first);
+        if (opts.compress) compressRuns(out, first, opts.max_step);
     }
 };
 
 /// Drop the interior of every straight run: keep a point only where the direction changes. The
 /// endpoints always survive.
-pub fn compressRuns(out: *std.ArrayListUnmanaged(Point), first: usize) void {
+pub fn compressRuns(out: *std.ArrayListUnmanaged(Point), first: usize, max_step: ?i32) void {
     const pts = out.items[first..];
     if (pts.len < 3) return;
     var write: usize = 1;
@@ -252,7 +257,15 @@ pub fn compressRuns(out: *std.ArrayListUnmanaged(Point), first: usize) void {
         const in_dy = std.math.sign(cur.y - prev.y);
         const out_dx = std.math.sign(next.x - cur.x);
         const out_dy = std.math.sign(next.y - cur.y);
-        if (in_dx == out_dx and in_dy == out_dy) continue;
+        const turns = in_dx != out_dx or in_dy != out_dy;
+        // Break a long straight run even where it does not turn: the next point would otherwise
+        // land further than a movement command may reach. Breaking at max_step-1 keeps a margin
+        // against the server's view of the position lagging ours.
+        const too_far = if (max_step) |m|
+            @max(@abs(next.x - prev.x), @abs(next.y - prev.y)) >= m
+        else
+            false;
+        if (!turns and !too_far) continue;
         pts[write] = cur;
         write += 1;
     }

@@ -119,6 +119,10 @@ pub const Options = struct {
     exit_snap_radius: i32 = 48,
     /// Collapse straight runs into waypoints.
     compress: bool = true,
+    /// Cap on the distance between consecutive emitted waypoints, Chebyshev. Defaults to the
+    /// engine's own command gate: anything further is refused by the packet handler and desyncs
+    /// the client. See `grid.ENGINE_MAX_COMMAND_RANGE`.
+    max_step: ?i32 = grid.ENGINE_MAX_COMMAND_RANGE,
     max_nodes: u32 = 4_000_000,
 };
 
@@ -614,6 +618,7 @@ pub const World = struct {
             .snap_radius = snap_from,
             .goal_snap_radius = snap_to,
             .compress = opts.compress,
+            .max_step = opts.max_step,
             .max_nodes = opts.max_nodes,
         }, &pts);
         for (pts.items) |p| try out.append(self.alloc, .{ .x = p.x, .y = p.y, .kind = .walk });

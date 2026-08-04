@@ -520,6 +520,44 @@ test "Duriel's Lair gates the destination with COLMASK_PLAYER_FLYING" {
     }
 }
 
+test "no emitted waypoint exceeds what a movement command may target" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // SCMD_0x01_WalkToLocation / SCMD_0x03_RunToLocation go through the SAME
+    // CheckIfInrangeAndReassign gate as a skill cast, so a waypoint further than 50 subtiles is not
+    // a slow walk — the handler drops the packet and resyncs the client. Compression alone happily
+    // emits 100-subtile straight runs, so this is the check that keeps the output drivable.
+    const gate = pf.ENGINE_MAX_COMMAND_RANGE;
+    var checked: usize = 0;
+
+    for (f.world.levels.items) |*lv| {
+        const pm = try lv.passMap(pf.Colmask.player_path);
+        const a = pf.grid.nearestPassable(pm, @divTrunc(lv.w, 6), @divTrunc(lv.h, 6), 64) orelse continue;
+        const b = pf.grid.nearestPassable(pm, lv.w - @divTrunc(lv.w, 6), lv.h - @divTrunc(lv.h, 6), 64) orelse continue;
+
+        for ([_]bool{ false, true }) |tele| {
+            var r = f.world.route(
+                .{ .level = lv.id, .x = a.x, .y = a.y },
+                .{ .level = lv.id, .x = b.x, .y = b.y },
+                .{ .teleport = tele },
+            ) catch continue;
+            defer r.deinit();
+            for (r.legs) |leg| {
+                var i: usize = 1;
+                while (i < leg.moves.len) : (i += 1) {
+                    const dx = leg.moves[i].x - leg.moves[i - 1].x;
+                    const dy = leg.moves[i].y - leg.moves[i - 1].y;
+                    try testing.expect(@max(@abs(dx), @abs(dy)) <= gate);
+                    checked += 1;
+                }
+            }
+        }
+    }
+    try testing.expect(checked > 200);
+}
+
 test "an unreachable level fails fast instead of searching" {
     const alloc = testing.allocator;
     var f = try Fixture.load(alloc, &.{0});
