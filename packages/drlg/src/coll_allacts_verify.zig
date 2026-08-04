@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const testalloc = @import("testalloc.zig");
 
 const GOLDEN_GZ = @embedFile("golden/coll_seed1_all.jsonl.gz");
 const GOLDEN_777_GZ = @embedFile("golden/coll_seed777_all.jsonl.gz");
@@ -57,7 +58,9 @@ fn decompressGz(gpa: std.mem.Allocator, gz: []const u8) ![]u8 {
 }
 
 test "coll: all-acts golden (seed 1, Act I–V)" {
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     const golden = decompressGolden(gpa) catch return;
     defer gpa.free(golden);
 
@@ -86,7 +89,9 @@ test "coll: all-acts golden (seed 1, Act I–V)" {
 }
 
 test "coll: all-acts golden (seed 2, maze cross-seed probe)" {
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     const golden = decompressGz(gpa, GOLDEN_2_GZ) catch return;
     defer gpa.free(golden);
     var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
@@ -106,7 +111,9 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
     // Second, independent seed captured 2026-07-08 (d2probe --spawn --seedstart=777).
     // Guards the fidelity chain against seed-1-specific fitting: every mechanism fix
     // must hold here without ever having been measured against this seed.
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     const golden = decompressGz(gpa, GOLDEN_777_GZ) catch return;
     defer gpa.free(golden);
 
@@ -128,7 +135,9 @@ test "coll: all-acts golden (seed 777, cross-seed regression)" {
 }
 
 test "coll: all-acts golden (seeds 17 + 18, the former CRC holdouts)" {
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     for ([_][]const u8{ GOLDEN_17_GZ, GOLDEN_18_GZ }) |gz| {
         const golden = decompressGz(gpa, gz) catch continue;
         defer gpa.free(golden);
@@ -146,7 +155,9 @@ test "coll: all-acts golden (seeds 17 + 18, the former CRC holdouts)" {
 }
 
 test "coll: BLIND holdout seed (never used to develop anything)" {
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     for ([_][]const u8{ GOLDEN_HOLDOUT_GZ, GOLDEN_HOLDOUT2_GZ }) |gz| {
         const golden = decompressGz(gpa, gz) catch continue;
         defer gpa.free(golden);
@@ -172,7 +183,9 @@ test "coll: composite raw grid must not alter the per-room cells" {
     // exactly what happened (COLLIDE_BLANK 0x20 was being rewritten to solid rock, turning
     // walkable cells into walls). Invariant: for a subtile exactly one room covers, the
     // composite must reproduce that room's cell verbatim.
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
     defer ctx.deinit();
     const seed: u32 = 1033089920;
@@ -254,7 +267,9 @@ test "coll: SHIPPED consumer path (generateActCollisionAll) vs golden" {
     // What an external consumer actually calls — the C-ABI / library entry point, not the
     // per-room path the other gates drive. Checked on several seeds so "holds up as a lib"
     // means the same thing cross-seed that it does for the per-room builder.
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     for ([_][]const u8{ GOLDEN_GZ, GOLDEN_2_GZ, GOLDEN_17_GZ }) |gz| {
         const g = decompressGz(gpa, gz) catch continue;
         defer gpa.free(g);
@@ -270,7 +285,7 @@ test "coll: SHIPPED consumer path (generateActCollisionAll) vs golden" {
         try std.testing.expectEqual(rr.total_cells, rr.exact_ok);
     }
 
-    const gpa2 = std.testing.allocator;
+    const gpa2 = gpa;
     const golden = decompressGolden(gpa2) catch return;
     defer gpa2.free(golden);
     var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
@@ -290,7 +305,9 @@ test "coll: SHIPPED consumer path (generateActCollisionAll) vs golden" {
 test "coll: DUMP our room tile arrays (vs d2probe --roomdump)" {
     if (true) return; // opt-in: set LVL, flip to `if (false)`, diff OURTILE vs the probe's roomtile
     const LVL = 56;
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     const golden = decompressGz(gpa, GOLDEN_17_GZ) catch return;
     defer gpa.free(golden);
     const one = try filterToLevels(gpa, golden, LVL, LVL);
@@ -304,7 +321,9 @@ test "coll: DUMP our room tile arrays (vs d2probe --roomdump)" {
 
 test "coll: DUMP ours rooms for diff viz" {
     if (true) return; // opt-in debug dump: flip to `if (false)` to emit OURSROOM lines
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     const golden = decompressGolden(gpa) catch return;
     defer gpa.free(golden);
     var ctx = lib.Ctx.init(std.heap.page_allocator) catch return;
@@ -317,7 +336,9 @@ test "coll: DUMP ours rooms for diff viz" {
 test "coll: seed-2 single-level focus (probe)" {
     if (true) return; // opt-in: set LVL below, flip to `if (false)`
     const LVL = 47;
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     const golden = decompressGz(gpa, GOLDEN_2_GZ) catch return;
     defer gpa.free(golden);
     const one = try filterToLevels(gpa, golden, LVL, LVL);
@@ -331,7 +352,9 @@ test "coll: seed-2 single-level focus (probe)" {
 
 test "coll: single-level focus (probe)" {
     if (true) return; // opt-in: set the level range + probes below, flip to `if (false)`
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     const golden = decompressGolden(gpa) catch return;
     defer gpa.free(golden);
     const one = try filterToLevels(gpa, golden, 111, 111);
@@ -352,7 +375,9 @@ test "coll: single-level focus (probe)" {
 
 test "coll: Kurast focus (L79-83 verbose)" {
     if (true) return; // opt-in: flip to `if (false)` for Kurast-only confusion + histogram
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     const golden = decompressGolden(gpa) catch return;
     defer gpa.free(golden);
     const kurast = try filterToLevels(gpa, golden, 79, 83);
@@ -363,7 +388,9 @@ test "coll: Kurast focus (L79-83 verbose)" {
 }
 
 test "coll: Act-1 from all-acts golden (seed 1, per-cell floor)" {
-    const gpa = std.testing.allocator;
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    const gpa = mem.allocator();
     const golden = decompressGolden(gpa) catch return;
     defer gpa.free(golden);
     const act1 = try filterToLevels(gpa, golden, 2, 39);
