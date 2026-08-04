@@ -17,7 +17,7 @@ public sealed class DrlgException : Exception
 /// <example>
 /// <code>
 /// using var drlg = new MapGenerator();
-/// var act = drlg.GenerateAct(seed: 1337, actNumber: 0);   // 0 is Act I, 4 is Act V
+/// var act = drlg.GenerateAct(seed: 1337, act: 0);   // 0 is Act I, 4 is Act V
 /// foreach (var level in act.Levels)
 ///     Console.WriteLine($"{level.Name}: {level.Rooms.Count} rooms");
 /// </code>
@@ -53,7 +53,7 @@ public sealed class MapGenerator : IDisposable
     /// </summary>
     /// <param name="seed">The game seed. The same seed always produces the same world.</param>
     /// <param name="difficulty">Nine levels change size with this.</param>
-    /// <param name="actNumber">0 for Act I through 4 for Act V.</param>
+    /// <param name="act">0 for Act I through 4 for Act V, the way the engine numbers them.</param>
     /// <param name="includeCollision">
     /// Also copy every level's subtile collision grid. Off by default because a whole act is
     /// tens of megabytes; when it is off, <see cref="Level.Collision"/> is null.
@@ -63,20 +63,20 @@ public sealed class MapGenerator : IDisposable
     /// the native handle is released before this returns, so there is nothing to dispose and
     /// nothing that can be used after free.
     /// </remarks>
-    public Act GenerateAct(uint seed, Difficulty difficulty = Difficulty.Normal, int actNumber = 0,
+    public Act GenerateAct(uint seed, Difficulty difficulty = Difficulty.Normal, int act = 0,
                            bool includeCollision = false)
     {
         ThrowIfDisposed();
-        if (actNumber is < 0 or > 4)
-            throw new ArgumentOutOfRangeException(nameof(actNumber), actNumber, "act number is 0 (Act I) to 4 (Act V)");
+        if (act is < 0 or > 4)
+            throw new ArgumentOutOfRangeException(nameof(act), act, "act is 0 (Act I) to 4 (Act V)");
 
-        var handle = Native.d2drlg_gen_act(_ctx, seed, (int)difficulty, actNumber);
+        var handle = Native.d2drlg_gen_act(_ctx, seed, (int)difficulty, act);
         if (handle == IntPtr.Zero)
-            throw new DrlgException($"generating act {actNumber + 1} for seed {seed} failed");
+            throw new DrlgException($"generating act {act + 1} for seed {seed} failed");
 
         try
         {
-            return new Act(seed, difficulty, actNumber, ReadLevels(handle, includeCollision));
+            return new Act(seed, difficulty, act, ReadLevels(handle, includeCollision));
         }
         finally
         {
@@ -209,7 +209,7 @@ public sealed class Act
     public Difficulty Difficulty { get; }
 
     /// <summary>
-    /// 0 for Act I through 4 for Act V, matching the argument you passed to
+    /// 0 for Act I through 4 for Act V, the same value you passed to
     /// <see cref="MapGenerator.GenerateAct"/>. Note that <see cref="ToString"/> renders it the
     /// way people say it, so this is 0 where that prints "Act 1".
     /// </summary>

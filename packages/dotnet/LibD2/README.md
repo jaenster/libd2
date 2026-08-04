@@ -8,7 +8,7 @@ collision, for every level of all five acts.
 using LibD2.Drlg;
 
 using var drlg = new MapGenerator();
-var act = drlg.GenerateAct(seed: 1337, actNumber: 0);   // 0 is Act I, 4 is Act V
+var act = drlg.GenerateAct(seed: 1337, act: 0);   // 0 is Act I, 4 is Act V
 
 foreach (var level in act.Levels)
     Console.WriteLine($"{level.Name}: {level.Rooms.Count} rooms at ({level.OriginX}, {level.OriginY})");

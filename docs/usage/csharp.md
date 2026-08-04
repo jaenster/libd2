@@ -16,8 +16,8 @@ using LibD2.Drlg;
 // One generator, reused. Loading the game tables is the expensive part.
 using var drlg = new MapGenerator();
 
-// actNumber is 0-based: 0 is Act I, 4 is Act V. It defaults to 0.
-var act = drlg.GenerateAct(seed: 1337, actNumber: 0);
+// act is 0-based: 0 is Act I, 4 is Act V. It defaults to 0.
+var act = drlg.GenerateAct(seed: 1337, act: 0);
 Console.WriteLine(act);
 
 foreach (var level in act.Levels.Take(3))
@@ -33,9 +33,9 @@ Act 1 of seed 1337 (39 levels)
 
 The same seed always gives the same world, matching the retail engine cell for cell.
 
-`actNumber` counts from zero the way the engine does, so Act I is `0` and Act V is `4`. It is
-worth passing explicitly: `Act.Number` is that same 0-based value, while `ToString()` renders
-it the way people say it, so `act.Number` is `0` where the line above prints "Act 1".
+`act` counts from zero the way the engine does, so Act I is `0` and Act V is `4`. Worth passing
+explicitly, and worth knowing that `Act.Number` is that same 0-based value while `ToString()`
+renders it the way people say it — so `act.Number` is `0` where the line above prints "Act 1".
 
 ## Rooms, objects and monsters
 
@@ -99,7 +99,7 @@ A whole act of collision grids is tens of megabytes, so it is only copied out wh
 Until then `Level.Collision` is null:
 
 ```csharp
-var act = drlg.GenerateAct(1337, actNumber: 0, includeCollision: true);
+var act = drlg.GenerateAct(1337, act: 0, includeCollision: true);
 var grid = act.GetLevel(3)!.Collision!;
 
 Console.WriteLine($"{grid.Width}x{grid.Height}");              // 400x400
