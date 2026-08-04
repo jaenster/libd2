@@ -9,10 +9,26 @@ philosophy: **faithful-to-Ghidra, all-Zig, no C deps, seeded + verifiable,
 roll-exact**. Ported from the reconstructed 1.14d `Game.exe` sources
 (Ghidra session `62fbfe69`); every ported function cites its 1.14d address.
 
-The value proposition: **given a seed + treasure class + monster level + magic
-find, reproduce D2's exact item.** One extra or missing RNG step desyncs every
-subsequent item off the same seed, so the whole roll cascade is modelled
-roll-exact — no curve-fitting, no approximation.
+The value proposition: **given a game seed + a drop seed + treasure class +
+monster level + magic find, reproduce D2's exact item.** One extra or missing RNG
+step desyncs every subsequent item off the same seed, so the whole roll cascade is
+modelled roll-exact — no curve-fitting, no approximation.
+
+## The three seed streams
+
+The engine does not derive an item's affix seed from the monster that dropped it.
+`SUnit::CreateUnit` 0x555230 steps the game's single global seed counter **twice**
+per item — once for the unit's own `sSeed`, once for the item's MOD seed — so
+reproducing a drop needs the game seed as well as the dropping unit's:
+
+| stream | what it drives |
+|-|-|
+| drop seed (the dropping unit's `sSeed`) | the TreasureClassEx walk, NoDrop, `GAME_GetItemQuality` (+MF) |
+| game seed (`D2GameStrc.pGameSeed`) | two steps per created item, producing the two seeds below |
+| item MOD seed | affixes, unique/set/superior selection, property values, sockets, ethereal, stack size |
+
+`rollDrop` takes the drop seed and the game seed and advances both exactly as the
+engine does.
 
 ## Status
 
@@ -21,31 +37,45 @@ roll-exact — no curve-fitting, no approximation.
 | Seed RNG (`D2SeedStrc` LCG, low-word reductions) | 0x45c3e0 / 0x472280 | done |
 | Excel table parser + loaders | — | done |
 | TreasureClassEx resolution (NoDrop walk, sub-TC recursion, party scale) | 0x55a6d0 / 0x654e00 | done, roll-exact |
-| Drop-time quality + Magic Find | 0x558640 / 0x558610 | done, roll-exact |
-| Item-seed quality cascade (fallback re-roll) | 0x556f60 | done |
-| Magic prefix/suffix (frequency-weighted) | 0x5c1560 / 0x5565e0 | done, roll-exact |
-| Rare affixes (1..N, no-dup-group, rare names) | 0x5c21d0 | done (name-pick internals residual) |
-| Affix type eligibility (itype/etype + Equiv chain) | 0x65e620 | done |
-| Socket count | 0x556b60 | done |
 | Auto item-type classes (`weap3`/`armo24`/…) | 0x6541c0 | done |
 | Negative Picks ("each entry once", RNG-free) | 0x55a6d0 | done |
-| Unique / set selection | 0x5566b0 / 0x5c25c0 | done, weighted |
+| TC unique/set link entries (forced quality + row) | 0x654440 | done |
+| Drop-time quality + Magic Find | 0x558640 / 0x558610 | done, roll-exact |
+| Item creation seeds (game counter, two steps) | 0x555230 / 0x552df0 / 0x552e90 | done |
+| Quality + affix dispatch, incl. the fallback cascade | 0x557450 | done |
+| Item-seed quality cascade | 0x556f60 | done |
+| Magic prefix/suffix (weights, class gate, `rare` gate) | 0x5c1560 / 0x5565e0 | done, roll-exact |
+| Rare affixes + rare names (`GetMaxToRoll`) | 0x5c21d0 / 0x5c1ab0 | done, roll-exact |
+| Affix type eligibility (itype/etype + Equiv chain) | 0x65e620 | done |
+| Unique selection (ladder gate, found-bitmask) | 0x5566b0 | done |
+| Set selection | 0x5c25c0 | done |
 | Superior (QualityItems) bonus | 0x5c2970 | done |
-| Property value rolls (PROPERTIESFUNCTIONS dispatch) | 0x65fd70 | done, 22 of 24 handlers |
-| Runeword detection | — | done (props not applied) |
+| Low quality (LowQualityItems) | 0x5c2d40 | done |
+| Automagic affix (base `auto prefix` group) | 0x557450 tail | done |
+| Ethereal roll | 0x556ca0 / 0x65e4d0 | done |
+| Socket count | 0x556b60 | done |
+| Gold amount + `mul=` rescale | 0x557ab0 | done |
+| Stackable / quiver stack size | 0x557ab0 | done |
+| Property value rolls (PROPERTIESFUNCTIONS dispatch) | 0x65fd70 | done, 24 of 24 handlers |
+| Unique / set / partial-set property application | 0x65fec0 | done |
+| Runeword detection + property application | 0x62bed0 / 0x6600a0 | done |
+| Gem/rune socket-filler properties | — | done |
 
 ### Known residuals
-- **drop-seed → item-seed derivation** lives in `SUnit::CreateUnit` (not
-  decompiled). A dropped item has two seed streams (base `sSeed` + affix "mod"
-  seed); this port is roll-exact **given** both seeds — see `src/verify.zig`.
-- **charged-skill properties** (property funcs 11/19) only apply when the level is
-  given explicitly; the derived-from-item-level branch needs Skills.txt req/max
-  levels. Funcs 14 (sockets) and 23 (ethereal) set item flags, not mod stats.
-- rare-name pick internals (`GetMaxToRoll`); class-specific affix restriction;
-  magiclvl weight multiplier; per-entry TC quality modifiers (`cu=`/`cs=`/`cr=`/
-  `cm=`) — only the `mul=` gold multiplier is parsed.
-- crafted / tempered are cube recipes, not drops (`GAME_GetItemQuality` never
-  rolls them), so they are out of this package's scope.
+- **stat side effects** the drop model does not carry: the ethereal damage/AC
+  x3/2 and halved durability, the crude-quality 75% damage / 33% durability
+  penalty, and the x2 / x3 durability bumps on a failed set / unique roll. The
+  rolls and their RNG cost are faithful; only the resulting durability and
+  damage numbers are left to the unit/stat layer.
+- **crafted / tempered** are cube recipes, not drops (`GAME_GetItemQuality` never
+  rolls them). Their affix roll is wired (both use the rare roller), but the cube
+  recipe that produces them lives outside this package.
+- per-entry TC quality modifiers (`cu=`/`cs=`/`cr=`/`cm=`/`ce=`/`cg=`) are parsed
+  by the engine but never read by the drop path; only `mul=` changes an outcome
+  and only that one is modelled.
+- the NoDrop party scale uses the documented `ratio^players` curve; the engine's
+  exact float→int rounding at the end of that computation was not recoverable
+  from the decompile.
 - classic (non-expansion) resolution carries its own cumulative weights but is far
   less exercised than the expansion path.
 

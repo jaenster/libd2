@@ -2,7 +2,7 @@
 //! Header row maps column name -> index; data rows are slices into an owned copy of
 //! the source. Empty fields read as 0 for integer accessors (D2's convention).
 //!
-//! Mirrors the sibling d2-items txt.Table; kept local so d2-sim has no cross-lib dep.
+//! Mirrors the sibling d2-item txt.Table; kept local so d2-sim has no cross-lib dep.
 
 const std = @import("std");
 

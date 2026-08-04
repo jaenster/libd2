@@ -878,7 +878,7 @@ pub const Life = struct {
 /// `[id][action u8][pktLen u8][reserved u8][itemGUID u32]` (8 bytes) followed by the item's
 /// Fog::BitBuffer bitstream (len = pktLen-8) which fully describes the item. This module models
 /// the header + carries the item bitstream as opaque bytes; decoding the item body itself belongs
-/// to the item library (d2-items / clientless item.zig), out of scope here.
+/// to the item library (d2-item / clientless item.zig), out of scope here.
 pub const ItemAction = struct {
     pub const OPCODE: u8 = 0x9c;
     pub const HEADER: usize = 8;

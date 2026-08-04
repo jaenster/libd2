@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
 
     const core = b.dependency("d2_core", .{ .target = target, .optimize = optimize });
     const data = b.dependency("d2_data", .{ .target = target, .optimize = optimize });
-    const items = b.dependency("d2_items", .{ .target = target, .optimize = optimize });
+    const items = b.dependency("d2_item", .{ .target = target, .optimize = optimize });
     const formats = b.dependency("d2_formats", .{ .target = target, .optimize = optimize });
 
     const mod = b.addModule("d2-save", .{
@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
     });
     mod.addImport("d2-core", core.module("d2-core"));
     mod.addImport("d2-data", data.module("d2-data"));
-    mod.addImport("d2-items", items.module("d2-items"));
+    mod.addImport("d2-item", items.module("d2-item"));
     mod.addImport("d2-formats", formats.module("d2-formats"));
 
     const tests = b.addTest(.{
@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
     });
     tests.root_module.addImport("d2-core", core.module("d2-core"));
     tests.root_module.addImport("d2-data", data.module("d2-data"));
-    tests.root_module.addImport("d2-items", items.module("d2-items"));
+    tests.root_module.addImport("d2-item", items.module("d2-item"));
     tests.root_module.addImport("d2-formats", formats.module("d2-formats"));
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");

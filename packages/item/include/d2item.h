@@ -1,7 +1,7 @@
 #pragma once
 /*
  * d2item — C ABI for the faithful D2 1.14d seed-driven item-drop generator.
- * ABI version 1. See d2item_abi_version().
+ * ABI version 2. See d2item_abi_version().
  */
 #include <stdint.h>
 
@@ -21,9 +21,18 @@ typedef struct D2ItemDrop {
     uint16_t suffix_id;
     uint16_t rare_prefix_ids[3];
     uint16_t rare_suffix_ids[3];
+    uint16_t rare_prefix_name;  /* RarePrefix.txt row (1-based) — the item's NAME, not a mod */
+    uint16_t rare_suffix_name;  /* RareSuffix.txt row (1-based) */
+    uint16_t unique_id;         /* UniqueItems.txt row (1-based) */
+    uint16_t set_id;            /* SetItems.txt row (1-based) */
+    uint16_t quality_id;        /* QualityItems.txt row (1-based), superior only */
+    uint16_t low_quality_id;    /* LowQualityItems.txt row (1-based), low quality only */
+    uint16_t auto_prefix_id;    /* MagicPrefix.txt row (1-based) of the base's automagic affix */
     uint8_t  sockets;
-    int32_t  quantity;          /* gold amount / quiver count */
+    uint8_t  ethereal;
+    int32_t  quantity;          /* gold amount / stack size */
     int32_t  item_level;
+    uint32_t item_seed;         /* low word of the item's mod seed — replays its property rolls */
 } D2ItemDrop;
 
 /* Loads tables + treasure sets. Returns NULL on failure. */
@@ -40,7 +49,7 @@ void d2item_destroy(D2ItemCtx *ctx);
 int32_t d2item_roll(D2ItemCtx *ctx, uint32_t seed, const char *tc_name,
                      int32_t mlvl, int32_t mf, D2ItemDrop *out, int32_t cap);
 
-/* Returns the ABI version (currently 1). */
+/* Returns the ABI version (currently 2). */
 uint32_t d2item_abi_version(void);
 
 #ifdef __cplusplus

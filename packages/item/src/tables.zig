@@ -24,7 +24,11 @@ pub const Tables = struct {
     set_items: txt.Table,
     runes: txt.Table,
     quality_items: txt.Table,
+    low_quality_items: txt.Table,
     properties: txt.Table,
+    sets: txt.Table,
+    gems: txt.Table,
+    skills: txt.Table,
 
     /// TreasureClass name -> row index (built once at load).
     tc_by_name: std.StringHashMapUnmanaged(usize) = .{},
@@ -80,7 +84,11 @@ pub const Tables = struct {
             .set_items = try txt.Table.parse(gpa, d2data.file("SetItems")),
             .runes = try txt.Table.parse(gpa, d2data.file("Runes")),
             .quality_items = try txt.Table.parse(gpa, d2data.file("QualityItems")),
+            .low_quality_items = try txt.Table.parse(gpa, d2data.file("LowQualityItems")),
             .properties = try txt.Table.parse(gpa, d2data.file("Properties")),
+            .sets = try txt.Table.parse(gpa, d2data.file("Sets")),
+            .gems = try txt.Table.parse(gpa, d2data.file("Gems")),
+            .skills = try txt.Table.parse(gpa, d2data.file("Skills")),
             .arena = std.heap.ArenaAllocator.init(gpa),
         };
         const a = t.arena.allocator();
@@ -199,7 +207,11 @@ pub const Tables = struct {
         self.set_items.deinit();
         self.runes.deinit();
         self.quality_items.deinit();
+        self.low_quality_items.deinit();
         self.properties.deinit();
+        self.sets.deinit();
+        self.gems.deinit();
+        self.skills.deinit();
         self.arena.deinit();
     }
 

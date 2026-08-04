@@ -16,14 +16,25 @@ const PAGE = 65536;
 //   suffix_id     u16   @ 8
 //   rare_prefix   u16[3]@ 10 (10,12,14)
 //   rare_suffix   u16[3]@ 16 (16,18,20)
-//   sockets       u8    @ 22
-//   quantity      i32   @ 24  (aligned up from 23)
-//   item_level    i32   @ 28
-// total sizeof = 32 (already 4-aligned)
-const DROP = 32;
+//   rare_prefix_name u16 @ 22
+//   rare_suffix_name u16 @ 24
+//   unique_id     u16   @ 26
+//   set_id        u16   @ 28
+//   quality_id    u16   @ 30
+//   low_quality_id u16  @ 32
+//   auto_prefix_id u16  @ 34
+//   sockets       u8    @ 36
+//   ethereal      u8    @ 37
+//   quantity      i32   @ 40  (aligned up from 38)
+//   item_level    i32   @ 44
+//   item_seed     u32   @ 48
+// total sizeof = 52 (already 4-aligned)
+const DROP = 52;
 const OFF = {
   kind: 0, itemCode: 1, quality: 5, prefixId: 6, suffixId: 8,
-  rarePrefix: 10, rareSuffix: 16, sockets: 22, quantity: 24, itemLevel: 28,
+  rarePrefix: 10, rareSuffix: 16, rarePrefixName: 22, rareSuffixName: 24,
+  uniqueId: 26, setId: 28, qualityId: 30, lowQualityId: 32, autoPrefixId: 34,
+  sockets: 36, ethereal: 37, quantity: 40, itemLevel: 44, itemSeed: 48,
 } as const;
 const CAP = 64; // max drops per roll
 
@@ -38,10 +49,23 @@ export interface D2ItemDrop {
   suffixId: number;
   rarePrefixIds: number[];
   rareSuffixIds: number[];
+  /** RarePrefix/RareSuffix.txt rows (1-based) forming the item's rare NAME */
+  rarePrefixName: number;
+  rareSuffixName: number;
+  /** UniqueItems / SetItems / QualityItems / LowQualityItems rows (1-based, 0 = none) */
+  uniqueId: number;
+  setId: number;
+  qualityId: number;
+  lowQualityId: number;
+  /** MagicPrefix.txt row (1-based) of the base item's automagic affix */
+  autoPrefixId: number;
   sockets: number;
-  /** gold amount / quiver count */
+  ethereal: boolean;
+  /** gold amount / stack size */
   quantity: number;
   itemLevel: number;
+  /** low word of the item's mod seed — replays its property rolls */
+  itemSeed: number;
 }
 
 interface Exports {
@@ -77,9 +101,18 @@ function decodeDrops(memory: WebAssembly.Memory, base: number, count: number): D
       suffixId: dv.getUint16(b + OFF.suffixId, true),
       rarePrefixIds: [0, 1, 2].map((j) => dv.getUint16(b + OFF.rarePrefix + j * 2, true)),
       rareSuffixIds: [0, 1, 2].map((j) => dv.getUint16(b + OFF.rareSuffix + j * 2, true)),
+      rarePrefixName: dv.getUint16(b + OFF.rarePrefixName, true),
+      rareSuffixName: dv.getUint16(b + OFF.rareSuffixName, true),
+      uniqueId: dv.getUint16(b + OFF.uniqueId, true),
+      setId: dv.getUint16(b + OFF.setId, true),
+      qualityId: dv.getUint16(b + OFF.qualityId, true),
+      lowQualityId: dv.getUint16(b + OFF.lowQualityId, true),
+      autoPrefixId: dv.getUint16(b + OFF.autoPrefixId, true),
       sockets: u8[b + OFF.sockets],
+      ethereal: u8[b + OFF.ethereal] !== 0,
       quantity: dv.getInt32(b + OFF.quantity, true),
       itemLevel: dv.getInt32(b + OFF.itemLevel, true),
+      itemSeed: dv.getUint32(b + OFF.itemSeed, true),
     });
   }
   return out;

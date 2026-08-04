@@ -43,6 +43,11 @@ pub const Entry = struct {
     expansion_only: bool = false,
     /// "mul=" modifier — the gold quantity multiplier (nItemLinkNodeId), 0 = none.
     mul: i32 = 0,
+    /// TC_Unique (0x11) / TC_Set (0x12): the cell named a UniqueItems / SetItems `index` rather than a
+    /// base item code, so `name` has been resolved to that row's base item and the drop's quality plus
+    /// its exact row are forced — GAME_GetItemQuality never runs for these.
+    link_quality: model.Quality = .invalid,
+    link_id: u16 = 0,
 };
 
 pub const ParsedTC = struct {
@@ -87,6 +92,9 @@ pub const Pick = struct {
     code: []const u8, // item code (kind == .item); "gld" for gold
     quantity_mult: i32 = 0, // gold/quiver quantity multiplier (nItemLinkNodeId)
     mods: QualityMods,
+    /// Forced quality + 1-based UniqueItems/SetItems row for a TC unique/set link entry.
+    forced_quality: model.Quality = .invalid,
+    forced_id: u16 = 0,
 };
 
 pub const TCSet = struct {
@@ -150,11 +158,15 @@ pub fn build(gpa: std.mem.Allocator, t: *const tables.Tables) !TCSet {
             if (prob <= 0) continue; // TC_ParseTreasureClassEntry bails on Prob < 1
 
             const parsed = parseEntryField(field);
+            const link = resolveLink(t, parsed.code);
+            const code = if (link) |l| l.base_code else parsed.code;
             try b.add(a, .{
-                .name = try a.dupe(u8, parsed.code),
+                .name = try a.dupe(u8, code),
                 .prob = prob,
                 .mul = parsed.mul,
-                .expansion_only = entryIsExpansionOnly(t, &list, &by_name, parsed.code),
+                .link_quality = if (link) |l| l.quality else .invalid,
+                .link_id = if (link) |l| l.id else 0,
+                .expansion_only = if (link != null) true else entryIsExpansionOnly(t, &list, &by_name, parsed.code),
             });
         }
 
@@ -201,6 +213,23 @@ fn parseEntryField(field: []const u8) struct { code: []const u8, mul: i32 } {
         }
     }
     return .{ .code = code, .mul = mul };
+}
+
+/// TC_ParseTreasureClassEntry tries any cell of 5+ characters against the UniqueItems and then the
+/// SetItems link tables; a hit stores the row id plus that row's base item class and stamps the entry
+/// TC_Unique / TC_Set. (The monster link table it tries first drives body-part drops, which this
+/// package does not model.)
+fn resolveLink(t: *const tables.Tables, code: []const u8) ?struct { quality: model.Quality, id: u16, base_code: []const u8 } {
+    if (code.len < 5) return null;
+    for (0..t.unique_items.rowCount()) |row| {
+        if (!std.mem.eql(u8, t.unique_items.str(row, "index"), code)) continue;
+        return .{ .quality = .unique, .id = @intCast(row + 1), .base_code = t.unique_items.str(row, "code") };
+    }
+    for (0..t.set_items.rowCount()) |row| {
+        if (!std.mem.eql(u8, t.set_items.str(row, "index"), code)) continue;
+        return .{ .quality = .set, .id = @intCast(row + 1), .base_code = t.set_items.str(row, "item") };
+    }
+    return null;
 }
 
 /// TC_ParseTreasureClassEntry: a base item is expansion-only when its Items.txt
@@ -358,7 +387,14 @@ pub fn resolve(
         } else if (isGold(e.name)) {
             try out.append(gpa, .{ .kind = .gold, .code = "gld", .quantity_mult = e.mul, .mods = mods });
         } else {
-            try out.append(gpa, .{ .kind = .item, .code = e.name, .quantity_mult = e.mul, .mods = mods });
+            try out.append(gpa, .{
+                .kind = .item,
+                .code = e.name,
+                .quantity_mult = e.mul,
+                .mods = mods,
+                .forced_quality = e.link_quality,
+                .forced_id = e.link_id,
+            });
         }
     }
 }

@@ -36,19 +36,24 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const mf: i32 = if (a_mf) |m| try std.fmt.parseInt(i32, m, 10) else 0;
 
     var drop_seed = lib.Seed.init(seed_val, 0x29a);
-    const drops = try lib.rollDrop(gpa, &drop_seed, &t, &set, tc_name, mlvl, .{
+    var game_seed = lib.Seed.init(seed_val ^ 0x5eed, 0x29a);
+    const drops = try lib.rollDrop(gpa, &drop_seed, &game_seed, &t, &set, tc_name, mlvl, .{
         .magic_find = mf,
-        .item_seed_base = seed_val ^ 0x5eed,
     });
     defer gpa.free(drops);
 
     std.debug.print("seed={d} tc=\"{s}\" mlvl={d} mf={d} -> {d} drop(s):\n", .{ seed_val, tc_name, mlvl, mf, drops.len });
     for (drops, 0..) |d, i| {
         switch (d.kind) {
-            .gold => std.debug.print("  [{d}] gold\n", .{i}),
+            .gold => std.debug.print("  [{d}] {d} gold\n", .{ i, d.quantity }),
             .item => std.debug.print(
-                "  [{d}] {s} quality={s} pfx={d} sfx={d} rare_pfx={any} rare_sfx={any} sockets={d}\n",
-                .{ i, d.code(), @tagName(d.quality), d.prefix_id, d.suffix_id, d.rare_prefix_ids, d.rare_suffix_ids, d.sockets },
+                "  [{d}] {s} quality={s}{s} pfx={d} sfx={d} rare={d}/{d} rare_pfx={any} rare_sfx={any} uid={d} sid={d} qid={d} auto={d} sockets={d} qty={d}\n",
+                .{
+                    i,                  d.code(),           @tagName(d.quality),  if (d.ethereal) " ethereal" else "",
+                    d.prefix_id,        d.suffix_id,        d.rare_prefix_name,   d.rare_suffix_name,
+                    d.rare_prefix_ids,  d.rare_suffix_ids,  d.unique_id,          d.set_id,
+                    d.quality_id,       d.auto_prefix_id,   d.sockets,            d.quantity,
+                },
             ),
             else => std.debug.print("  [{d}] {s}\n", .{ i, @tagName(d.kind) }),
         }

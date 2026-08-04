@@ -18,10 +18,35 @@ pub const D2ItemDrop = extern struct {
     suffix_id: u16,
     rare_prefix_ids: [3]u16,
     rare_suffix_ids: [3]u16,
+    rare_prefix_name: u16,
+    rare_suffix_name: u16,
+    unique_id: u16,
+    set_id: u16,
+    quality_id: u16,
+    low_quality_id: u16,
+    auto_prefix_id: u16,
     sockets: u8,
+    ethereal: u8,
     quantity: i32,
     item_level: i32,
+    item_seed: u32,
 };
+
+// The layout d2item.h and the npm shims hard-code. Any field added or reordered above must move
+// these numbers too, so pin them here rather than discovering the mismatch at a call site.
+comptime {
+    const eq = std.debug.assert;
+    eq(@sizeOf(D2ItemDrop) == 52);
+    eq(@offsetOf(D2ItemDrop, "rare_prefix_ids") == 10);
+    eq(@offsetOf(D2ItemDrop, "rare_suffix_ids") == 16);
+    eq(@offsetOf(D2ItemDrop, "rare_prefix_name") == 22);
+    eq(@offsetOf(D2ItemDrop, "unique_id") == 26);
+    eq(@offsetOf(D2ItemDrop, "low_quality_id") == 32);
+    eq(@offsetOf(D2ItemDrop, "sockets") == 36);
+    eq(@offsetOf(D2ItemDrop, "ethereal") == 37);
+    eq(@offsetOf(D2ItemDrop, "quantity") == 40);
+    eq(@offsetOf(D2ItemDrop, "item_seed") == 48);
+}
 
 /// Opaque context: the loaded tables + treasure sets, built once. The C side only
 /// ever sees `*D2ItemCtx` (an opaque pointer).
@@ -77,9 +102,9 @@ export fn d2item_roll(
 
     const name: []const u8 = std.mem.span(tc_name);
     var drop_seed = lib.Seed.init(seed, 0x29a);
-    const drops = lib.rollDrop(a, &drop_seed, &c.tables, &c.set, name, mlvl, .{
+    var game_seed = lib.Seed.init(seed ^ 0x5eed, 0x29a);
+    const drops = lib.rollDrop(a, &drop_seed, &game_seed, &c.tables, &c.set, name, mlvl, .{
         .magic_find = mf,
-        .item_seed_base = seed ^ 0x5eed,
     }) catch return -3;
 
     const cap_us: usize = @intCast(cap);
@@ -95,14 +120,23 @@ export fn d2item_roll(
             .suffix_id = d.suffix_id,
             .rare_prefix_ids = d.rare_prefix_ids,
             .rare_suffix_ids = d.rare_suffix_ids,
+            .rare_prefix_name = d.rare_prefix_name,
+            .rare_suffix_name = d.rare_suffix_name,
+            .unique_id = d.unique_id,
+            .set_id = d.set_id,
+            .quality_id = d.quality_id,
+            .low_quality_id = d.low_quality_id,
+            .auto_prefix_id = d.auto_prefix_id,
             .sockets = d.sockets,
+            .ethereal = @intFromBool(d.ethereal),
             .quantity = d.quantity,
             .item_level = d.item_level,
+            .item_seed = d.item_seed,
         };
     }
     return @intCast(drops.len);
 }
 
 export fn d2item_abi_version() u32 {
-    return 1;
+    return 2;
 }
