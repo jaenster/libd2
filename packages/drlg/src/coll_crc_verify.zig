@@ -24,6 +24,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const testalloc = @import("testalloc.zig");
 
 const GOLDEN_NM_GZ = @embedFile("golden/coll_crc_masked_200.jsonl.gz");
 const GOLDEN_N_GZ = @embedFile("golden/coll_crc_masked_200_normal.jsonl.gz");
@@ -188,15 +189,21 @@ test "coll: masked-CRC holdout across seeds (all acts, Nightmare)" {
     // requested flag while the engine ran at Nightmare, because the setup-flag write had landed
     // on nDifficulty. Re-capturing at --diff=1 with the fixed probe reproduces this file
     // checksum-for-checksum, which is what identifies the difficulty it was really generated at.
-    try runCrcGate(std.testing.allocator, GOLDEN_NM_GZ, .nightmare, 2, "Nightmare");
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    try runCrcGate(mem.allocator(), GOLDEN_NM_GZ, .nightmare, 2, "Nightmare");
 }
 
 test "coll: masked-CRC holdout across seeds (all acts, Normal)" {
-    try runCrcGate(std.testing.allocator, GOLDEN_N_GZ, .normal, 0, "Normal");
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    try runCrcGate(mem.allocator(), GOLDEN_N_GZ, .normal, 0, "Normal");
 }
 
 test "coll: masked-CRC holdout across seeds (all acts, Hell)" {
-    try runCrcGate(std.testing.allocator, GOLDEN_H_GZ, .hell, 2, "Hell");
+    var mem: testalloc.Checked = .{};
+    defer mem.deinit();
+    try runCrcGate(mem.allocator(), GOLDEN_H_GZ, .hell, 2, "Hell");
 }
 
 // The whole difficulty axis in one assertion: the maze section count is the only DRLG input that
