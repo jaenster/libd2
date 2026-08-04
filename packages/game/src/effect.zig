@@ -76,6 +76,9 @@ pub const Effect = union(enum) {
     poison_dot: struct { target_guid: u32, skill_id: u16, level: i32 },
     /// Warp the caster to the act's town (Town Portal).
     warp_town,
+    /// Consume the nearest corpse to (x,y) and do a corpse skill: `.explode` = Corpse Explosion (fire+
+    /// physical AoE), `.poison_ring` = Poison Explosion (8-missile poison nova), `.revive` = Revive.
+    corpse_skill: struct { x: i32, y: i32, skill_id: u16, level: i32, kind: enum { explode, poison_ring, revive } },
     /// Move the caster to (x,y) (Leap / Whirlwind endpoint).
     reposition: struct { x: i32, y: i32 },
     /// A weapon attack on every hostile in an area. `sweep` = along the segment (from_x,from_y)->(x,y)

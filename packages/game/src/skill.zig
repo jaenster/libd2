@@ -714,6 +714,19 @@ pub fn resolve(
         buf[0] = .{ .elemental_area = .{ .skill_id = skill_id, .level = lvl, .x = caster_x, .y = caster_y, .radius = skills.evalCalc(book, 0, skill_id, lvl, "aurarangecalc"), .static = true } };
         return buf[0..1];
     }
+    // Corpse skills: consume the nearest corpse at the cast point (host finds it) and do the mechanic.
+    {
+        const kind: ?@FieldType(@FieldType(effect_mod.Effect, "corpse_skill"), "kind") = switch (sd.doFunc()) {
+            .corpse_explosion => .explode,
+            .poison_explosion => .poison_ring,
+            .revive_corpse_check => .revive,
+            else => null,
+        };
+        if (kind) |k| {
+            buf[0] = .{ .corpse_skill = .{ .x = target_x, .y = target_y, .skill_id = skill_id, .level = book.get(skill_id), .kind = k } };
+            return buf[0..1];
+        }
+    }
     // Curses (Necro curses; Inner Sight / Slow Missiles): a debuff over hostiles in radius.
     if (sd.doFunc() == .cast_curse_aoe or sd.doFunc() == .inner_sight) {
         const lvl = book.get(skill_id);
