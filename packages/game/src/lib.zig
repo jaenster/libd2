@@ -1,6 +1,6 @@
 //! d2-sim public library API — the faithful D2 1.14d runtime game SIMULATION.
 //!
-//! Sibling to the standalone content libs d2-drlg (map generation) and d2-items
+//! Sibling to the standalone content libs d2-drlg (map generation) and d2-item
 //! (item generation); d2-sim is the STATEFUL runtime that composes them. Same
 //! philosophy: faithful-to-Ghidra, pure Zig (no C, no @cImport), seeded +
 //! verifiable. Ported from the reconstructed 1.14d Game.exe (Ghidra 62fbfe69);
@@ -28,6 +28,7 @@ pub const monai = @import("monai.zig");
 pub const shrines = @import("shrines.zig");
 pub const effect = @import("effect.zig");
 pub const object = @import("object.zig");
+pub const events = @import("events.zig");
 pub const baal = @import("baal.zig");
 pub const character = @import("character.zig");
 pub const derive = @import("derive.zig");
@@ -103,6 +104,7 @@ test {
     _ = shrines;
     _ = effect;
     _ = object;
+    _ = events;
     _ = baal;
     _ = skills_barbarian;
     _ = skills_amazon;
