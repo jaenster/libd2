@@ -170,7 +170,7 @@ pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i3
     defer arena.deinit();
     const a = arena.allocator();
 
-    const result = try lib.generateActFull(ctx, a, act_no, seed, diff, deflate_fn, include_walk);
+    const result = try lib.generateActFull(ctx, a, act_no, seed, diff, .{ .deflate_fn = deflate_fn, .walk = include_walk });
 
     var out = try std.Io.Writer.Allocating.initCapacity(alloc, 1 << 16);
     errdefer out.deinit();
