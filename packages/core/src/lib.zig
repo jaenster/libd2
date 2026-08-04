@@ -11,6 +11,7 @@ const std = @import("std");
 pub const rng = @import("rng.zig");
 pub const stat = @import("stat.zig");
 pub const unit = @import("unit.zig");
+pub const skill = @import("skill.zig");
 pub const itemstatcost = @import("wire/itemstatcost.zig");
 pub const bitreader = @import("wire/bitreader.zig");
 pub const itemtypes = @import("wire/itemtypes.zig");
@@ -20,6 +21,7 @@ pub const itemtypes = @import("wire/itemtypes.zig");
 pub const wire = @import("wire/item.zig");
 
 pub const Seed = rng.Seed;
+pub const DoFunc = skill.DoFunc;
 pub const Stat = stat.Stat;
 pub const StatList = stat.StatList;
 pub const Unit = unit.Unit;
@@ -37,4 +39,5 @@ test {
     _ = itemtypes;
     _ = wire;
     _ = unit;
+    _ = skill;
 }
