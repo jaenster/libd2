@@ -5,8 +5,11 @@
 //! verifyActCollision the per-act tests use; it auto-detects which acts appear from the
 //! golden's level ids and generates each. Reports per-act masked-0x1F fidelity.
 //!
-//! Difficulty: the DRLG runs at Nightmare regardless of the game's marker (see the
-//! .nightmare note on the seed-1 Act-1 test), so we verify at .nightmare.
+//! Difficulty: every per-cell golden here is a NIGHTMARE capture, so we verify at .nightmare.
+//! Not by choice originally — d2probe wrote its bGameIsSetup flag onto D2GameStrc+109, which is
+//! nDifficulty, so the engine ran at Nightmare whatever --diff asked for. That is fixed, and a
+//! re-capture at --diff=1 reproduces these goldens exactly; the cross-seed CRC gate in
+//! coll_crc_verify.zig is where all three difficulties are covered.
 
 const std = @import("std");
 const lib = @import("lib.zig");
