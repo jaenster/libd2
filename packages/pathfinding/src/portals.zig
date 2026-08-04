@@ -49,6 +49,11 @@ pub const Link = struct {
     provenance: Provenance = .observed,
     /// True when the portal genuinely cannot be walked back through.
     one_way: bool = false,
+    /// Objects.txt class id of the object that MARKS this portal on the `from` level, when the map
+    /// data places one. Map generation emits no warp adjacency for a quest portal — correctly, you
+    /// cannot use it before the quest opens it — but the object is often present from the start, so
+    /// a router can still path a character to where the portal will be. Null where not established.
+    object_id: ?i32 = null,
     note: []const u8 = "",
 };
 
@@ -68,6 +73,8 @@ pub const PANDEMONIUM_FORTRESS: i32 = 103;
 pub const CHAOS_SANCTUM: i32 = 108;
 pub const HARROGATH: i32 = 109;
 pub const NIHLATHAKS_TEMPLE: i32 = 121;
+pub const THRONE_OF_DESTRUCTION: i32 = 131;
+pub const WORLDSTONE_CHAMBER: i32 = 132;
 
 /// The seven Tal Rasha tombs. Exactly one of them holds the orifice down to Duriel's Lair, and
 /// which one is decided per seed by quest data this package does not read — so all seven appear
@@ -105,19 +112,45 @@ pub const LINKS = blk: {
             .from = DURIELS_LAIR,
             .to = PANDEMONIUM_FORTRESS,
             .kind = .act_change,
+            // One way: it only exists once the boss is dead, and it is not a door you can walk
+            // back through. Leaving it bidirectional lets a router "progress" by going backwards
+            // through it -- e.g. reaching Mephisto from Duriel via the Pandemonium Fortress,
+            // skipping Act 3 altogether.
+            .one_way = true,
             .note = "Tyrael's portal, after Duriel.",
         },
         .{
             .from = DURANCE_OF_HATE_3,
             .to = PANDEMONIUM_FORTRESS,
             .kind = .act_change,
+            // One way: it only exists once the boss is dead, and it is not a door you can walk
+            // back through. Leaving it bidirectional lets a router "progress" by going backwards
+            // through it -- e.g. reaching Mephisto from Duriel via the Pandemonium Fortress,
+            // skipping Act 3 altogether.
+            .one_way = true,
             .note = "Mephisto's red portal over the Hellforge bridge.",
         },
         .{
             .from = CHAOS_SANCTUM,
             .to = HARROGATH,
             .kind = .act_change,
+            // One way: it only exists once the boss is dead, and it is not a door you can walk
+            // back through. Leaving it bidirectional lets a router "progress" by going backwards
+            // through it -- e.g. reaching Mephisto from Duriel via the Pandemonium Fortress,
+            // skipping Act 3 altogether.
+            .one_way = true,
             .note = "Tyrael's portal, after Diablo.",
+        },
+        .{
+            .from = THRONE_OF_DESTRUCTION,
+            .to = WORLDSTONE_CHAMBER,
+            .provenance = .table_implied,
+            .object_id = 563,
+            .note = "The portal Baal opens on dying. Levels.txt gives 131 Vis1=132 Warp1=82 and 132 " ++
+                "Vis0=131 Warp0=81, but map generation emits no adjacency for the pair and is right " ++
+                "not to: the portal does not exist until the quest opens it. Object 563 (\"The " ++
+                "Worldstone Chamber\", baals portal) IS placed in the Throne Room from the start, so " ++
+                "a character can be routed to the spot regardless.",
         },
         .{
             .from = ROGUE_ENCAMPMENT,

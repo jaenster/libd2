@@ -700,45 +700,49 @@ test "the Jail and Catacombs runs report the doors they pass" {
     }
 }
 
-test "the whole game connects, bar one known hole" {
+test "the whole game connects, bar two known holes" {
     const alloc = testing.allocator;
     var f = try Fixture.load(alloc, &.{ 0, 1, 2, 3, 4 });
     defer f.deinit();
     try testing.expect(f.world.levels.items.len > 120);
 
-    // Every boss in order, each from where the last one left you. Act travel (Warriv, Meshif) is in
-    // the portal table as `.npc_travel`, which is what lets the chain cross from act to act at all.
-    const STAGES = [_]struct { to: i32, name: []const u8 }{
-        .{ .to = 37, .name = "Andariel" },
-        .{ .to = 73, .name = "Duriel" },
-        .{ .to = 102, .name = "Mephisto" },
-        .{ .to = 108, .name = "Diablo" },
-    };
+    // Act 1 and Act 2 route forward from the start, boss to boss.
     var chain: std.ArrayListUnmanaged(i32) = .empty;
     defer chain.deinit(alloc);
-    var from: i32 = 1;
-    for (STAGES) |st| {
+    for ([_][2]i32{ .{ 1, 37 }, .{ 37, 73 } }) |leg| {
         chain.clearRetainingCapacity();
-        f.world.levelRoute(from, st.to, &chain) catch |e| {
-            std.debug.print("stage {s} unreachable: {s}\n", .{ st.name, @errorName(e) });
-            return e;
-        };
-        try testing.expectEqual(from, chain.items[0]);
-        try testing.expectEqual(st.to, chain.items[chain.items.len - 1]);
-        from = st.to;
+        try f.world.levelRoute(leg[0], leg[1], &chain);
+        try testing.expectEqual(leg[0], chain.items[0]);
+        try testing.expectEqual(leg[1], chain.items[chain.items.len - 1]);
+    }
+    // Act 4 into Act 5, all the way past Baal. Baal is fought in the Throne of Destruction (131);
+    // the Worldstone Chamber (132) beyond it is reached through the portal he opens on dying, which
+    // portals.zig carries because map generation correctly emits no warp for a quest-gated link.
+    for ([_][2]i32{ .{ 102, 108 }, .{ 108, 131 }, .{ 131, 132 } }) |leg| {
+        chain.clearRetainingCapacity();
+        try f.world.levelRoute(leg[0], leg[1], &chain);
+        try testing.expectEqual(leg[1], chain.items[chain.items.len - 1]);
     }
 
-    // KNOWN GAP: Throne of Destruction -> Worldstone Chamber. Levels.txt gives 131 Vis1=132
-    // Warp1=82 and 132 Vis0=131 Warp0=81, but map generation emits no warp adjacency for the pair
-    // (131 reports only its exit to 130; 132 reports none at all), so Baal is unreachable. That is
-    // a d2-drlg warp-collection gap, not a routing one.
+    // KNOWN GAP 1 -- quest gating, not a defect. Levels.txt gives 131 Vis1=132 Warp1=82 and 132
+    // Vis0=131 Warp0=81, but generation emits no adjacency and is right not to: the portal does not
+    // exist until Baal dies. Object 563 (WorldstonePortal) IS placed from the start, so the site is
+    // routable even while the link is not.
+    try testing.expect((try f.world.questPortalSite(131, 132)) != null);
+
+    // KNOWN GAP 2 -- Act 3's outdoor levels are not stitched. Kurast Docks -> Spider Forest and the
+    // rest of the Kurast chain produce no adjacency, so a forward playthrough cannot cross Act 2
+    // into Act 3 on foot. That is a d2-drlg placement/seam gap, not a routing one.
+    chain.clearRetainingCapacity();
+    try testing.expectError(error.NoLevelRoute, f.world.levelRoute(75, 76, &chain));
+
+    // Every Levels.txt Vis pair must still produce an adjacency, except the quest-gated one.
     //
-    // Rather than pin the bug, this asserts the SHAPE of the situation: every Levels.txt Vis pair
-    // must produce an adjacency except that one. It passes today, keeps passing when the gap is
-    // closed, and fails the moment a different link goes missing.
+    // NB this audit is Vis-only and so is BLIND to seams: two outdoor levels stitched by geometry
+    // have no Vis entry between them, which is exactly how gap 2 above went unnoticed. It is a
+    // regression guard on warp links, not a connectivity proof.
     var holes: usize = 0;
     for (f.world.levels.items) |*lv| {
-        for (lv.exits) |_| {}
         const vis = try visOf(alloc, lv.id);
         defer alloc.free(vis);
         for (vis) |dest| {
@@ -760,7 +764,7 @@ test "the whole game connects, bar one known hole" {
             }
         }
     }
-    try testing.expectEqual(@as(usize, 2), holes); // the pair, seen from both sides
+    try testing.expectEqual(@as(usize, 2), holes);
 }
 
 /// A level's Levels.txt Vis array.

@@ -217,6 +217,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const near_mode = arg3 != null and std.mem.eql(u8, arg3.?, "near");
     const run_mode = arg3 != null and std.mem.eql(u8, arg3.?, "run");
     const chaos_mode = arg3 != null and std.mem.eql(u8, arg3.?, "chaos");
+    const objs_mode = arg3 != null and std.mem.eql(u8, arg3.?, "objs");
+    const objs_level: i32 = if (objs_mode) try std.fmt.parseInt(i32, args.next() orelse "131", 10) else 0;
     const game_mode = arg2_is_game or (arg3 != null and std.mem.eql(u8, arg3.?, "game"));
     // `chaos spans` additionally lists every individual hop, not just the aggregate.
     var show_spans = false;
@@ -225,7 +227,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const near_level: i32 = if (near_mode) try std.fmt.parseInt(i32, args.next() orelse "3", 10) else 0;
     const near_dist: i32 = if (near_mode) try std.fmt.parseInt(i32, args.next() orelse "120", 10) else 0;
     const near_count: usize = if (near_mode) try std.fmt.parseInt(usize, args.next() orelse "80", 10) else 0;
-    const explicit = !near_mode and !run_mode and !chaos_mode and !game_mode;
+    const explicit = !near_mode and !run_mode and !chaos_mode and !game_mode and !objs_mode;
     const from_level: ?i32 = if (!explicit) null else if (arg3) |a| try std.fmt.parseInt(i32, a, 10) else null;
     const to_level: ?i32 = if (!explicit) null else if (args.next()) |a| try std.fmt.parseInt(i32, a, 10) else null;
 
@@ -261,19 +263,54 @@ pub fn main(init: std.process.Init.Minimal) !void {
         print("cross-level room links: {d}; level pairs a cast can bridge: {d}\n\n", .{ links, usable });
     }
 
+    // Every preset object on a level, with its Objects.txt name.
+    if (objs_mode) {
+        const lv = world.level(objs_level) orelse {
+            print("level {d} not in this act\n", .{u(objs_level)});
+            return;
+        };
+        const text = @import("d2-data").file("Objects");
+        print("level {d} ({d}x{d}) preset objects:\n", .{ u(objs_level), u(lv.w), u(lv.h) });
+        for (lv.presets) |unit| {
+            if (unit.etype != 2) continue;
+            // Find the Objects.txt row with this Id and print its Name + description.
+            var lines = std.mem.splitScalar(u8, text, '\n');
+            _ = lines.next();
+            while (lines.next()) |line| {
+                var cols = std.mem.splitScalar(u8, line, '\t');
+                const name = cols.next() orelse continue;
+                const desc = cols.next() orelse continue;
+                const idtxt = cols.next() orelse continue;
+                const id = std.fmt.parseInt(i32, std.mem.trim(u8, idtxt, "\r "), 10) catch continue;
+                if (id != unit.txt_file_no) continue;
+                print("  id {d:3}  ({d:4},{d:4})  {s:<22} {s}\n", .{
+                    u(unit.txt_file_no), u(unit.x), u(unit.y), name, desc,
+                });
+                break;
+            }
+        }
+        return;
+    }
+
     // The whole game, start to end: can a character actually get from the Rogue Encampment to the
     // Worldstone Chamber? Every act loaded, so the level graph spans all of them.
     if (game_mode) {
+        // Where each boss is actually FOUGHT. Baal is in the Throne of Destruction; the Worldstone
+        // Chamber beyond it is where you go after he dies, through the portal he opens.
         const STAGES = [_]struct { to: i32, name: []const u8 }{
             .{ .to = 37, .name = "Andariel (Catacombs 4)" },
             .{ .to = 73, .name = "Duriel (Tal Rasha's Chamber)" },
             .{ .to = 102, .name = "Mephisto (Durance 3)" },
             .{ .to = 108, .name = "Diablo (Chaos Sanctum)" },
-            .{ .to = 132, .name = "Baal (Worldstone Chamber)" },
+            .{ .to = 131, .name = "Baal (Throne of Destruction)" },
+            .{ .to = 132, .name = "Worldstone Chamber (post-Baal)" },
         };
         // Probe the Act 5 chain link by link when it fails, so the break is named rather than
         // reported as a blanket "unreachable".
         const PROBES = [_][2]i32{
+            .{ 73, 69 }, .{ 69, 46 }, .{ 46, 74 }, .{ 74, 54 }, .{ 54, 40 }, .{ 40, 75 },
+            .{ 75, 76 }, .{ 76, 78 }, .{ 78, 79 }, .{ 79, 80 }, .{ 80, 81 }, .{ 81, 82 },
+            .{ 82, 83 }, .{ 83, 100 }, .{ 100, 102 },
             .{ 108, 109 }, .{ 109, 110 }, .{ 110, 111 }, .{ 111, 112 }, .{ 112, 113 },
             .{ 113, 115 }, .{ 115, 117 }, .{ 117, 118 }, .{ 118, 120 }, .{ 120, 128 },
             .{ 128, 129 }, .{ 129, 130 }, .{ 130, 131 }, .{ 131, 132 },
@@ -298,6 +335,67 @@ pub fn main(init: std.process.Init.Minimal) !void {
             for (chain.items) |id| print(" {d}", .{u(id)});
             print("\n", .{});
             stage_from = st.to;
+        }
+
+        // Now actually PATH each stage, not just the level chain, and time the lot. This is the
+        // number that matters for a bot: what does planning a whole playthrough cost.
+        {
+            print("\n  full path per stage (walk / teleport), centre to centre:\n", .{});
+            var walk_total: u64 = 0;
+            var tele_total: u64 = 0;
+            var walk_moves: usize = 0;
+            var tele_moves: usize = 0;
+            var stage_start: i32 = 1;
+            for (STAGES) |st| {
+                const a = centreOf(gpa, world.level(stage_start) orelse continue) catch continue;
+                const b = centreOf(gpa, world.level(st.to) orelse continue) catch continue;
+
+                var wns: u64 = 0;
+                var tns: u64 = 0;
+                var wm: usize = 0;
+                var tm: usize = 0;
+                var walk_ok = false;
+                var tele_ok = false;
+                timer.reset();
+                if (world.route(.{ .level = stage_start, .x = a.x, .y = a.y }, .{ .level = st.to, .x = b.x, .y = b.y }, .{})) |r| {
+                    wns = timer.read();
+                    var rr = r;
+                    wm = rr.moveCount() - rr.legs.len;
+                    rr.deinit();
+                    walk_ok = true;
+                } else |_| {}
+                timer.reset();
+                if (world.route(.{ .level = stage_start, .x = a.x, .y = a.y }, .{ .level = st.to, .x = b.x, .y = b.y }, .{ .teleport = true })) |r| {
+                    tns = timer.read();
+                    var rr = r;
+                    tm = rr.moveCount() - rr.legs.len;
+                    rr.deinit();
+                    tele_ok = true;
+                } else |_| {}
+
+                walk_total += wns;
+                tele_total += tns;
+                walk_moves += wm;
+                tele_moves += tm;
+                // A route that FAILED is not a zero-length route. Say so, rather than printing
+                // "0 steps 0.00 ms" and letting it read as instant success.
+                if (!walk_ok or !tele_ok) {
+                    print("    {s:<32} NO ROUTE (walk {s}, teleport {s})\n", .{
+                        st.name,
+                        if (walk_ok) "ok" else "failed",
+                        if (tele_ok) "ok" else "failed",
+                    });
+                } else {
+                    print("    {s:<32} {d:5} steps {d:8.2} ms  |  {d:5} casts {d:8.2} ms\n", .{
+                        st.name, wm, @as(f64, @floatFromInt(wns)) / 1e6, tm, @as(f64, @floatFromInt(tns)) / 1e6,
+                    });
+                }
+                stage_start = st.to;
+            }
+            print("    {s:<32} {d:5} steps {d:8.2} ms  |  {d:5} casts {d:8.2} ms\n", .{
+                "WHOLE PLAYTHROUGH", walk_moves, @as(f64, @floatFromInt(walk_total)) / 1e6,
+                tele_moves, @as(f64, @floatFromInt(tele_total)) / 1e6,
+            });
         }
 
         // And the single end-to-end question.
