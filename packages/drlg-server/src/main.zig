@@ -17,14 +17,15 @@ const net = std.Io.net;
 
 const default_port: u16 = 8080;
 
-// Native libz (system zlib) collision-deflate. The server links libz (+libc), so it can
-// swap the pure-Zig `std.compress.flate` compressor the library uses by default for the
-// far faster C zlib — roughly halving whole-act request latency. The library + wasm build
-// never see this: it is injected as `drlg.DeflateFn` only from this native binary.
-const Z_BEST_SPEED: c_int = 1;
-const Z_OK: c_int = 0;
-extern "c" fn compressBound(sourceLen: c_ulong) c_ulong;
-extern "c" fn compress2(dest: [*]u8, destLen: *c_ulong, source: [*]const u8, sourceLen: c_ulong, level: c_int) c_int;
+// Native libdeflate collision-deflate. The server links libdeflate (+libc), so it can swap
+// the pure-Zig `std.compress.flate` compressor the library uses by default for a C one. The
+// library + wasm build never see this: it is injected as `drlg.DeflateFn` only from here.
+// Level 1 on real act CollMaps: 1.4 GB/s vs zlib level 1's 0.9 GB/s, output 36% smaller.
+const deflate_level: c_int = 1;
+const Compressor = opaque {};
+extern "c" fn libdeflate_alloc_compressor(compression_level: c_int) ?*Compressor;
+extern "c" fn libdeflate_zlib_compress(c: *Compressor, in: [*]const u8, in_nbytes: usize, out: [*]u8, out_nbytes_avail: usize) usize;
+extern "c" fn libdeflate_zlib_compress_bound(c: ?*Compressor, in_nbytes: usize) usize;
 
 // std.time.Timer/Instant/std.time.nanoTimestamp are gone in this Zig, and std.posix has no
 // clock_gettime wrapper here — but the binary links libc, so pull the C clock_gettime in
@@ -37,6 +38,14 @@ fn monoUs() i64 {
     var ts: std.posix.timespec = undefined;
     _ = clock_gettime(std.posix.CLOCK.MONOTONIC, &ts);
     return @as(i64, ts.sec) * 1_000_000 + @divTrunc(@as(i64, ts.nsec), 1000);
+}
+
+/// Monotonic nanoseconds — the clock the drlg lib's phase timers borrow (it links no libc of
+/// its own). Installed in `main`; `GET /api/prof` reads and resets the accumulated totals.
+fn monoNs() i64 {
+    var ts: std.posix.timespec = undefined;
+    _ = clock_gettime(std.posix.CLOCK.MONOTONIC, &ts);
+    return @as(i64, ts.sec) * 1_000_000_000 + @as(i64, ts.nsec);
 }
 
 /// Wall-clock unix milliseconds — for the log line's "ts" field.
@@ -84,12 +93,30 @@ fn logReq(method: []const u8, path: []const u8, status: u16, bytes: usize, us: i
 /// producing an rfc1950 zlib-container stream that inflates back to `raw` byte-for-byte —
 /// the drop-in native `drlg.DeflateFn` for `renderJson`/`renderLevelJson`.
 fn zlibDeflate(alloc: std.mem.Allocator, raw: []const u8) anyerror![]u8 {
-    var bound: c_ulong = compressBound(@intCast(raw.len));
-    const dest = try alloc.alloc(u8, @intCast(bound));
-    errdefer alloc.free(dest);
-    if (compress2(dest.ptr, &bound, raw.ptr, @intCast(raw.len), Z_BEST_SPEED) != Z_OK) return error.ZlibCompress;
-    return dest[0..@intCast(bound)];
+    // Compress into a per-worker scratch buffer, then hand back only the bytes that were
+    // actually produced. Compressing straight into `alloc` would put a bound-sized slab
+    // (~raw.len, i.e. megabytes per level) into the request arena, which never shrinks a
+    // returned slice — 40x the memory for the same result.
+    const comp = zcomp orelse blk: {
+        const c = libdeflate_alloc_compressor(deflate_level) orelse return error.DeflateInit;
+        zcomp = c;
+        break :blk c;
+    };
+    const bound = libdeflate_zlib_compress_bound(comp, raw.len);
+    if (zbuf.len < bound) {
+        if (zbuf.len != 0) std.heap.page_allocator.free(zbuf);
+        zbuf = try std.heap.page_allocator.alloc(u8, bound);
+    }
+    const n = libdeflate_zlib_compress(comp, raw.ptr, raw.len, zbuf.ptr, zbuf.len);
+    if (n == 0) return error.DeflateFailed;
+    return alloc.dupe(u8, zbuf[0..n]);
 }
+
+/// Per-worker deflate state: one compressor (it holds internal match tables — allocating it
+/// per level would cost more than the compression) and a scratch buffer grown to the largest
+/// level seen. Both live for the worker's lifetime.
+threadlocal var zcomp: ?*Compressor = null;
+threadlocal var zbuf: []u8 = &.{};
 
 pub fn main(init: std.process.Init) !void {
     // `io` (a shared, thread-safe std.Io.Threaded) and `gpa` come from the runtime. gpa is
@@ -125,6 +152,8 @@ pub fn main(init: std.process.Init) !void {
     // on first build; after warmup every concurrent gen just READS them, so per-worker gens
     // (own Ctx + own thread-local pool) never race on shared build state.
     prewarm(gpa) catch |e| std.debug.print("drlg-server: prewarm failed: {s}\n", .{@errorName(e)});
+    // After prewarm, so the one-time table builds don't land in the phase totals.
+    drlg.prof.clock = &monoNs;
 
     logLine("{{\"level\":\"info\",\"msg\":\"listening\",\"port\":{d},\"workers\":{d}}}\n", .{ port, want });
 
@@ -225,6 +254,20 @@ fn handleRequest(gpa: std.mem.Allocator, ctx: *drlg.Ctx, request: *std.http.Serv
         // drown the access log). Everything else is still logged below.
         const body = "ok";
         return request.respond(body, .{ .extra_headers = &.{text_ct} });
+    }
+    if (std.mem.eql(u8, path, "/api/prof")) {
+        // Cumulative per-phase nanoseconds since the last read; reading resets them, so a
+        // benchmark can bracket a run. Only meaningful with --threads 1 (the totals are a
+        // process-wide sum, so concurrent requests interleave into the same buckets).
+        var buf: [512]u8 = undefined;
+        var w = std.Io.Writer.fixed(&buf);
+        w.writeByte('{') catch {};
+        inline for (@typeInfo(drlg.prof.Phase).@"enum".fields, 0..) |f, i| {
+            w.print("{s}\"{s}\":{d}", .{ if (i == 0) "" else ",", f.name, drlg.prof.get(@enumFromInt(f.value)) }) catch {};
+        }
+        w.writeAll("}\n") catch {};
+        drlg.prof.reset();
+        return request.respond(w.buffered(), .{ .extra_headers = &.{json_ct} });
     }
     if (!std.mem.eql(u8, path, "/api/render")) {
         const body = "not found\n";

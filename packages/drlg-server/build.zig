@@ -21,9 +21,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addImport("d2-drlg", drlg.module("d2-drlg"));
-    // Native libz for the fast collision-deflate (server binary only — the d2-drlg library
-    // and its wasm build stay libc/libz-free; they use the pure-Zig std.compress.flate).
-    exe.root_module.linkSystemLibrary("z", .{});
+    // Native libdeflate for the collision-deflate (server binary only — the d2-drlg library
+    // and its wasm build stay libc-free; they use the pure-Zig std.compress.flate). Measured
+    // on real act CollMaps: 1.5x the throughput of zlib level 1 AND 36% smaller output, and
+    // deflate is the single biggest phase of a whole-act render.
+    exe.root_module.linkSystemLibrary("deflate", .{ .use_pkg_config = .yes });
     exe.root_module.link_libc = true;
     b.installArtifact(exe);
 
