@@ -41,7 +41,13 @@ pub const Move = struct {
     y: i32,
     kind: Kind,
 
-    pub const Kind = enum { walk, teleport };
+    pub const Kind = enum {
+        walk,
+        teleport,
+        /// Arrived by stepping on a teleport pad. `x`/`y` is where you COME OUT; the previous move
+        /// is the pad you stepped on. See `level.Pad`.
+        pad,
+    };
 };
 
 /// A door a route passes: which leg, which waypoint it is nearest, and the door itself.
@@ -158,6 +164,8 @@ pub const World = struct {
     /// Parsed once at first load rather than transcribed, so a data change cannot leave a stale
     /// hardcoded list behind.
     door_fn: []i16 = &.{},
+    /// Objects.txt ids whose `OperateFn` is 27 — the teleport pads. Indexed by class id.
+    pad_class: []bool = &.{},
 
     pub fn init(alloc: std.mem.Allocator, seed: u32, difficulty: drlg.Difficulty) World {
         return .{
@@ -175,6 +183,7 @@ pub const World = struct {
         self.pather.deinit();
         if (self.teleport_rule.len != 0) self.alloc.free(self.teleport_rule);
         if (self.door_fn.len != 0) self.alloc.free(self.door_fn);
+        if (self.pad_class.len != 0) self.alloc.free(self.pad_class);
         self.* = undefined;
     }
 
@@ -188,6 +197,7 @@ pub const World = struct {
     pub fn loadAct(self: *World, ctx: *drlg.Ctx, act_no: i32) !void {
         if (self.teleport_rule.len == 0) self.teleport_rule = try parseTeleportColumn(self.alloc);
         if (self.door_fn.len == 0) self.door_fn = try parseDoorClasses(self.alloc);
+        if (self.pad_class.len == 0) self.pad_class = try parsePadClasses(self.alloc);
 
         var full = try drlg.generateActFull(ctx, self.alloc, act_no, self.seed, self.difficulty, .{
             .room_links = true,
@@ -251,6 +261,8 @@ pub const World = struct {
         errdefer self.alloc.free(links);
         const presets = try self.alloc.dupe(drlg.PresetUnit, lf.presets);
         errdefer self.alloc.free(presets);
+        const pads = try self.buildPads(presets, &room_set);
+        errdefer self.alloc.free(pads);
 
         const id = lf.meta.level_id;
         try self.levels.append(self.alloc, .{
@@ -262,6 +274,7 @@ pub const World = struct {
             .cells = cells,
             .rooms = room_set,
             .links = links,
+            .pads = pads,
             .presets = presets,
             .exits = exits,
             .teleport = self.teleportRuleFor(id),
@@ -688,9 +701,138 @@ pub const World = struct {
         return self.walkWithin(lv, from, to, opts, snap_from, snap_to, out);
     }
 
-    fn walkWithin(
+    /// Pair this level's teleport pads the way `OBJOP_RevealAutomapArea` (0x581bf0) does: for each
+    /// pad, another object of the SAME class id, preferring one in its own room and otherwise
+    /// taking one in an adjacent room.
+    ///
+    /// The engine walks a room's live unit list and takes the first match, an order we cannot
+    /// reproduce from preset data. It does not matter: every (room, class id) group in the Arcane
+    /// Sanctuary holds exactly two pads across every seed tested, so there is never a choice to
+    /// make. If that ever stops holding, this picks the first in DS1 order and the route may take
+    /// a different pad than the server would.
+    fn buildPads(self: *World, presets: []const drlg.PresetUnit, room_set: *const rooms_mod.RoomSet) ![]level_mod.Pad {
+        var out: std.ArrayListUnmanaged(level_mod.Pad) = .empty;
+        errdefer out.deinit(self.alloc);
+
+        for (presets, 0..) |p, i| {
+            if (p.etype != 2) continue;
+            const cid = p.txt_file_no;
+            if (cid < 0 or @as(usize, @intCast(cid)) >= self.pad_class.len) continue;
+            if (!self.pad_class[@intCast(cid)]) continue;
+            const my_room = room_set.atSubtile(p.x, p.y) orelse continue;
+
+            var same: ?Point = null;
+            var near: ?Point = null;
+            for (presets, 0..) |q, j| {
+                if (i == j or q.etype != 2 or q.txt_file_no != cid) continue;
+                const qr = room_set.atSubtile(q.x, q.y) orelse continue;
+                if (qr == my_room) {
+                    same = .{ .x = q.x, .y = q.y };
+                    break;
+                }
+                if (near == null and room_set.canTeleportBetween(my_room, qr)) near = .{ .x = q.x, .y = q.y };
+            }
+            const to = same orelse near orelse continue;
+            try out.append(self.alloc, .{ .at = .{ .x = p.x, .y = p.y }, .to = to, .class_id = cid });
+        }
+        return out.toOwnedSlice(self.alloc);
+    }
+
+    /// Walk `from` to `to` using this level's pads when plain ground cannot get there.
+    ///
+    /// Returns false when the pads are no help — same walkable region, or no chain of pads joins
+    /// the two — and the caller falls back to a straight A*. The search is over REGIONS rather
+    /// than cells: a pad is only interesting when it leaves the region you are standing in, and
+    /// there are tens of pads against millions of cells, so a breadth-first walk over the region
+    /// graph finds the fewest-pads route immediately and each segment is then one ordinary A*.
+    fn padRoute(
         self: *World,
         lv: *Level,
+        pm: *grid.PassMap,
+        from: Point,
+        to: Point,
+        opts: Options,
+        snap_from: i32,
+        snap_to: i32,
+        out: *std.ArrayListUnmanaged(Move),
+    ) Error!bool {
+        const comp = try pm.components(self.alloc);
+        const start = grid.nearestPassable(pm, from.x, from.y, snap_from) orelse return false;
+        const goal = grid.nearestPassable(pm, to.x, to.y, snap_to) orelse return false;
+        const start_c = comp[pm.index(start.x, start.y)];
+        const goal_c = comp[pm.index(goal.x, goal.y)];
+        if (start_c == goal_c or start_c == grid.PassMap.NO_COMPONENT) return false;
+
+        // Region each end of each pad lands in. A pad whose either end has no reachable ground
+        // nearby is unusable, and is dropped rather than left to fail mid-route.
+        const Hop = struct { pad: level_mod.Pad, from_c: u32, to_c: u32, land: Point };
+        var hops: std.ArrayListUnmanaged(Hop) = .empty;
+        defer hops.deinit(self.alloc);
+        for (lv.pads) |pad| {
+            const a = grid.nearestPassable(pm, pad.at.x, pad.at.y, 8) orelse continue;
+            const b = grid.nearestPassable(pm, pad.to.x, pad.to.y, 8) orelse continue;
+            try hops.append(self.alloc, .{
+                .pad = pad,
+                .from_c = comp[pm.index(a.x, a.y)],
+                .to_c = comp[pm.index(b.x, b.y)],
+                .land = b,
+            });
+        }
+
+        // Breadth-first over regions; prev[i] is the hop that first reached hops[i].to_c.
+        var queue: std.ArrayListUnmanaged(u32) = .empty;
+        defer queue.deinit(self.alloc);
+        var seen: std.AutoHashMapUnmanaged(u32, usize) = .empty;
+        defer seen.deinit(self.alloc);
+        try queue.append(self.alloc, start_c);
+        try seen.put(self.alloc, start_c, std.math.maxInt(usize));
+
+        var head: usize = 0;
+        var reached: ?usize = null;
+        while (head < queue.items.len and reached == null) : (head += 1) {
+            const cur = queue.items[head];
+            for (hops.items, 0..) |h, hi| {
+                if (h.from_c != cur or seen.contains(h.to_c)) continue;
+                try seen.put(self.alloc, h.to_c, hi);
+                if (h.to_c == goal_c) {
+                    reached = hi;
+                    break;
+                }
+                try queue.append(self.alloc, h.to_c);
+            }
+        }
+        const last = reached orelse return false;
+
+        // Unwind to a forward-ordered chain of hops.
+        var chain: std.ArrayListUnmanaged(usize) = .empty;
+        defer chain.deinit(self.alloc);
+        var walk_hi = last;
+        while (true) {
+            try chain.append(self.alloc, walk_hi);
+            const prev = seen.get(hops.items[walk_hi].from_c) orelse break;
+            if (prev == std.math.maxInt(usize)) break;
+            walk_hi = prev;
+        }
+        std.mem.reverse(usize, chain.items);
+
+        // Materialise: ground to the pad, the hop itself, ground on from where it drops you.
+        var cur_from = from;
+        var cur_snap = snap_from;
+        for (chain.items) |hi| {
+            const h = hops.items[hi];
+            try self.walkPlain(lv, pm, cur_from, h.pad.at, opts, cur_snap, 8, out);
+            try out.append(self.alloc, .{ .x = h.land.x, .y = h.land.y, .kind = .pad });
+            cur_from = h.land;
+            cur_snap = 0;
+        }
+        try self.walkPlain(lv, pm, cur_from, to, opts, cur_snap, snap_to, out);
+        return true;
+    }
+
+    fn walkPlain(
+        self: *World,
+        lv: *Level,
+        pm: *grid.PassMap,
         from: Point,
         to: Point,
         opts: Options,
@@ -698,7 +840,7 @@ pub const World = struct {
         snap_to: i32,
         out: *std.ArrayListUnmanaged(Move),
     ) Error!void {
-        const pm = try lv.passMap(opts.mask);
+        _ = lv;
         var pts: std.ArrayListUnmanaged(Point) = .empty;
         defer pts.deinit(self.alloc);
         try self.pather.find(pm, from.x, from.y, to.x, to.y, .{
@@ -710,6 +852,30 @@ pub const World = struct {
             .max_nodes = opts.max_nodes,
         }, &pts);
         for (pts.items) |p| try out.append(self.alloc, .{ .x = p.x, .y = p.y, .kind = .walk });
+    }
+
+    fn walkWithin(
+        self: *World,
+        lv: *Level,
+        from: Point,
+        to: Point,
+        opts: Options,
+        snap_from: i32,
+        snap_to: i32,
+        out: *std.ArrayListUnmanaged(Move),
+    ) Error!void {
+        const pm = try lv.passMap(opts.mask);
+        if (lv.pads.len != 0) {
+            const mark = out.items.len;
+            if (self.padRoute(lv, pm, from, to, opts, snap_from, snap_to, out)) |used| {
+                if (used) return;
+            } else |e| {
+                out.shrinkRetainingCapacity(mark);
+                return e;
+            }
+            out.shrinkRetainingCapacity(mark);
+        }
+        try self.walkPlain(lv, pm, from, to, opts, snap_from, snap_to, out);
     }
 };
 
@@ -806,6 +972,50 @@ fn parseTeleportColumn(alloc: std.mem.Allocator) ![]level_mod.TeleportRule {
 /// but secret doors (18), the Act 3 slime doors (29) and Tyrael's door (0) are doors too, and a
 /// route should mention them. "TrappDoor" is excluded by the exact-name match — it is a level
 /// transition, not something you open.
+/// Objects.txt ids with `OperateFn` 27, indexed by class id. Exactly four rows have it and all
+/// four are teleport pads (192, 304, 305, 306), so the column IS the selector — no name matching
+/// needed and no false positives to filter.
+fn parsePadClasses(alloc: std.mem.Allocator) ![]bool {
+    const text = d2data.file("Objects");
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    const header = lines.next() orelse return error.InvalidTable;
+
+    var id_col: ?usize = null;
+    var fn_col: ?usize = null;
+    {
+        var cols = std.mem.splitScalar(u8, header, '\t');
+        var i: usize = 0;
+        while (cols.next()) |c| : (i += 1) {
+            const name = std.mem.trim(u8, c, "\r");
+            if (std.mem.eql(u8, name, "Id")) id_col = i;
+            if (std.mem.eql(u8, name, "OperateFn")) fn_col = i;
+        }
+    }
+    const idc = id_col orelse return error.InvalidTable;
+    const fc = fn_col orelse return error.InvalidTable;
+
+    var out: std.ArrayListUnmanaged(bool) = .empty;
+    errdefer out.deinit(alloc);
+    while (lines.next()) |line| {
+        if (std.mem.trim(u8, line, "\r \t").len == 0) continue;
+        var cols = std.mem.splitScalar(u8, line, '\t');
+        var i: usize = 0;
+        var id: ?i32 = null;
+        var ofn: i16 = -1;
+        while (cols.next()) |c| : (i += 1) {
+            const v = std.mem.trim(u8, c, "\r ");
+            if (i == idc) id = std.fmt.parseInt(i32, v, 10) catch null;
+            if (i == fc) ofn = std.fmt.parseInt(i16, v, 10) catch -1;
+        }
+        const cid = id orelse continue;
+        if (cid < 0) continue;
+        const want: usize = @intCast(cid + 1);
+        if (out.items.len < want) try out.appendNTimes(alloc, false, want - out.items.len);
+        if (ofn == 27) out.items[@intCast(cid)] = true;
+    }
+    return out.toOwnedSlice(alloc);
+}
+
 fn parseDoorClasses(alloc: std.mem.Allocator) ![]i16 {
     const text = d2data.file("Objects");
     var lines = std.mem.splitScalar(u8, text, '\n');
