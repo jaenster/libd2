@@ -79,6 +79,9 @@ pub const Effect = union(enum) {
     /// Consume the nearest corpse to (x,y) and do a corpse skill: `.explode` = Corpse Explosion (fire+
     /// physical AoE), `.poison_ring` = Poison Explosion (8-missile poison nova), `.revive` = Revive.
     corpse_skill: struct { x: i32, y: i32, skill_id: u16, level: i32, kind: enum { explode, poison_ring, revive } },
+    /// Spawn the skill's missiles from (x,y) toward (tx,ty): `.spiral` = Blessed Hammer grid, `.spread`
+    /// = a `count`-projectile fan (Multiple Shot / Charged Bolt / Guided Arrow, `homing` = seeking).
+    spawn_missiles: struct { skill_id: u16, level: i32, x: i32, y: i32, tx: i32, ty: i32, count: u8, homing: bool, kind: enum { spiral, spread } },
     /// Move the caster to (x,y) (Leap / Whirlwind endpoint).
     reposition: struct { x: i32, y: i32 },
     /// A weapon attack on every hostile in an area. `sweep` = along the segment (from_x,from_y)->(x,y)
