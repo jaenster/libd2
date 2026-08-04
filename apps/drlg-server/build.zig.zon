@@ -8,7 +8,7 @@
     // Depends on d2-drlg (which pulls d2-formats / d2-core transitively) for the native
     // `renderJson` serializer + one-act generation.
     .dependencies = .{
-        .d2_drlg = .{ .path = "../drlg" },
+        .d2_drlg = .{ .path = "../../packages/drlg" },
     },
 
     .paths = .{
