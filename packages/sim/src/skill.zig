@@ -33,10 +33,7 @@ const d2data = @import("d2-data");
 const Seed = rng.Seed;
 const Unit = unit.Unit;
 
-/// The engine's server-skill do-function index (Skills.txt `srvdofunc`) — the NAMED value space now
-/// lives in d2-core (pure engine vocabulary, like the stat/collision constants); re-exported here so
-/// the sim's `DoFunc.x` references resolve unchanged. Behaviour that reads it (kind/serverMissile/…)
-/// stays in this file. See d2-core `skill.zig` for the full table + the Ghidra-symbol caveat.
+/// The srvdofunc value space lives in d2-core; re-exported so `DoFunc.x` sites resolve unchanged.
 pub const DoFunc = @import("d2-core").DoFunc;
 
 /// One Skills.txt row, reduced to the dispatch-relevant fields plus the elemental-damage
@@ -48,11 +45,8 @@ pub const SkillData = struct {
     srvdofunc: i32 = 0,
     /// srvmissile — the Missiles.txt "Missile" name spawned server-side ("" = none).
     srvmissile: []const u8 = "",
-    /// srvmissilea — the SECONDARY server missile column. Many skills (and nearly every monster
-    /// skill) leave `srvmissile` empty and deliver their projectile through `srvmissilea` instead:
-    /// the engine do-func fires srvmissilea (Inferno flame, Chain Lightning bolt, Thunder Storm
-    /// strike, Firestorm/Twister, the monster missile family, ...). `serverMissile()` picks
-    /// srvmissile first, else srvmissilea — the projectile the server actually spawns.
+    /// srvmissilea — the secondary server missile. Many skills (Inferno/Chain Lightning/Thunder
+    /// Storm/Firestorm + most monster skills) leave `srvmissile` empty and fire this instead.
     srvmissilea: []const u8 = "",
     mana: i32 = 0,
     manashift: i32 = 0,
@@ -86,24 +80,14 @@ pub const SkillData = struct {
         if (self.is_passive) return .passive;
         if (self.is_summon) return .summon;
         if (self.srvdofunc == @intFromEnum(DoFunc.teleport)) return .teleport;
-        // A skill that spawns a server projectile is a missile — UNLESS the projectile is only a
-        // secondary/visual for a do-func whose primary effect is something else (direct-area nova,
-        // war-cry buff+ring, druid armor buff). Those keep their real classification (.direct via
-        // the EType fallback below, or .other for pure buffs) and are resolved by their own path.
         if (self.serverMissile().len != 0 and !self.missileIsSecondary()) return .missile;
         if (self.srvdofunc == @intFromEnum(DoFunc.attack)) return .melee;
         if (self.dmg.etype != .none) return .direct; // direct elemental (Nova / Static Field / ...)
         return .other;
     }
 
-    /// True for the do-funcs that carry a `srvmissilea` only as a secondary effect — the projectile
-    /// is NOT how they deal their damage, so they must not classify as `.missile`:
-    ///   * 20 Static Field / 22 Nova, Frost Nova — instant AREA pulse (ring GFX only); host resolves
-    ///     via castDirectAreaElemental.
-    ///   * 68 War Cry family (Shout/Battle Orders/Battle Command/Battle Cry/War Cry) — a party
-    ///     buff/curse; the ring missile is the War-Cry stun carrier, applied separately.
-    ///   * 146 Cyclone Armor — an absorb buff that spawns purely cosmetic orbiting missiles.
-    /// (Paladin/druid auras are already caught earlier by `is_aura`.)
+    /// Do-funcs whose `srvmissilea` is only a ring/visual, not how they deal damage — Static/Nova
+    /// (direct-area), War Cry (buff+stun ring), Cyclone Armor (absorb buff) — so NOT `.missile`.
     pub fn missileIsSecondary(self: SkillData) bool {
         return switch (self.srvdofunc) {
             @intFromEnum(DoFunc.static),
@@ -115,10 +99,7 @@ pub const SkillData = struct {
         };
     }
 
-    /// The projectile the server spawns for this skill: `srvmissile` if set, else `srvmissilea`.
-    /// Skills whose do-func fires the secondary column (Inferno, Chain Lightning, Thunder Storm,
-    /// Firestorm, Twister, and the whole monster missile family) leave `srvmissile` empty — without
-    /// this fallback they'd never fire their real missile. `""` when the skill spawns no missile.
+    /// The projectile the server spawns: `srvmissile` if set, else `srvmissilea` ("" = none).
     pub fn serverMissile(self: SkillData) []const u8 {
         return if (self.srvmissile.len != 0) self.srvmissile else self.srvmissilea;
     }
@@ -1312,17 +1293,14 @@ test "classify: every category resolves from the real Skills.txt columns" {
     try testing.expectEqual(Kind.direct, byName(&s, "Frost Nova")); // EType, no missile
     try testing.expectEqual(Kind.direct, byName(&s, "Static Field"));
     try testing.expectEqual(Kind.other, byName(&s, "Battle Orders")); // utility buff
-    // srvmissilea-delivered skills: the engine do-func fires the SECONDARY missile column (these
-    // leave `srvmissile` empty). Without the serverMissile() fallback they'd never fire — verify
-    // they now classify as `.missile` and expose their real projectile.
-    try testing.expectEqual(Kind.missile, byName(&s, "Inferno")); // srvmissilea = infernoflame1
-    try testing.expectEqual(Kind.missile, byName(&s, "Chain Lightning")); // srvmissilea = chainlightning
-    try testing.expectEqual(Kind.missile, byName(&s, "Thunder Storm")); // srvmissilea = thunderstorm1
+    // srvmissilea-delivered skills classify as .missile via serverMissile()...
+    try testing.expectEqual(Kind.missile, byName(&s, "Inferno"));
+    try testing.expectEqual(Kind.missile, byName(&s, "Chain Lightning"));
+    try testing.expectEqual(Kind.missile, byName(&s, "Thunder Storm"));
     try testing.expectEqualStrings("chainlightning", s.byId(s.idByName("Chain Lightning").?).?.serverMissile());
-    // ...but Nova/Static (direct-area) and War Cry (buff+ring) keep their non-missile classification
-    // despite carrying a srvmissilea ring.
-    try testing.expectEqual(Kind.direct, byName(&s, "Nova")); // srvdofunc 22, ring GFX only
-    try testing.expectEqual(Kind.other, byName(&s, "War Cry")); // srvdofunc 68, ring is stun carrier
+    // ...but the ring/visual-only ones (Nova direct-area, War Cry buff+ring) do not.
+    try testing.expectEqual(Kind.direct, byName(&s, "Nova"));
+    try testing.expectEqual(Kind.other, byName(&s, "War Cry"));
     // Every non-divider skill must classify without crashing (no unreachable category).
     var count: usize = 0;
     for (0..s.table.rowCount()) |r| {
@@ -1342,9 +1320,7 @@ test "DoFunc names every srvdofunc the real Skills.txt uses (1..152 vocabulary i
     for (0..s.table.rowCount()) |r| {
         const df = s.table.getInt(i32, r, "srvdofunc") orelse continue;
         if (df == 0) continue; // no server do-func
-        // Every populated srvdofunc must be a NAMED DoFunc value — label() returns "?" only for a
-        // value outside the enumerated 1..152 space, which would mean the engine table grew.
-        const name = @as(DoFunc, @enumFromInt(df)).label();
+        const name = @as(DoFunc, @enumFromInt(df)).label(); // "?" only outside the named 1..152 space
         try testing.expect(!std.mem.eql(u8, name, "?"));
         try testing.expect(df >= 1 and df <= 152);
         seen += 1;
