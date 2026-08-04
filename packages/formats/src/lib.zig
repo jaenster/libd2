@@ -3,7 +3,7 @@
 //! typed records using a caller-supplied `std.mem.Allocator`.
 //!
 //!   ds1  — DS1 level-structure files (room/tile/object layout of a preset area).
-//!   d2s  — D2 character save files (the attributes bit-stream so far).
+//!   d2s  — the fixed .d2s character-save header (the sections after it live in d2-save).
 //!   dt1  — DT1 tile libraries (per-subtile art + collision flags).
 //!   dc6  — DC6 sprite sheets.   dcc — compressed DCC animations.   cof — COF
 //!          component/animation layer descriptors.

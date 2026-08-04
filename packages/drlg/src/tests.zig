@@ -8,7 +8,7 @@ test {
     _ = @import("d2-formats").ds1;
     _ = @import("d2-formats").dt1;
     _ = @import("d2-formats").dt1pix;
-    _ = @import("d2-fog").memory;
+    _ = @import("d2-core").memory;
     _ = @import("collision.zig");
     _ = @import("oracle.zig");
     _ = @import("verify.zig");

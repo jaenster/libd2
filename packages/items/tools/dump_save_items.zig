@@ -8,11 +8,12 @@
 //!   32-bit seed, ilvl(7), quality(4), affixes, base-type fixed stats, sockets, then the
 //!   SHARED stat list — advancing the reader exactly one record so we can walk the list.
 //!
+//! Usage: dump_save_items <path-to-save.d2s>
+//!
 //! Build/run (from packages/items):
 //!   zig build-exe tools/dump_save_items.zig --dep d2items \
 //!     -Mroot=tools/dump_save_items.zig -Md2items=src/lib.zig -femit-bin=/tmp/dump_save_items
 //!   /tmp/dump_save_items /path/to/EpicSorc.d2s
-//! (or the single-file form used below with a direct @import of the wire module.)
 
 const std = @import("std");
 const d2items = @import("d2items");
@@ -39,9 +40,15 @@ fn statVal(it: *const wire.Item, id: u16) i32 {
     return sum;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = std.heap.page_allocator;
-    const path = "/Users/jaenster/code/zig/d2gs/testgame/saves/EpicSorc.d2s";
+
+    var argv = std.process.Args.Iterator.init(init.args);
+    _ = argv.next(); // argv[0]
+    const path = argv.next() orelse {
+        std.debug.print("usage: dump_save_items <path-to-save.d2s>\n", .{});
+        return;
+    };
 
     var threaded = std.Io.Threaded.init_single_threaded;
     const io = threaded.io();
