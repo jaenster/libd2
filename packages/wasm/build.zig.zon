@@ -1,0 +1,20 @@
+.{
+    .name = .d2_wasm,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x998847d6b4e3698f,
+
+    // Every subsystem that has a C ABI, linked into ONE module. Not a convenience: pathfinding
+    // routes over an act d2drlg generated, so the two have to share a linear memory or every
+    // query would copy the collision set across the boundary.
+    .dependencies = .{
+        .d2_drlg = .{ .path = "../drlg" },
+        .d2_pathfinding = .{ .path = "../pathfinding" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

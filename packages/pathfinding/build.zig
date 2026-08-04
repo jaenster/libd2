@@ -26,6 +26,15 @@ pub fn build(b: *std.Build) void {
     // combined wasm reactor alongside d2drlg. Off for wasm here because the useful wasm is the
     // COMBINED one (see packages/wasm): routing needs a generated act, and a module of its own
     // would have its own linear memory with no way to reach one.
+    // Exposed so a bundle package can link this shim into ONE module alongside d2drlg (see
+    // packages/wasm): a route has to be computed against an act in the same linear memory.
+    _ = b.addModule("d2pf-capi", .{
+        .root_source_file = b.path("src/capi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &imports,
+    });
+
     const capi = b.option(bool, "capi", "Build the C-ABI shim") orelse true;
     if (capi and !target.result.cpu.arch.isWasm()) {
         const capi_mod = b.createModule(.{

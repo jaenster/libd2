@@ -32,13 +32,6 @@ typedef struct D2PfWorld D2PfWorld;
 /* Opaque computed route. Free with d2pf_route_free. */
 typedef struct D2PfRoute D2PfRoute;
 
-/* A position: Levels.txt id plus level-local subtiles. */
-typedef struct D2PfPos {
-    int32_t level;
-    int32_t x;
-    int32_t y;
-} D2PfPos;
-
 /* How a move is made. */
 enum {
     D2PF_MOVE_WALK     = 0,
@@ -125,11 +118,18 @@ void d2pf_world_destroy(D2PfWorld *world);
 int32_t d2pf_world_load_act(D2PfWorld *world, int32_t act_no);
 
 /*
- * Route from `from` to `to`. `opts` may be NULL for the defaults. Returns a route handle to
+ * Route between two level-local positions. `opts` may be NULL for the defaults.
+ *
+ * Positions are scalars rather than by-value structs deliberately: a struct argument becomes a
+ * hidden pointer on the wasm C ABI, which a JavaScript host cannot see. Scalars mean every host
+ * calls this the same way. Returns a route handle to
  * free with d2pf_route_free, or NULL if no route exists (which is an ANSWER, not an error:
  * some pairs genuinely are not connected).
  */
-D2PfRoute *d2pf_route(D2PfWorld *world, D2PfPos from, D2PfPos to, const D2PfOptions *opts);
+D2PfRoute *d2pf_route(D2PfWorld *world,
+                      int32_t from_level, int32_t from_x, int32_t from_y,
+                      int32_t to_level, int32_t to_x, int32_t to_y,
+                      const D2PfOptions *opts);
 
 /* Frees a route (NULL-safe). */
 void d2pf_route_free(D2PfRoute *route);

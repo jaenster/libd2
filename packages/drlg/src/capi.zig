@@ -10,7 +10,10 @@
 //! wasm32-freestanding (no WASI).
 
 const std = @import("std");
-const lib = @import("lib.zig");
+// Imported as a MODULE, not as a relative file: this shim is also linked into the combined
+// wasm alongside d2pf, which reaches the same lib.zig through the "d2-drlg" module. A file may
+// belong to only one module, so a relative import here would collide there.
+const lib = @import("d2-drlg");
 
 /// One generated room's world rectangle + type. Field order/types MUST match the
 /// `D2DrlgRoom` in d2drlg.h. Mirrors `lib.RoomRect`.
