@@ -8,13 +8,16 @@ Reverse-engineered from the retail binary, with no Blizzard code.
 
 | package | module | depends on | what it is |
 |-|-|-|-|
+| [`data`](packages/data) | `d2-data` | — | The authoritative 1.14d Blizzard excel tables (Patch_D2 override order, extracted from the retail MPQs) plus a generic TSV reader. Every table is `@embedFile`d, so the loader needs no filesystem and cross-compiles to wasm. |
+| [`core`](packages/core) | `d2-core` | `data` | The shared model foundation: the seed-RNG, the `Stat` enum + `StatList`, the `Unit` base type, ItemStatCost metadata, the save-file item bit-decoder, and the `Fog::Memory` segregated-slab pool allocator. Owning these here is what keeps them from being vendored twice. |
 | [`formats`](packages/formats) | `d2-formats` | — | Pure parsers/decoders for D2 on-disk data: `ds1` (level structure), `dt1` (tile art + collision flags), `dc6`/`dcc`/`cof` (sprites/animations), `dt1pix`, the fixed `.d2s` save header, and the baked-blob container codecs. Byte slice in, typed records out; no engine state. |
-| [`fog`](packages/fog) | `d2-fog` | — | A faithful replica of the engine's `Fog::Memory` segregated-slab pool allocator (fixed size-classes, bitmap slot reuse, wholesale teardown). Engine-agnostic. |
-| [`drlg`](packages/drlg) | `d2-drlg` | `formats`, `fog` | **DRLG** — the map generator. Given a seed, produces the room/tile layout, collision grid, roads and object/monster population for every level in all five acts. Pure generation, verified byte-exact over 1000+ seeds. |
-| [`render`](packages/render) | `d2-render` | `drlg`, `formats` | Turns drlg's generation output into visuals: automap sprite cells and real DT1 tile-art materialization. A pure post-generation consumer. |
 | [`save`](packages/save) | `d2-save` | `core`, `data`, `items`, `formats` | The `.d2s` character save format, read and write: the marker-delimited quest, waypoint, NPC, attribute, skill and item sections on top of the fixed header `formats` owns. Byte-exact round-trip over real saves. |
-| [`items`](packages/items) | `d2-items` | — | Seed-driven item drops: treasure-class resolution, item-class roll by level, quality, and magic/rare affix selection. |
-| [`sim`](packages/sim) | `d2-sim` | — | Runtime simulation: units, stats, RNG, combat, missiles, plus the byte-exact server↔client protocol layer. |
+| [`drlg`](packages/drlg) | `d2-drlg` | `formats`, `core`, `data` | **DRLG** — the map generator. Given a seed, produces the room/tile layout, collision grid, roads and object/monster population for every level in all five acts. Pure generation, verified byte-exact over 1000+ seeds. |
+| [`render`](packages/render) | `d2-render` | `drlg`, `formats` | Turns drlg's generation output into visuals: automap sprite cells and real DT1 tile-art materialization. A pure post-generation consumer. |
+| [`items`](packages/items) | `d2-items` | `core`, `data` | Seed-driven item drops: treasure-class resolution, item-class roll by level, quality, and magic/rare affix selection. |
+| [`sim`](packages/sim) | `d2-sim` | `core`, `data` | Runtime simulation: units, stats, combat, skills, monsters and missiles, plus the byte-exact server↔client protocol layer. |
+| [`util`](packages/util) | `d2-util` | — | Cross-cutting primitives with no domain of their own: the D2GS server→client Huffman packet codec and the length-prefix framing / `AF` greeting around it. |
+| [`drlg-server`](packages/drlg-server) | — | `drlg` | Native multi-threaded HTTP server that serves an act's map JSON straight from `d2-drlg`. An application, not a library module. |
 
 Each subsystem is validated against ground truth captured from the real engine.
 

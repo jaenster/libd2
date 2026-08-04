@@ -55,7 +55,7 @@ const dpool = @import("pool.zig");
 const dtables = @import("tables.zig");
 const drlgmod = @import("drlg.zig");
 const act_mod = @import("../act.zig");
-const fog = @import("d2-fog").memory;
+const fog = @import("d2-core").memory;
 const TileSub = @import("TileSub.zig");
 
 /// Reusable per-room transient scratch. These builders used to nest a fresh ArenaAllocator in
