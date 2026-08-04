@@ -280,6 +280,77 @@ pub fn buildPassMap(
     };
 }
 
+pub const FreeCoordOptions = struct {
+    /// `nMaxDistance`. The search does not start at all at 1 or less.
+    max_distance: i32 = 20,
+    /// `nPosIncrementValue`: how far apart the rings are, and the stride within them.
+    step: i32 = 1,
+};
+
+/// Where the server would actually put something asked for at `at` — `GetFreeCoordinates`
+/// (0x64dea0), which decides teleport landings, corpse and item drops, portal placement,
+/// `WarpToAct` and monster spawns.
+///
+/// It is not our `nearestPassable`. The exact cell is tried first with the unit's footprint
+/// (`CheckCollision_BlockAll_Width`, which is why the mask AND footprint live in `pm`). Failing
+/// that it walks expanding square rings, and within the FIRST ring that contains anything free it
+/// takes the candidate with the smallest MANHATTAN distance to the origin — not the first one it
+/// meets. Ring `k` sits at radius `k * step`, and the walk stops once `1 + radius` reaches
+/// `max_distance`.
+///
+/// The `pFieldCoords` variant, which additionally requires a clear path from a second point via
+/// `FIELDTBLS_TracePathCheckCollision`, is NOT modelled here — that function has not been read.
+/// Callers that need it (item and gold drops) will place slightly differently than the server.
+pub fn freeCoordinates(pm: *const PassMap, at: Point, opts: FreeCoordOptions) ?Point {
+    if (pm.passable(at.x, at.y)) return at;
+    if (opts.max_distance <= 1) return null;
+
+    const inc = opts.step;
+    var y_top = at.y + 1;
+    var y_bottom = at.y - 1;
+    var x_left = at.x;
+    var x_right = at.x;
+    var stride: i32 = 2;
+
+    while (true) {
+        var best: ?Point = null;
+        var best_dist: i32 = -1;
+
+        const consider = struct {
+            fn f(p: *const PassMap, o: Point, x: i32, y: i32, b: *?Point, bd: *i32) void {
+                if (!p.passable(x, y)) return;
+                const d: i32 = @intCast(@abs(x - o.x) + @abs(y - o.y));
+                if (bd.* == -1 or d < bd.*) {
+                    b.* = .{ .x = x, .y = y };
+                    bd.* = d;
+                }
+            }
+        }.f;
+
+        // The ring's two vertical edges: every row, but only the leftmost and rightmost columns.
+        var iy = y_bottom;
+        while (iy <= y_top) : (iy += inc) {
+            var ix = x_left - 1;
+            while (ix <= x_right + 1) : (ix += stride) consider(pm, at, ix, iy, &best, &best_dist);
+        }
+        // And its two horizontal edges: every column between them, top row and bottom row only.
+        var ix = x_left;
+        while (ix <= x_right) : (ix += inc) {
+            var iy2 = y_bottom;
+            while (iy2 <= y_top) : (iy2 += stride) consider(pm, at, ix, iy2, &best, &best_dist);
+        }
+
+        if (best) |p| return p;
+
+        y_top += inc;
+        y_bottom -= inc;
+        x_left -= inc;
+        x_right += inc;
+        stride += inc * 2;
+        if (1 + (x_right - at.x) >= opts.max_distance) return null;
+    }
+}
+
 pub const Trace = struct {
     /// Where the walk stopped: the blocking cell when `blocked`, otherwise the destination.
     at: Point,

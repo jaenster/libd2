@@ -1169,3 +1169,73 @@ test "unitsCanReach shrinks the segment by each radius before tracing" {
         pf.cast.unitsCanReach(&pm2, a, 99, b, 99),
     );
 }
+
+test "freeCoordinates returns the spot itself when it is already free" {
+    const alloc = testing.allocator;
+    var open = [_]u16{0} ** (11 * 11);
+    var pm = try pf.grid.buildPassMap(alloc, &open, 11, 11, pf.Colmask.player_path, .point);
+    defer pm.deinit(alloc);
+    const got = pf.grid.freeCoordinates(&pm, .{ .x = 5, .y = 5 }, .{}).?;
+    try testing.expectEqual(@as(i32, 5), got.x);
+    try testing.expectEqual(@as(i32, 5), got.y);
+}
+
+test "freeCoordinates takes the best Manhattan cell of the first ring, not the first found" {
+    const alloc = testing.allocator;
+    // Block the centre. In the 3x3 ring the four orthogonal neighbours are Manhattan 1 and the
+    // four diagonals are 2; the scan meets a diagonal first, so returning it would prove we had
+    // copied a first-hit search instead of the engine's.
+    var cells = [_]u16{0} ** (11 * 11);
+    cells[5 * 11 + 5] = pf.Colbit.wall;
+    var pm = try pf.grid.buildPassMap(alloc, &cells, 11, 11, pf.Colmask.player_path, .point);
+    defer pm.deinit(alloc);
+
+    const got = pf.grid.freeCoordinates(&pm, .{ .x = 5, .y = 5 }, .{}).?;
+    const dist = @abs(got.x - 5) + @abs(got.y - 5);
+    try testing.expectEqual(@as(u32, 1), dist);
+}
+
+test "freeCoordinates spirals past a blocked ring and respects max_distance" {
+    const alloc = testing.allocator;
+    // Everything solid except one cell four to the left, so ring 1..3 are all blocked.
+    var cells = [_]u16{pf.Colbit.wall} ** (11 * 11);
+    cells[5 * 11 + 1] = 0;
+    var pm = try pf.grid.buildPassMap(alloc, &cells, 11, 11, pf.Colmask.player_path, .point);
+    defer pm.deinit(alloc);
+
+    const at = pf.Point{ .x = 5, .y = 5 };
+    const got = pf.grid.freeCoordinates(&pm, at, .{ .max_distance = 20 }).?;
+    try testing.expectEqual(@as(i32, 1), got.x);
+    try testing.expectEqual(@as(i32, 5), got.y);
+
+    // The walk stops once 1 + radius reaches max_distance, so a tight budget finds nothing...
+    try testing.expect(pf.grid.freeCoordinates(&pm, at, .{ .max_distance = 3 }) == null);
+    // ...and at 1 or less it never starts.
+    try testing.expect(pf.grid.freeCoordinates(&pm, at, .{ .max_distance = 1 }) == null);
+}
+
+test "freeCoordinates honours the footprint the unit occupies" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // Asking for a landing spot as a 3x3 unit can never return a cell a point-sized unit could
+    // not also use — that is what CheckCollision_BlockAll_Width's size dispatch guarantees.
+    var checked: usize = 0;
+    for (f.world.levels.items) |*lv| {
+        const point = try lv.passMapFor(pf.Colmask.player_path, .point);
+        const box = try lv.passMapFor(pf.Colmask.player_path, .box3);
+        var y: i32 = 10;
+        while (y < lv.h - 10) : (y += 37) {
+            var x: i32 = 10;
+            while (x < lv.w - 10) : (x += 37) {
+                const want = pf.Point{ .x = x, .y = y };
+                const big = pf.grid.freeCoordinates(box, want, .{ .max_distance = 30 }) orelse continue;
+                try testing.expect(box.passable(big.x, big.y));
+                try testing.expect(point.passable(big.x, big.y));
+                checked += 1;
+            }
+        }
+    }
+    try testing.expect(checked > 20);
+}
