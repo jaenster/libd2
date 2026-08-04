@@ -26,6 +26,8 @@ const Compressor = opaque {};
 extern "c" fn libdeflate_alloc_compressor(compression_level: c_int) ?*Compressor;
 extern "c" fn libdeflate_zlib_compress(c: *Compressor, in: [*]const u8, in_nbytes: usize, out: [*]u8, out_nbytes_avail: usize) usize;
 extern "c" fn libdeflate_zlib_compress_bound(c: ?*Compressor, in_nbytes: usize) usize;
+extern "c" fn libdeflate_gzip_compress(c: *Compressor, in: [*]const u8, in_nbytes: usize, out: [*]u8, out_nbytes_avail: usize) usize;
+extern "c" fn libdeflate_gzip_compress_bound(c: ?*Compressor, in_nbytes: usize) usize;
 
 // std.time.Timer/Instant/std.time.nanoTimestamp are gone in this Zig, and std.posix has no
 // clock_gettime wrapper here — but the binary links libc, so pull the C clock_gettime in
@@ -281,6 +283,33 @@ fn serveConnection(gpa: std.mem.Allocator, io: Io, stream: net.Stream, ctx: *drl
 
 const json_ct: std.http.Header = .{ .name = "content-type", .value = "application/json" };
 const text_ct: std.http.Header = .{ .name = "content-type", .value = "text/plain" };
+const gzip_ce: std.http.Header = .{ .name = "content-encoding", .value = "gzip" };
+
+fn acceptsGzip(request: *std.http.Server.Request) bool {
+    var it = request.iterateHeaders();
+    while (it.next()) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "accept-encoding") and
+            std.mem.indexOf(u8, h.value, "gzip") != null) return true;
+    }
+    return false;
+}
+
+/// gzip the response body. The act JSON is ~855 KB of which most is repeated room/preset
+/// structure, so it compresses to about a third — and at level 1 libdeflate does that in ~2 ms
+/// against the ~150 ms the uncompressed body spends on the wire. Returns the original slice if
+/// compression would not help (it never grows the response).
+fn gzipBody(alloc: std.mem.Allocator, body: []const u8) []const u8 {
+    const comp = zcomp orelse blk: {
+        const c = libdeflate_alloc_compressor(deflate_level) orelse return body;
+        zcomp = c;
+        break :blk c;
+    };
+    const bound = libdeflate_gzip_compress_bound(comp, body.len);
+    const buf = alloc.alloc(u8, bound) catch return body;
+    const n = libdeflate_gzip_compress(comp, body.ptr, body.len, buf.ptr, buf.len);
+    if (n == 0 or n >= body.len) return body;
+    return buf[0..n];
+}
 
 fn handleRequest(gpa: std.mem.Allocator, ctx: *drlg.Ctx, request: *std.http.Server.Request) !void {
     const start = monoUs();
@@ -344,8 +373,12 @@ fn handleRequest(gpa: std.mem.Allocator, ctx: *drlg.Ctx, request: *std.http.Serv
             return res;
         };
     };
-    const res = request.respond(body, .{ .extra_headers = &.{json_ct} });
-    logReq(method, path, 200, body.len, monoUs() - start, params, null);
+    const t_gz = drlg.prof.begin();
+    const sent: []const u8 = if (acceptsGzip(request)) gzipBody(arena.allocator(), body) else body;
+    drlg.prof.end(.gzip, t_gz);
+    const hdrs: []const std.http.Header = if (sent.ptr == body.ptr) &.{json_ct} else &.{ json_ct, gzip_ce };
+    const res = request.respond(sent, .{ .extra_headers = hdrs });
+    logReq(method, path, 200, sent.len, monoUs() - start, params, null);
     return res;
 }
 

@@ -36,6 +36,8 @@ pub const Phase = enum {
     collect,
     /// DBM JSON text + base64.
     serialize,
+    /// gzip of the response body (host-side; only for clients that accept it).
+    gzip,
 };
 
 const n_phases = @typeInfo(Phase).@"enum".fields.len;
