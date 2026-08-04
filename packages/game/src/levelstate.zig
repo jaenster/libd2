@@ -229,4 +229,98 @@ pub const LevelState = struct {
         }
         return n;
     }
+
+    /// Advance active poison DoTs one frame: deal per_frame to each poisoned unit and drop entries
+    /// whose unit died or whose duration ran out. Re-poisoning refreshes (overwrites), not stacks.
+    pub fn tickPoison(self: *LevelState) void {
+        var expired: [128]u32 = undefined;
+        var ne: usize = 0;
+        var it = self.poison_dots.iterator();
+        while (it.next()) |e| {
+            const guid = e.key_ptr.*;
+            const dot = e.value_ptr;
+            const u = self.units.getPtr(guid);
+            if (u == null or !u.?.isAlive()) {
+                if (ne < expired.len) {
+                    expired[ne] = guid;
+                    ne += 1;
+                }
+                continue;
+            }
+            u.?.setLife(@max(0, u.?.life() - dot.per_frame));
+            dot.frames -= 1;
+            if (dot.frames <= 0 and ne < expired.len) {
+                expired[ne] = guid;
+                ne += 1;
+            }
+        }
+        for (expired[0..ne]) |g| _ = self.poison_dots.remove(g);
+    }
+
+    /// Advance active curses one frame: BuffList.tick counts each down and lifts its stat debuff on
+    /// expiry; the entry is dropped once nothing is active or the cursed unit is gone.
+    pub fn tickCurses(self: *LevelState) void {
+        var expired: [128]u32 = undefined;
+        var ne: usize = 0;
+        var it = self.curses.iterator();
+        while (it.next()) |e| {
+            const guid = e.key_ptr.*;
+            if (self.units.getPtr(guid)) |u| {
+                e.value_ptr.tick(u, 1);
+                if (!e.value_ptr.anyActive() and ne < expired.len) {
+                    expired[ne] = guid;
+                    ne += 1;
+                }
+            } else if (ne < expired.len) {
+                expired[ne] = guid;
+                ne += 1;
+            }
+        }
+        for (expired[0..ne]) |g| _ = self.curses.remove(g);
+    }
 };
+
+/// A bare LevelState for unit tests — no generated layout, just the empty maps + a stub summary.
+fn emptyLevelState() LevelState {
+    return .{
+        .level_id = 0,
+        .summary = .{ .level_id = 0, .seed = 0, .difficulty = .normal, .room_count = 0, .tile_count = 0, .collision_cells = 0 },
+        .entry_x = 0,
+        .entry_y = 0,
+    };
+}
+
+test "tickPoison deals per_frame each frame and drops the DoT when its duration runs out" {
+    const testing = std.testing;
+    const gpa = testing.allocator;
+    var ls = emptyLevelState();
+    defer ls.deinit(gpa);
+
+    var mon = Unit.init(.monster);
+    mon.setLife(100);
+    try ls.units.put(gpa, 1, mon);
+    try ls.poison_dots.put(gpa, 1, .{ .total = 10, .frames = 2, .per_frame = 5 });
+
+    ls.tickPoison();
+    try testing.expectEqual(@as(i32, 95), ls.units.getPtr(1).?.life());
+    try testing.expect(ls.poison_dots.contains(1)); // one frame still to go
+
+    ls.tickPoison();
+    try testing.expectEqual(@as(i32, 90), ls.units.getPtr(1).?.life());
+    try testing.expect(!ls.poison_dots.contains(1)); // expired -> reaped
+}
+
+test "tickPoison reaps the DoT when its target dies" {
+    const testing = std.testing;
+    const gpa = testing.allocator;
+    var ls = emptyLevelState();
+    defer ls.deinit(gpa);
+
+    var mon = Unit.init(.monster);
+    mon.setLife(0); // already dead
+    try ls.units.put(gpa, 7, mon);
+    try ls.poison_dots.put(gpa, 7, .{ .total = 30, .frames = 10, .per_frame = 3 });
+
+    ls.tickPoison();
+    try testing.expect(!ls.poison_dots.contains(7)); // dead unit -> DoT dropped, no negative life
+}
