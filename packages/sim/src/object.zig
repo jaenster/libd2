@@ -176,3 +176,18 @@ test "operate: families emit the right effects" {
     const wp = ObjectRef{ .guid = 7, .x = 0, .y = 0, .operate_fn = @intFromEnum(OperateFn.activate_waypoint), .anim_mode = 0 };
     try testing.expect(operate(wp, &buf)[0] == .activate_waypoint);
 }
+
+test "operate: every OperateFn 1..73 classifies + resolves without a gap" {
+    var buf: [4]Effect = undefined;
+    var op: i32 = 1;
+    while (op <= 73) : (op += 1) {
+        _ = family(@enumFromInt(op)); // total (else => .other) — no unhandled value
+        const ref = ObjectRef{ .guid = 1, .x = 0, .y = 0, .operate_fn = op, .anim_mode = 0, .shrine_reset_min = 5 };
+        _ = operate(ref, &buf);
+    }
+    // A fresh interactive object always yields at least one effect (not a silent no-op).
+    for ([_]OperateFn{ .activate_shrine, .activate_healing_well, .toggle_door, .activate_waypoint, .open_stash, .portal }) |o| {
+        const ref = ObjectRef{ .guid = 1, .x = 0, .y = 0, .operate_fn = @intFromEnum(o), .anim_mode = 0 };
+        try testing.expect(operate(ref, &buf).len >= 1);
+    }
+}
