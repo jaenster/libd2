@@ -1498,11 +1498,13 @@ pub fn roomWindow(p: *abi.D2RoomExStrc, pmap: *abi.D2DrlgMapStrc) materialize.Ds
         .size_x = p.sCoords.WorldSize.x,
         .size_y = p.sCoords.WorldSize.y,
         // The InitGridCells wrapper 0x66ee40 RE-INITIALIZES the room seed as
-        // {nSeedLow, 0x29a} before tile resolution — the generation-evolved HIGH
-        // word is NOT carried. Passing p.sSeed verbatim kept every rarity roll on
-        // a different stream (seqtile oracle: engine room-start hi = 0x29a, ours
-        // = evolved; the first advance already diverges).
-        .seed = .{ .nSeedLow = p.sSeed.nSeedLow, .nSeedHigh = 0x29a },
+        // {pRoomEx->nSeed, 0x29a} before tile resolution. Neither half of the
+        // generation-evolved sSeed is carried: nSeed is the snapshot AllocRoomEx
+        // took, so every seed advance the maze does to a room afterwards (the
+        // ActualLevelGeneration direction roll, the PickRoomPresets merge roll on
+        // a neighbour) is rolled back here. Reading the live sSeed instead puts
+        // the room's rarity rolls one or more advances ahead of the engine's.
+        .seed = .{ .nSeedLow = p.nSeed, .nSeedHigh = 0x29a },
         .fill_blanks = if (pt != null) pt.*.FillBlanks else 0,
         // The DS1 array is (nSize+1)^2; rooms tile the nSize area. The +1 ring is
         // scanned ONLY by the room at the pMap's FAR edge (and LvlPrest KillEdge
