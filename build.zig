@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
     const exported = [_]struct { dep: []const u8, mod: []const u8 }{
         .{ .dep = "d2_core", .mod = "d2-core" },
         .{ .dep = "d2_data", .mod = "d2-data" },
-        .{ .dep = "d2_sim", .mod = "d2-sim" },
+        .{ .dep = "d2_game", .mod = "d2-game" },
         .{ .dep = "d2_items", .mod = "d2-items" },
         .{ .dep = "d2_drlg", .mod = "d2-drlg" },
         .{ .dep = "d2_formats", .mod = "d2-formats" },
@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) void {
         b.modules.put(b.graph.arena, b.dupe(e.mod), dep.module(e.mod)) catch @panic("OOM");
     }
 
-    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "items", "sim", "net", "data", "util", "pathfinding", "save" };
+    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "items", "game", "net", "data", "util", "pathfinding", "save" };
 
     const test_step = b.step("test", "Run every package's test suite");
 

@@ -10,7 +10,7 @@
     .dependencies = .{
         .d2_core = .{ .path = "packages/core" },
         .d2_data = .{ .path = "packages/data" },
-        .d2_sim = .{ .path = "packages/sim" },
+        .d2_game = .{ .path = "packages/game" },
         .d2_items = .{ .path = "packages/items" },
         .d2_drlg = .{ .path = "packages/drlg" },
         .d2_formats = .{ .path = "packages/formats" },
