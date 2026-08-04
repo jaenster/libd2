@@ -1,0 +1,17 @@
+.{
+    .name = .d2_save,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x6546acf65d9f4bcb,
+
+    // The fixed .d2s header lives in d2-formats; the bit readers and the per-item bit codec
+    // live in d2-core; d2-items owns the item model those decode into.
+    .dependencies = .{
+        .d2_core = .{ .path = "../core" },
+        .d2_data = .{ .path = "../data" },
+        .d2_items = .{ .path = "../items" },
+        .d2_formats = .{ .path = "../formats" },
+    },
+
+    .paths = .{"."},
+}

@@ -14,6 +14,7 @@
         .d2_items = .{ .path = "packages/items" },
         .d2_drlg = .{ .path = "packages/drlg" },
         .d2_formats = .{ .path = "packages/formats" },
+        .d2_save = .{ .path = "packages/save" },
         .d2_fog = .{ .path = "packages/fog" },
         .d2_util = .{ .path = "packages/util" },
         .d2_pathfinding = .{ .path = "packages/pathfinding" },
