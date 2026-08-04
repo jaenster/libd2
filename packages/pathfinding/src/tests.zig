@@ -287,9 +287,9 @@ test "runtime occupancy separates a missile's world from a player's" {
 
     // And a search over the occupied grid sees it: the player's passable set shrinks by exactly
     // the stamped cells while the missile's does not move at all.
-    var player_occ = try pf.grid.buildPassMap(alloc, occupied, lv.w, lv.h, pf.Colmask.player_path);
+    var player_occ = try pf.grid.buildPassMap(alloc, occupied, lv.w, lv.h, pf.Colmask.player_path, .point);
     defer player_occ.deinit(alloc);
-    var missile_occ = try pf.grid.buildPassMap(alloc, occupied, lv.w, lv.h, pf.Colmask.missile_flight);
+    var missile_occ = try pf.grid.buildPassMap(alloc, occupied, lv.w, lv.h, pf.Colmask.missile_flight, .point);
     defer missile_occ.deinit(alloc);
 
     const player_clean = try lv.passMap(pf.Colmask.player_path);
@@ -612,7 +612,7 @@ test "the clearance transform is an exact Chebyshev distance to the nearest wall
     defer alloc.free(cells);
     @memset(cells, 0);
     cells[4 * 9 + 4] = pf.Colbit.wall;
-    var pm = try pf.grid.buildPassMap(alloc, cells, 9, 9, pf.Colmask.player_path);
+    var pm = try pf.grid.buildPassMap(alloc, cells, 9, 9, pf.Colmask.player_path, .point);
     defer pm.deinit(alloc);
     const cl = pm.clearance();
 
@@ -829,4 +829,179 @@ test "an unreachable level fails fast instead of searching" {
     defer chain.deinit(alloc);
     // Act 1 alone cannot reach an Act 3 level: no warp, no seam, no portal.
     try testing.expectError(error.NoLevelRoute, f.world.levelRoute(1, 83, &chain));
+}
+
+test "a bigger footprint is blocked by gaps a point walks through" {
+    const alloc = testing.allocator;
+    // A 1-subtile-wide corridor down the middle of a solid block. A point-sized unit fits; the
+    // cross (CheckCollision_Cross) needs its east/west neighbours and does not; nor does the 3x3.
+    var cells = [_]u16{pf.Colbit.wall} ** (9 * 9);
+    for (0..9) |y| cells[y * 9 + 4] = 0;
+
+    for ([_]struct { fp: pf.grid.Footprint, want: bool }{
+        .{ .fp = .point, .want = true },
+        .{ .fp = .cross, .want = false },
+        .{ .fp = .box3, .want = false },
+    }) |c| {
+        var pm = try pf.grid.buildPassMap(alloc, &cells, 9, 9, pf.Colmask.player_path, c.fp);
+        defer pm.deinit(alloc);
+        try testing.expectEqual(c.want, pm.passable(4, 4));
+    }
+}
+
+test "the cross clears a 3-wide corridor that the 3x3 box also clears" {
+    const alloc = testing.allocator;
+    var cells = [_]u16{pf.Colbit.wall} ** (9 * 9);
+    for (0..9) |y| {
+        for (3..6) |x| cells[y * 9 + x] = 0;
+    }
+
+    var cross = try pf.grid.buildPassMap(alloc, &cells, 9, 9, pf.Colmask.player_path, .cross);
+    defer cross.deinit(alloc);
+    var box = try pf.grid.buildPassMap(alloc, &cells, 9, 9, pf.Colmask.player_path, .box3);
+    defer box.deinit(alloc);
+
+    // Centre of the corridor: both fit. One subtile off centre: neither does, because the shape
+    // then reaches into the wall.
+    try testing.expect(cross.passable(4, 4));
+    try testing.expect(box.passable(4, 4));
+    try testing.expect(!cross.passable(3, 4));
+    try testing.expect(!box.passable(3, 4));
+}
+
+test "footprint maps are cached per (mask, footprint) and are real alternatives" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    const lv = f.world.level(2) orelse return error.NoLevel;
+    const point = try lv.passMapFor(pf.Colmask.player_path, .point);
+    const box = try lv.passMapFor(pf.Colmask.player_path, .box3);
+    try testing.expect(point != box);
+    try testing.expectEqual(point, try lv.passMapFor(pf.Colmask.player_path, .point));
+
+    // A 3x3 unit can never stand somewhere a point cannot, and on a real level it is strictly
+    // more restricted — otherwise the erosion did nothing.
+    var point_n: usize = 0;
+    var box_n: usize = 0;
+    for (0..@intCast(lv.w * lv.h)) |i| {
+        if (point.passableAt(i)) point_n += 1;
+        if (box.passableAt(i)) {
+            box_n += 1;
+            try testing.expect(point.passableAt(i));
+        }
+    }
+    try testing.expect(box_n < point_n);
+    try testing.expect(box_n > 0);
+}
+
+test "the tracer stops on the first blocking cell and reports it" {
+    const alloc = testing.allocator;
+    // Open 9x9 with a vertical wall at x = 4.
+    var cells = [_]u16{0} ** (9 * 9);
+    for (0..9) |y| cells[y * 9 + 4] = pf.Colbit.wall;
+
+    var pm = try pf.grid.buildPassMap(alloc, &cells, 9, 9, pf.Colmask.player_path, .point);
+    defer pm.deinit(alloc);
+
+    const hit = pf.grid.trace(&pm, .{ .x = 0, .y = 4 }, .{ .x = 8, .y = 4 });
+    try testing.expect(hit.blocked);
+    try testing.expectEqual(@as(i32, 4), hit.at.x);
+    try testing.expectEqual(@as(i32, 4), hit.at.y);
+    try testing.expect(!pf.grid.hasLineOfSight(&pm, .{ .x = 0, .y = 4 }, .{ .x = 8, .y = 4 }));
+
+    // Along the wall, never across it.
+    try testing.expect(pf.grid.hasLineOfSight(&pm, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 8 }));
+    // Both endpoints are tested: aiming AT the wall is blocked even from right beside it.
+    try testing.expect(!pf.grid.hasLineOfSight(&pm, .{ .x = 3, .y = 4 }, .{ .x = 4, .y = 4 }));
+    // A cell is traced against itself.
+    try testing.expect(pf.grid.hasLineOfSight(&pm, .{ .x = 3, .y = 3 }, .{ .x = 3, .y = 3 }));
+    try testing.expect(!pf.grid.hasLineOfSight(&pm, .{ .x = 4, .y = 3 }, .{ .x = 4, .y = 3 }));
+}
+
+test "an open grid traces clear in every direction, and leaving it blocks" {
+    const alloc = testing.allocator;
+    var open = [_]u16{0} ** (9 * 9);
+    var pm = try pf.grid.buildPassMap(alloc, &open, 9, 9, pf.Colmask.player_path, .point);
+    defer pm.deinit(alloc);
+
+    var a: i32 = 0;
+    while (a < 9) : (a += 1) {
+        var b: i32 = 0;
+        while (b < 9) : (b += 1) {
+            try testing.expect(pf.grid.hasLineOfSight(&pm, .{ .x = 0, .y = a }, .{ .x = 8, .y = b }));
+            try testing.expect(pf.grid.hasLineOfSight(&pm, .{ .x = a, .y = 0 }, .{ .x = b, .y = 8 }));
+        }
+    }
+    // Off the grid is the engine's null-room case: blocked.
+    try testing.expect(!pf.grid.hasLineOfSight(&pm, .{ .x = 4, .y = 4 }, .{ .x = 20, .y = 4 }));
+    try testing.expect(!pf.grid.hasLineOfSight(&pm, .{ .x = 4, .y = 4 }, .{ .x = 4, .y = -3 }));
+}
+
+test "line of sight is direction-dependent, as it is in the engine" {
+    const alloc = testing.allocator;
+    // A single blocking cell off the centre line. Bresenham visits a different chain of cells
+    // depending on which end it starts from, so a thin obstacle can be clipped one way and
+    // missed the other. TestCollision (0x64e260) has exactly this property, and the server
+    // always traces FROM THE CASTER — so a bot must ask the question in that direction.
+    var cells = [_]u16{0} ** (9 * 9);
+    cells[3 * 9 + 6] = pf.Colbit.wall;
+    var pm = try pf.grid.buildPassMap(alloc, &cells, 9, 9, pf.Colmask.player_path, .point);
+    defer pm.deinit(alloc);
+
+    var asymmetric: usize = 0;
+    var a: i32 = 0;
+    while (a < 9) : (a += 1) {
+        var b: i32 = 0;
+        while (b < 9) : (b += 1) {
+            const fwd = pf.grid.hasLineOfSight(&pm, .{ .x = 0, .y = a }, .{ .x = 8, .y = b });
+            const rev = pf.grid.hasLineOfSight(&pm, .{ .x = 8, .y = b }, .{ .x = 0, .y = a });
+            if (fwd != rev) asymmetric += 1;
+        }
+    }
+    try testing.expect(asymmetric > 0);
+}
+
+test "a missile flies where a player cannot walk" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // A GENERATED grid cannot show this: every missile_barrier cell it emits also carries wall,
+    // and noplayer/object/door never appear at all - they are runtime occupancy a live host ORs
+    // in. So overlay what a host would: an object (blocks the player, not a missile) and a bare
+    // missile barrier (blocks the missile, not the player), and check both models react.
+    const lv = f.world.level(2) orelse return error.NoLevel;
+    const walk_base = try lv.passMapFor(pf.Colmask.player_path, .point);
+    const open = pf.grid.nearestPassable(walk_base, @divTrunc(lv.w, 2), @divTrunc(lv.h, 2), 128) orelse
+        return error.NoPassableCell;
+    // Three cells in a row, all clear, so a trace along them is unobstructed to begin with.
+    if (!walk_base.passable(open.x + 1, open.y) or !walk_base.passable(open.x + 2, open.y)) return;
+
+    const cells = try alloc.dupe(u16, lv.cells);
+    defer alloc.free(cells);
+    const obj_at: usize = @intCast(open.y * lv.w + open.x + 1);
+    cells[obj_at] = pf.Colbit.object;
+
+    var walk = try pf.grid.buildPassMap(alloc, cells, lv.w, lv.h, pf.Colmask.player_path, .point);
+    defer walk.deinit(alloc);
+    var fly = try pf.grid.buildPassMap(alloc, cells, lv.w, lv.h, pf.Colmask.missile_flight, .point);
+    defer fly.deinit(alloc);
+
+    const from = open;
+    const to = pf.Point{ .x = open.x + 2, .y = open.y };
+    try testing.expect(!pf.grid.hasLineOfSight(&walk, from, to)); // the object stops the player
+    try testing.expect(pf.grid.hasLineOfSight(&fly, from, to)); // and not the missile
+
+    // And the reverse: a barrier with no wall bit stops only the missile.
+    cells[obj_at] = pf.Colbit.missile_barrier;
+    var walk2 = try pf.grid.buildPassMap(alloc, cells, lv.w, lv.h, pf.Colmask.player_path, .point);
+    defer walk2.deinit(alloc);
+    var fly2 = try pf.grid.buildPassMap(alloc, cells, lv.w, lv.h, pf.Colmask.missile_flight, .point);
+    defer fly2.deinit(alloc);
+    try testing.expect(pf.grid.hasLineOfSight(&walk2, from, to));
+    try testing.expect(!pf.grid.hasLineOfSight(&fly2, from, to));
+
+    const stop = pf.grid.trace(&fly2, from, to);
+    try testing.expectEqual(open.x + 1, stop.at.x);
 }

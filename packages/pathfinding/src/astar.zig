@@ -320,7 +320,7 @@ fn testMap(alloc: std.mem.Allocator, w: i32, h: i32, walls: []const [2]i32) !gri
     defer alloc.free(cells);
     @memset(cells, 0);
     for (walls) |p| cells[@intCast(p[1] * w + p[0])] = 0x01;
-    return grid.buildPassMap(alloc, cells, w, h, 0x1c09);
+    return grid.buildPassMap(alloc, cells, w, h, 0x1c09, .point);
 }
 
 test "A* finds the straight-line path across open ground" {
