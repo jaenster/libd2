@@ -68,6 +68,14 @@ pub const Effect = union(enum) {
         reposition: bool,
         use_melee_skill: bool,
     },
+    /// Grant `skill_id` as a timed self-buff (Frozen Armor / Battle Orders / Enchant / …).
+    buff_self: struct { skill_id: u16 },
+    /// Toggle the caster's shapeshift form (Werewolf / Werebear / Delirium).
+    shapeshift: struct { skill_id: u16 },
+    /// A single-target poison damage-over-time (Poison Dagger).
+    poison_dot: struct { target_guid: u32, skill_id: u16, level: i32 },
+    /// Warp the caster to the act's town (Town Portal).
+    warp_town,
     /// Move the caster to (x,y) (Leap / Whirlwind endpoint).
     reposition: struct { x: i32, y: i32 },
     /// A weapon attack on every hostile in an area. `sweep` = along the segment (from_x,from_y)->(x,y)
