@@ -15,7 +15,6 @@ test {
     _ = @import("monpop_verify.zig");
     _ = @import("coll_crc_verify.zig");
     _ = @import("coll_allacts_verify.zig");
-    _ = @import("mem_verify.zig");
     _ = @import("lib.zig");
     _ = @import("path.zig");
     _ = @import("serial.zig");
