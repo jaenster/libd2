@@ -270,6 +270,21 @@ pub const World = struct {
         return self.teleport_rule[@intCast(id)];
     }
 
+    /// Where a quest portal out of `from_level` toward `to_level` stands, if the map data marks it
+    /// with an object. Lets a character be routed to a portal that is not open yet — the object is
+    /// placed from the start even though the link is not usable until the quest fires.
+    pub fn questPortalSite(self: *World, from_level: i32, to_level: i32) !?Point {
+        const lv = self.level(from_level) orelse return error.UnknownLevel;
+        for (portals.LINKS) |link| {
+            if (link.from != from_level or link.to != to_level) continue;
+            const cls = link.object_id orelse continue;
+            for (lv.presets) |unit| {
+                if (unit.etype == 2 and unit.txt_file_no == cls) return .{ .x = unit.x, .y = unit.y };
+            }
+        }
+        return null;
+    }
+
     /// Every DOOR on a level, in that level's local subtiles.
     ///
     /// Doors matter to a mover but not to the search. The generated collision grid carries no door
