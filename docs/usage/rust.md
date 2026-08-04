@@ -101,6 +101,9 @@ for at in cold_plains.crossings_to(LevelId(4)) {
 }
 ```
 
+There is one entry per set warp slot rather than one per destination, so a room with three
+slots reports the same position three times.
+
 ## Collision
 
 A grid is its own call rather than a field on every level, so nothing pays for one it never
