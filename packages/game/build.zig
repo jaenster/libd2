@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
 
     // Library module: the faithful D2 1.14d runtime game-simulation port.
     // Consumers depend on this via `.d2sim = .{ .path = "../d2-sim" }`.
-    const mod = b.addModule("d2-sim", .{
+    const mod = b.addModule("d2-game", .{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
 
     // Smoke/demo CLI: resolve a single attack (attacker vs defender, seed).
     const exe = b.addExecutable(.{
-        .name = "d2-sim",
+        .name = "d2-game",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
