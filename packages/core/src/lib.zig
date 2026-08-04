@@ -13,6 +13,7 @@ pub const collision = @import("collision.zig");
 pub const stat = @import("stat.zig");
 pub const unit = @import("unit.zig");
 pub const skill = @import("skill.zig");
+pub const object = @import("object.zig");
 pub const itemstatcost = @import("wire/itemstatcost.zig");
 pub const bitreader = @import("wire/bitreader.zig");
 pub const itemtypes = @import("wire/itemtypes.zig");
@@ -23,6 +24,7 @@ pub const wire = @import("wire/item.zig");
 
 pub const Seed = rng.Seed;
 pub const DoFunc = skill.DoFunc;
+pub const OperateFn = object.OperateFn;
 pub const Colbit = collision.Colbit;
 pub const Colmask = collision.Colmask;
 pub const Stat = stat.Stat;
@@ -44,4 +46,5 @@ test {
     _ = wire;
     _ = unit;
     _ = skill;
+    _ = object;
 }
