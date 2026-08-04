@@ -62,9 +62,11 @@ jobs:
       - name: Package
         run: ./scripts/crates-pack.sh
 
+      # Runs on dry runs too. The exchange is what proves the trusted-publishing policy matches
+      # (repo, workflow file name, owner), and finding a mismatch here costs nothing, whereas
+      # finding it during a real release burns a version number.
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
-        if: ${{ !inputs.dry_run }}
 
       - name: Publish
         if: ${{ !inputs.dry_run }}
