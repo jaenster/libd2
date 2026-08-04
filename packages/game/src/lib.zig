@@ -29,6 +29,7 @@ pub const shrines = @import("shrines.zig");
 pub const effect = @import("effect.zig");
 pub const object = @import("object.zig");
 pub const events = @import("events.zig");
+pub const world = @import("world.zig");
 pub const baal = @import("baal.zig");
 pub const character = @import("character.zig");
 pub const derive = @import("derive.zig");
@@ -105,6 +106,7 @@ test {
     _ = effect;
     _ = object;
     _ = events;
+    _ = world;
     _ = baal;
     _ = skills_barbarian;
     _ = skills_amazon;
