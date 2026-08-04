@@ -24,6 +24,7 @@ const portals = @import("portals.zig");
 
 pub const Level = level_mod.Level;
 pub const Exit = level_mod.Exit;
+pub const Door = level_mod.Door;
 pub const Point = grid.Point;
 
 /// A position: a level plus LEVEL-LOCAL subtile coordinates. Level-local rather than world coords
@@ -41,6 +42,13 @@ pub const Move = struct {
     kind: Kind,
 
     pub const Kind = enum { walk, teleport };
+};
+
+/// A door a route passes: which leg, which waypoint it is nearest, and the door itself.
+pub const RouteDoor = struct {
+    leg: usize,
+    move: usize,
+    door: Door,
 };
 
 /// A chosen way out of a level: which link, and the reachable subtile that stands for it.
@@ -146,6 +154,10 @@ pub const World = struct {
     pather: astar.Pather,
     /// Levels.txt `Teleport` by level id, parsed once at first load.
     teleport_rule: []level_mod.TeleportRule = &.{},
+    /// Objects.txt `OperateFn` for every row NAMED "door", by class id; -1 for everything else.
+    /// Parsed once at first load rather than transcribed, so a data change cannot leave a stale
+    /// hardcoded list behind.
+    door_fn: []i16 = &.{},
 
     pub fn init(alloc: std.mem.Allocator, seed: u32, difficulty: drlg.Difficulty) World {
         return .{
@@ -162,6 +174,7 @@ pub const World = struct {
         self.by_id.deinit(self.alloc);
         self.pather.deinit();
         if (self.teleport_rule.len != 0) self.alloc.free(self.teleport_rule);
+        if (self.door_fn.len != 0) self.alloc.free(self.door_fn);
         self.* = undefined;
     }
 
@@ -174,6 +187,7 @@ pub const World = struct {
     /// the level graph then spans all of them, so cross-act portals route in one call.
     pub fn loadAct(self: *World, ctx: *drlg.Ctx, act_no: i32) !void {
         if (self.teleport_rule.len == 0) self.teleport_rule = try parseTeleportColumn(self.alloc);
+        if (self.door_fn.len == 0) self.door_fn = try parseDoorClasses(self.alloc);
 
         var full = try drlg.generateActFull(ctx, self.alloc, act_no, self.seed, self.difficulty, .{ .room_links = true });
         defer full.deinit(self.alloc);
@@ -254,6 +268,55 @@ pub const World = struct {
     fn teleportRuleFor(self: *const World, id: i32) level_mod.TeleportRule {
         if (id < 0 or @as(usize, @intCast(id)) >= self.teleport_rule.len) return .allowed;
         return self.teleport_rule[@intCast(id)];
+    }
+
+    /// Every DOOR on a level, in that level's local subtiles.
+    ///
+    /// Doors matter to a mover but not to the search. The generated collision grid carries no door
+    /// bit at all — `COLBIT_DOOR` is runtime occupancy a host ORs in while a door is shut — so a
+    /// path already runs straight through a doorway, which is correct: a walking character opens
+    /// what it walks into. What the search cannot do is tell you that you will have to. These are
+    /// the positions to check a route against so the mover knows to stop and open one.
+    ///
+    /// (Teleport sidesteps the question: a cast passes through the wall the door sits in. It only
+    /// cannot LAND on the door's own cell, since `COLMASK_PLAYER_PATH` includes 0x800.)
+    pub fn doorsOn(self: *World, level_id: i32, out: *std.ArrayListUnmanaged(Door)) !void {
+        const lv = self.level(level_id) orelse return error.UnknownLevel;
+        for (lv.presets) |unit| {
+            if (unit.etype != 2) continue;
+            const cls = unit.txt_file_no;
+            if (cls < 0 or @as(usize, @intCast(cls)) >= self.door_fn.len) continue;
+            const ofn = self.door_fn[@intCast(cls)];
+            if (ofn < 0) continue;
+            try out.append(self.alloc, .{ .class_id = cls, .x = unit.x, .y = unit.y, .operate_fn = ofn });
+        }
+    }
+
+    /// The doors a route passes within `radius` subtiles of, in the order they are met. This is the
+    /// list a mover needs: "on leg 3, at this waypoint, there is a door to open".
+    pub fn doorsAlong(self: *World, r: *const Route, radius: i32, out: *std.ArrayListUnmanaged(RouteDoor)) !void {
+        var scratch: std.ArrayListUnmanaged(Door) = .empty;
+        defer scratch.deinit(self.alloc);
+        for (r.legs, 0..) |leg, li| {
+            scratch.clearRetainingCapacity();
+            self.doorsOn(leg.level, &scratch) catch continue;
+            for (scratch.items) |d| {
+                var best: ?usize = null;
+                var best_d: i64 = std.math.maxInt(i64);
+                for (leg.moves, 0..) |m, mi| {
+                    const dx: i64 = m.x - d.x;
+                    const dy: i64 = m.y - d.y;
+                    const dist = dx * dx + dy * dy;
+                    if (dist < best_d) {
+                        best_d = dist;
+                        best = mi;
+                    }
+                }
+                const mi = best orelse continue;
+                if (best_d > @as(i64, radius) * @as(i64, radius)) continue;
+                try out.append(self.alloc, .{ .leg = li, .move = mi, .door = d });
+            }
+        }
     }
 
     /// Every level reachable in one step from `id`, including the runtime portals map generation
@@ -715,6 +778,58 @@ fn parseTeleportColumn(alloc: std.mem.Allocator) ![]level_mod.TeleportRule {
         };
     }
     return rows.toOwnedSlice(alloc);
+}
+
+/// Objects.txt rows NAMED "door", mapped id -> OperateFn (-1 where the row is not a door).
+///
+/// Matching on the name rather than on OperateFn deliberately: the ordinary door is OperateFn 8,
+/// but secret doors (18), the Act 3 slime doors (29) and Tyrael's door (0) are doors too, and a
+/// route should mention them. "TrappDoor" is excluded by the exact-name match — it is a level
+/// transition, not something you open.
+fn parseDoorClasses(alloc: std.mem.Allocator) ![]i16 {
+    const text = d2data.file("Objects");
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    const header = lines.next() orelse return error.InvalidTable;
+
+    var id_col: ?usize = null;
+    var fn_col: ?usize = null;
+    var name_col: ?usize = null;
+    {
+        var cols = std.mem.splitScalar(u8, header, '\t');
+        var i: usize = 0;
+        while (cols.next()) |c| : (i += 1) {
+            const name = std.mem.trim(u8, c, "\r");
+            if (std.mem.eql(u8, name, "Id")) id_col = i;
+            if (std.mem.eql(u8, name, "OperateFn")) fn_col = i;
+            if (name_col == null and std.mem.eql(u8, name, "Name")) name_col = i;
+        }
+    }
+    const idc = id_col orelse return error.InvalidTable;
+    const fc = fn_col orelse return error.InvalidTable;
+    const nc = name_col orelse return error.InvalidTable;
+
+    var out: std.ArrayListUnmanaged(i16) = .empty;
+    errdefer out.deinit(alloc);
+    while (lines.next()) |line| {
+        if (std.mem.trim(u8, line, "\r \t").len == 0) continue;
+        var cols = std.mem.splitScalar(u8, line, '\t');
+        var i: usize = 0;
+        var id: ?i32 = null;
+        var is_door = false;
+        var ofn: i16 = 0;
+        while (cols.next()) |c| : (i += 1) {
+            const v = std.mem.trim(u8, c, "\r ");
+            if (i == idc) id = std.fmt.parseInt(i32, v, 10) catch null;
+            if (i == nc) is_door = std.ascii.eqlIgnoreCase(v, "door");
+            if (i == fc) ofn = std.fmt.parseInt(i16, v, 10) catch 0;
+        }
+        const cid = id orelse continue;
+        if (cid < 0) continue;
+        const want: usize = @intCast(cid + 1);
+        if (out.items.len < want) try out.appendNTimes(alloc, -1, want - out.items.len);
+        if (is_door) out.items[@intCast(cid)] = ofn;
+    }
+    return out.toOwnedSlice(alloc);
 }
 
 const testing = std.testing;

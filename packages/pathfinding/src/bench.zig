@@ -4,6 +4,7 @@
 //!     zig build bench -Doptimize=ReleaseFast -- <seed> <act> near <level> <dist> <count>
 //!     zig build bench -Doptimize=ReleaseFast -- <seed> <act> run  <fromLevel> <toLevel>
 //!     zig build bench -Doptimize=ReleaseFast -- <seed> 4     chaos
+//!     zig build bench -Doptimize=ReleaseFast -- <seed> game            (all five acts, start to end)
 //!
 //! With two extra level ids it instead times that one CROSS-LEVEL route repeatedly, which is the
 //! interesting number for a bot: a whole journey, not a single level's traverse.
@@ -208,12 +209,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var args = std.process.Args.Iterator.init(init.args);
     _ = args.next();
     const seed: u32 = if (args.next()) |a| try std.fmt.parseInt(u32, a, 0) else 0x13572468;
-    const act_1based: i32 = if (args.next()) |a| try std.fmt.parseInt(i32, a, 10) else 1;
+    const act_arg: []const u8 = args.next() orelse "1";
+    const arg2_is_game = std.mem.eql(u8, act_arg, "game");
+    const act_1based: i32 = if (arg2_is_game) 1 else try std.fmt.parseInt(i32, act_arg, 10);
     const act = act_1based - 1;
     const arg3: ?[]const u8 = args.next();
     const near_mode = arg3 != null and std.mem.eql(u8, arg3.?, "near");
     const run_mode = arg3 != null and std.mem.eql(u8, arg3.?, "run");
     const chaos_mode = arg3 != null and std.mem.eql(u8, arg3.?, "chaos");
+    const game_mode = arg2_is_game or (arg3 != null and std.mem.eql(u8, arg3.?, "game"));
     // `chaos spans` additionally lists every individual hop, not just the aggregate.
     var show_spans = false;
     const run_from: i32 = if (run_mode) try std.fmt.parseInt(i32, args.next() orelse "1", 10) else 0;
@@ -221,7 +225,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const near_level: i32 = if (near_mode) try std.fmt.parseInt(i32, args.next() orelse "3", 10) else 0;
     const near_dist: i32 = if (near_mode) try std.fmt.parseInt(i32, args.next() orelse "120", 10) else 0;
     const near_count: usize = if (near_mode) try std.fmt.parseInt(usize, args.next() orelse "80", 10) else 0;
-    const explicit = !near_mode and !run_mode and !chaos_mode;
+    const explicit = !near_mode and !run_mode and !chaos_mode and !game_mode;
     const from_level: ?i32 = if (!explicit) null else if (arg3) |a| try std.fmt.parseInt(i32, a, 10) else null;
     const to_level: ?i32 = if (!explicit) null else if (args.next()) |a| try std.fmt.parseInt(i32, a, 10) else null;
 
@@ -231,7 +235,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var timer = Timer.begin();
     var world = pf.World.init(gpa, seed, .normal);
     defer world.deinit();
-    try world.loadAct(&ctx, act);
+    if (game_mode) {
+        for (0..5) |a| try world.loadAct(&ctx, @intCast(a));
+    } else {
+        try world.loadAct(&ctx, act);
+    }
     const load_ns = timer.read();
 
     print("seed 0x{x} act {d}: {d} levels loaded in {d:.1} ms\n\n", .{
@@ -251,6 +259,146 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
         print("cross-level room links: {d}; level pairs a cast can bridge: {d}\n\n", .{ links, usable });
+    }
+
+    // The whole game, start to end: can a character actually get from the Rogue Encampment to the
+    // Worldstone Chamber? Every act loaded, so the level graph spans all of them.
+    if (game_mode) {
+        const STAGES = [_]struct { to: i32, name: []const u8 }{
+            .{ .to = 37, .name = "Andariel (Catacombs 4)" },
+            .{ .to = 73, .name = "Duriel (Tal Rasha's Chamber)" },
+            .{ .to = 102, .name = "Mephisto (Durance 3)" },
+            .{ .to = 108, .name = "Diablo (Chaos Sanctum)" },
+            .{ .to = 132, .name = "Baal (Worldstone Chamber)" },
+        };
+        // Probe the Act 5 chain link by link when it fails, so the break is named rather than
+        // reported as a blanket "unreachable".
+        const PROBES = [_][2]i32{
+            .{ 108, 109 }, .{ 109, 110 }, .{ 110, 111 }, .{ 111, 112 }, .{ 112, 113 },
+            .{ 113, 115 }, .{ 115, 117 }, .{ 117, 118 }, .{ 118, 120 }, .{ 120, 128 },
+            .{ 128, 129 }, .{ 129, 130 }, .{ 130, 131 }, .{ 131, 132 },
+        };
+        print("{d} levels loaded across 5 acts in {d:.1} ms\n\n", .{
+            world.levels.items.len, @as(f64, @floatFromInt(load_ns)) / 1e6,
+        });
+
+        var chain: std.ArrayListUnmanaged(i32) = .empty;
+        defer chain.deinit(gpa);
+        var stage_from: i32 = 1;
+        var ok = true;
+        for (STAGES) |st| {
+            chain.clearRetainingCapacity();
+            world.levelRoute(stage_from, st.to, &chain) catch |e| {
+                print("  {s:<30} UNREACHABLE ({s})\n", .{ st.name, @errorName(e) });
+                ok = false;
+                stage_from = st.to;
+                continue;
+            };
+            print("  {s:<30} {d:2} levels:", .{ st.name, chain.items.len });
+            for (chain.items) |id| print(" {d}", .{u(id)});
+            print("\n", .{});
+            stage_from = st.to;
+        }
+
+        // And the single end-to-end question.
+        chain.clearRetainingCapacity();
+        if (world.levelRoute(1, 132, &chain)) {
+            var acts_seen: [6]bool = @splat(false);
+            for (chain.items) |id| {
+                const a: usize = if (id <= 39) 1 else if (id <= 74) 2 else if (id <= 102) 3 else if (id <= 108) 4 else 5;
+                acts_seen[a] = true;
+            }
+            var n: usize = 0;
+            for (acts_seen[1..]) |seen| {
+                if (seen) n += 1;
+            }
+            print("\n  Rogue Encampment -> Worldstone Chamber: {d} levels, spanning {d}/5 acts\n", .{ chain.items.len, n });
+        } else |e| {
+            print("\n  Rogue Encampment -> Worldstone Chamber: UNREACHABLE ({s})\n", .{@errorName(e)});
+            ok = false;
+        }
+        // Audit every level's Levels.txt Vis entries against the adjacency generation reports. A
+        // Vis entry naming a level is the game saying "these two connect"; if generation produces
+        // no exit for it, the level graph has a hole.
+        {
+            const text = @import("d2-data").file("Levels");
+            var lines = std.mem.splitScalar(u8, text, '\n');
+            const header = lines.next() orelse return;
+            var idc: usize = 0;
+            var visc: [8]usize = @splat(0);
+            {
+                var cols = std.mem.splitScalar(u8, header, '\t');
+                var i: usize = 0;
+                while (cols.next()) |c| : (i += 1) {
+                    const nm = std.mem.trim(u8, c, "\r");
+                    if (std.mem.eql(u8, nm, "Id")) idc = i;
+                    for (0..8) |v| {
+                        var buf: [8]u8 = undefined;
+                        const want = std.fmt.bufPrint(&buf, "Vis{d}", .{v}) catch continue;
+                        if (std.mem.eql(u8, nm, want)) visc[v] = i;
+                    }
+                }
+            }
+            var holes: usize = 0;
+            var checked: usize = 0;
+            print("\n  vis audit (Levels.txt says they connect, generation disagrees):\n", .{});
+            while (lines.next()) |line| {
+                if (std.mem.trim(u8, line, "\r \t").len == 0) continue;
+                var cols = std.mem.splitScalar(u8, line, '\t');
+                var i: usize = 0;
+                var lid: i32 = -1;
+                var vis: [8]i32 = @splat(0);
+                while (cols.next()) |c| : (i += 1) {
+                    const v = std.mem.trim(u8, c, "\r ");
+                    if (i == idc) lid = std.fmt.parseInt(i32, v, 10) catch -1;
+                    for (0..8) |k| {
+                        if (visc[k] != 0 and i == visc[k]) vis[k] = std.fmt.parseInt(i32, v, 10) catch 0;
+                    }
+                }
+                const lv = world.level(lid) orelse continue;
+                for (vis) |dest| {
+                    if (dest == 0 or dest == lid) continue;
+                    if (world.level(dest) == null) continue;
+                    checked += 1;
+                    var found = false;
+                    for (lv.exits) |e| {
+                        if (e.to_level == dest) found = true;
+                    }
+                    // The other side counts too: the pair connects if either names the other.
+                    if (!found) {
+                        if (world.level(dest)) |dl| {
+                            for (dl.exits) |e| {
+                                if (e.to_level == lid) found = true;
+                            }
+                        }
+                    }
+                    if (!found) {
+                        holes += 1;
+                        print("    {d:3} -> {d:3}  no exit either way\n", .{ u(lid), u(dest) });
+                    }
+                }
+            }
+            print("    {d} of {d} Vis pairs have no adjacency\n", .{ holes, checked });
+        }
+
+        if (!ok) {
+            print("\n  link probe:\n", .{});
+            for (PROBES) |pr| {
+                chain.clearRetainingCapacity();
+                if (world.levelRoute(pr[0], pr[1], &chain)) {
+                    print("    {d:3} -> {d:3}  ok ({d} levels)\n", .{ u(pr[0]), u(pr[1]), chain.items.len });
+                } else |_| {
+                    print("    {d:3} -> {d:3}  BROKEN\n", .{ u(pr[0]), u(pr[1]) });
+                    for (pr) |lid| {
+                        const lv = world.level(lid) orelse continue;
+                        print("        level {d} exits ({d}):", .{ u(lid), lv.exits.len });
+                        for (lv.exits) |e| print(" {d}({s})", .{ u(e.to_level), @tagName(e.kind) });
+                        print("\n", .{});
+                    }
+                }
+            }
+        }
+        return;
     }
 
     // The Chaos Sanctuary run, on the real preset positions: River of Flame waypoint, across into
