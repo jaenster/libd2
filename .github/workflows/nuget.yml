@@ -1,0 +1,99 @@
+name: nuget
+
+# The .NET package is versioned and released on its own, separately from the zig packages.
+# It covers the WHOLE library rather than one subsystem, so it has no single package's version
+# to inherit, and being able to ship a binding fix without re-releasing anything else is worth
+# a workflow of its own.
+#
+# Publishing uses NuGet trusted publishing (OIDC), so there is no stored API key. The policy on
+# nuget.org must name THIS file (nuget.yml) as its Workflow File.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version, e.g. 0.1.0 or 0.1.0-preview.1'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build and pack only — no publish'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write   # OIDC token issuance for trusted publishing
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-gnu
+          - aarch64-linux-gnu
+          - arm-linux-gnueabihf
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+          - arm-linux-musleabihf
+          - riscv64-linux-gnu
+          - x86_64-freebsd
+          - aarch64-freebsd
+          - x86_64-macos
+          - aarch64-macos
+          - x86-windows-gnu
+          - x86_64-windows-gnu
+          - aarch64-windows-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - name: Build every package that has a C ABI for ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          # A package ships a C ABI iff it has a capi.zig; nothing else is useful from .NET.
+          for capi in packages/*/src/capi.zig; do
+            pkg="$(basename "$(dirname "$(dirname "$capi")")")"
+            echo "== $pkg -> ${{ matrix.target }}"
+            ( cd "packages/$pkg" && zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast \
+                -Dcli=false --prefix "$GITHUB_WORKSPACE/dist/$pkg/${{ matrix.target }}" )
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, pattern: nuget-*, merge-multiple: true }
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+
+      - name: Pack
+        run: DRY_RUN=1 scripts/nuget-pack.sh "${{ inputs.version }}" artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LibD2.${{ inputs.version }}.nupkg
+          path: '*.nupkg'
+
+      # Short-lived key, minted here rather than stored. NuGet's temporary keys last an hour,
+      # so this sits immediately before the push.
+      - uses: NuGet/login@v1
+        id: login
+        if: ${{ !inputs.dry_run }}
+        with: { user: jaenster }   # nuget.org profile name, not an email address
+
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        run: |
+          dotnet nuget push "LibD2.${{ inputs.version }}.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+            --skip-duplicate

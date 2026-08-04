@@ -7,3 +7,9 @@ zig-out/
 
 # Generated visualisations (large embedded map data)
 packages/pathfinding/viz/
+
+# NuGet: native assets are staged by scripts/nuget-pack.sh, plus dotnet build output
+dotnet/**/runtimes/
+dotnet/**/bin/
+dotnet/**/obj/
+*.nupkg
