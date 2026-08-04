@@ -6,6 +6,9 @@ Reverse-engineered from the retail binary, with no Blizzard code.
 
 ## Packages in this repo
 
+Everything under `packages/` is a library, consumable on its own. Runnable programs
+built on top of them live under `apps/`.
+
 | package | module | depends on | what it is |
 |-|-|-|-|
 | [`data`](packages/data) | `d2-data` | — | The authoritative 1.14d Blizzard excel tables (Patch_D2 override order, extracted from the retail MPQs) plus a generic TSV reader. Every table is `@embedFile`d, so the loader needs no filesystem and cross-compiles to wasm. |
@@ -14,10 +17,15 @@ Reverse-engineered from the retail binary, with no Blizzard code.
 | [`save`](packages/save) | `d2-save` | `core`, `data`, `items`, `formats` | The `.d2s` character save format, read and write: the marker-delimited quest, waypoint, NPC, attribute, skill and item sections on top of the fixed header `formats` owns. Byte-exact round-trip over real saves. |
 | [`drlg`](packages/drlg) | `d2-drlg` | `formats`, `core`, `data` | **DRLG** — the map generator. Given a seed, produces the room/tile layout, collision grid, roads and object/monster population for every level in all five acts. Pure generation, verified byte-exact over 1000+ seeds. |
 | [`render`](packages/render) | `d2-render` | `drlg`, `formats` | Turns drlg's generation output into visuals: automap sprite cells and real DT1 tile-art materialization. A pure post-generation consumer. |
-| [`items`](packages/items) | `d2-items` | `core`, `data` | Seed-driven item drops: treasure-class resolution, item-class roll by level, quality, and magic/rare affix selection. |
+| [`items`](packages/item) | `d2-item` | `core`, `data` | Seed-driven item drops: treasure-class resolution, item-class roll by level, quality, and magic/rare affix selection. |
 | [`sim`](packages/sim) | `d2-sim` | `core`, `data` | Runtime simulation: units, stats, combat, skills, monsters and missiles, plus the byte-exact server↔client protocol layer. |
 | [`util`](packages/util) | `d2-util` | — | Cross-cutting primitives with no domain of their own: the D2GS server→client Huffman packet codec and the length-prefix framing / `AF` greeting around it. |
-| [`drlg-server`](packages/drlg-server) | — | `drlg` | Native multi-threaded HTTP server that serves an act's map JSON straight from `d2-drlg`. An application, not a library module. |
+
+## Apps
+
+| app | built on | what it is |
+|-|-|-|
+| [`drlg-server`](apps/drlg-server) | `drlg` | Native multi-threaded HTTP server that serves an act's map JSON straight from `d2-drlg`. Compresses per-level collision concurrently and gzips its responses. Runs at [libd2.typeguru.nl](https://libd2.typeguru.nl). |
 
 Each subsystem is validated against ground truth captured from the real engine.
 
@@ -56,7 +64,7 @@ for (const sh of s)
 ```
 
 Tiny typed shim, ESM + CommonJS, runs natively on modern Node/Bun/Deno. Same
-shape for every package (`@jaenster/d2items`, …).
+shape for every package (`@jaenster/d2item`, …).
 
 ### Language guides
 
@@ -75,7 +83,7 @@ Where to get the artifacts:
 ### Reference API (the `drlg` map generator)
 
 The language guides use `drlg` (`d2drlg`) as the running example — given a seed it
-generates an entire act's room layout — and `items` (`d2items`) as a second one.
+generates an entire act's room layout — and `items` (`d2item`) as a second one.
 The `drlg` C API:
 
 ```c
