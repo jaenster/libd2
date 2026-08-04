@@ -9,7 +9,7 @@ zig-out/
 packages/pathfinding/viz/
 
 # NuGet: native assets are staged by scripts/nuget-pack.sh, plus dotnet build output
-dotnet/**/runtimes/
-dotnet/**/bin/
-dotnet/**/obj/
+packages/dotnet/**/runtimes/
+packages/dotnet/**/bin/
+packages/dotnet/**/obj/
 *.nupkg

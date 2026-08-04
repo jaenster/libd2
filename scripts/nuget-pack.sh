@@ -23,7 +23,7 @@ version="$1"; artifacts_root="$2"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="$PWD"
-proj="${repo_root}/dotnet/LibD2"
+proj="${repo_root}/packages/dotnet/LibD2"
 
 # zig target triple -> .NET runtime identifier. Anything not listed is skipped rather than
 # guessed, because a wrong RID fails at the consumer's runtime rather than here.
