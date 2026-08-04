@@ -5709,3 +5709,94 @@ test "warp transition moves the player to a connected level and re-populates it"
     try std.testing.expect(dst.monsterCount() >= 1); // target level populated with monsters
     try std.testing.expect(c.pending_loadact); // client will get a fresh LoadAct
 }
+
+// --- headless session driver ------------------------------------------------
+//
+// Running the gameserver with NO sockets — a buffer where the networked host puts a write(2). This is
+// the single-player / clientless path: the exact same GameInstance, driven a fixed number of ticks with
+// scripted C->S input, its every server->client flush captured into memory. The host wraps these raw
+// flushes into its own on-disk trace format; nothing here knows about files or sockets.
+
+/// A C->S command to inject before a given game frame (already-encoded wire bytes).
+pub const Cmd = struct { at_tick: u32, bytes: []const u8 };
+
+/// One captured server->client flush: the logical tick it went out on (tick 0 = the join burst, tick
+/// N+1 = frame N) and the RAW AF00 bytes. `bytes` is owned by the HeadlessRun that returned it.
+pub const Flush = struct { tick: u32, bytes: []const u8 };
+
+/// The captured output of a headless run: every server->client flush, in emission order.
+pub const HeadlessRun = struct {
+    flushes: std.ArrayListUnmanaged(Flush) = .empty,
+
+    pub fn deinit(self: *HeadlessRun, gpa: std.mem.Allocator) void {
+        for (self.flushes.items) |f| gpa.free(f.bytes);
+        self.flushes.deinit(gpa);
+    }
+};
+
+// The tick sink is a plain fn pointer (no context capture), so one run's flush lands in this scratch
+// buffer and is copied out before the next tick. Threadlocal so concurrent headless runs on different
+// threads don't clobber each other; a single run is inherently sequential.
+threadlocal var g_capture: [1 << 20]u8 = undefined;
+threadlocal var g_capture_len: usize = 0;
+
+fn captureSink(_: i32, buf: []const u8) isize {
+    const n = @min(buf.len, g_capture.len - g_capture_len);
+    @memcpy(g_capture[g_capture_len..][0..n], buf[0..n]);
+    g_capture_len += n;
+    return @intCast(buf.len);
+}
+
+/// Drive a deterministic game headless for `ticks` frames — no sockets, a buffer sink — injecting each
+/// `script` command before its frame, and capture every server->client flush. Tick 0 is the join burst;
+/// tick N+1 is frame N. This is how a single-player or clientless host runs the gameserver. Caller owns
+/// the returned HeadlessRun (call deinit).
+pub fn runHeadless(
+    gpa: std.mem.Allocator,
+    seed: u32,
+    level: u16,
+    difficulty: sim.world.Difficulty,
+    script: []const Cmd,
+    ticks: u32,
+) !HeadlessRun {
+    var gi = GameInstance.init(gpa, 1, seed, 0, difficulty);
+    gi.setLevel(level);
+    defer gi.deinit();
+    _ = try gi.generateLevel();
+    const c = try gi.addClient(-1, "", "");
+
+    var run = HeadlessRun{};
+    errdefer run.deinit(gpa);
+
+    // The join burst goes out RAW on the wire (AF00), same as every tick flush.
+    var jbuf: [8192]u8 = undefined;
+    try appendFlush(&run, gpa, 0, gi.buildJoinPackets(c, &jbuf));
+
+    var t: u32 = 0;
+    while (t < ticks) : (t += 1) {
+        for (script) |cmd| {
+            if (cmd.at_tick == t) _ = gi.handleCommand(c, cmd.bytes);
+        }
+        g_capture_len = 0;
+        gi.tick(&captureSink);
+        try appendFlush(&run, gpa, t + 1, g_capture[0..g_capture_len]);
+    }
+    return run;
+}
+
+fn appendFlush(run: *HeadlessRun, gpa: std.mem.Allocator, tick: u32, buf: []const u8) !void {
+    const owned = try gpa.dupe(u8, buf);
+    errdefer gpa.free(owned);
+    try run.flushes.append(gpa, .{ .tick = tick, .bytes = owned });
+}
+
+test "runHeadless drives a game with a buffer sink and captures the join burst + frames" {
+    const gpa = std.testing.allocator;
+    var run = try runHeadless(gpa, 0x13572468, 1, .normal, &.{}, 3);
+    defer run.deinit(gpa);
+    // Join burst (tick 0) + one flush per driven frame (ticks 1..3).
+    try std.testing.expectEqual(@as(usize, 4), run.flushes.items.len);
+    try std.testing.expectEqual(@as(u32, 0), run.flushes.items[0].tick);
+    try std.testing.expect(run.flushes.items[0].bytes.len > 0); // a real join burst went out
+    try std.testing.expectEqual(@as(u32, 3), run.flushes.items[3].tick);
+}
