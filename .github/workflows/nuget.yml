@@ -6,7 +6,7 @@ name: nuget
 # a workflow of its own.
 #
 # Publishing uses NuGet trusted publishing (OIDC), so there is no stored API key. The policy on
-# nuget.org must name THIS file (nuget.yaml) as its Workflow File.
+# nuget.org must name THIS file (nuget.yml) as its Workflow File.
 
 on:
   workflow_dispatch:
@@ -85,9 +85,11 @@ jobs:
 
       # Short-lived key, minted here rather than stored. NuGet's temporary keys last an hour,
       # so this sits immediately before the push.
+      # Runs on dry runs too: this is the step that validates the trusted-publishing policy
+      # (repo, workflow file name, owner), and finding a mismatch here costs nothing, whereas
+      # finding it during a real release burns a version number.
       - uses: NuGet/login@v1
         id: login
-        if: ${{ !inputs.dry_run }}
         with: { user: jaenster }   # nuget.org profile name, not an email address
 
       - name: Publish
