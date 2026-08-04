@@ -466,6 +466,10 @@ pub const D2DrlgShrine = extern struct {
     y: i32,
 };
 
+/// DEPRECATED, see d2drlg.h: these are already in the level's presets as eType-2 objects at
+/// the same position, so this regenerates an entire act to return a subset of
+/// d2drlg_act_level_presets. Kept for ABI 3; removed in the next major.
+///
 /// Generate an act and write up to `cap` of a level's seeded OUTDOOR SHRINES/WELLS
 /// (SpawnAct12Shrines → LvlSub Type-5) into `out`. `difficulty` is 0=normal
 /// 1=nightmare 2=hell. Returns the FULL shrine count (>=0, may exceed `cap` =>

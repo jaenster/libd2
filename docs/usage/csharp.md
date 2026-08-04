@@ -79,7 +79,7 @@ Each `Adjacent` also carries the level-local subtile position of the crossing, s
 ## Shrines
 
 ```csharp
-foreach (var s in drlg.GetShrines(1337, levelId: 3))
+foreach (var s in coldPlains.Shrines)
     Console.WriteLine($"{(s.IsWell ? "well" : "shrine")} at ({s.X}, {s.Y})");
 ```
 
@@ -91,7 +91,9 @@ well at (5052, 5457)
 shrine at (5012, 5452)
 ```
 
-Those are world subtile coordinates; divide by 5 for tiles.
+Those are world subtile coordinates; divide by 5 for tiles. `Shrines` is a filter over the
+level's own `Presets` — the generator places each shrine as an object there too — so it costs
+nothing and needs no second pass over the world.
 
 ## Collision
 
@@ -143,6 +145,6 @@ when called with zero capacity, so ask for the size first, then allocate:
 
 ```csharp
 [DllImport("d2drlg", CallingConvention = CallingConvention.Cdecl)]
-static extern int d2drlg_level_shrines(IntPtr ctx, uint seed, int difficulty,
-                                       int levelId, [Out] Shrine[] outShrines, int cap);
+static extern int d2drlg_act_level_presets(IntPtr act, int levelIndex,
+                                           [Out] PresetUnit[] outUnits, int cap);
 ```

@@ -22,11 +22,13 @@ npm install @jaenster/d2drlg
 The top-level functions lazily load the wasm and cache a singleton:
 
 ```ts
-import { shrines, generateAct } from '@jaenster/d2drlg';
+import { render, levelShrines, generateAct } from '@jaenster/d2drlg';
 
-// Seeded outdoor shrines/wells of a level. Cold Plains = level 3.
-const s = await shrines(1337, 3);
-for (const sh of s)
+// A level's seeded outdoor shrines/wells are already among its presets, so reading them
+// off a generated level is a filter rather than a second generation. Cold Plains = level 3.
+const map = await render(1337, 0, 0);
+const coldPlains = map.levels.find(l => l.levelNo === 3)!;
+for (const sh of levelShrines(coldPlains))
   console.log(`${sh.isWell ? 'well ' : 'shrine'} at tile (${sh.tileX}, ${sh.tileY})`);
 
 // Or a whole act's room layout (difficulty 0/1/2, actNo 0..4).
@@ -38,15 +40,17 @@ CommonJS is identical via `require`. Node has been able to `require()` an ESM gr
 since 22.12, and this shim has no top-level await, so there is no separate CJS build:
 
 ```js
-const { shrines } = require('@jaenster/d2drlg');
-shrines(1337, 3).then(list => console.log(list));
+const { render, levelShrines } = require('@jaenster/d2drlg');
+render(1337, 0, 0).then(map => console.log(levelShrines(map.levels.find(l => l.levelNo === 3))));
 ```
 
 ## API
 
-- `shrines(seed, levelId, difficulty?=0, actNo?=0): Promise<D2Shrine[]>`: a level's
-  seeded shrines/wells. `x`/`y` are world **subtiles**; `tileX`/`tileY` are
-  `Math.floor(x/5)`; `isWell` is `classId === 130`.
+- `levelShrines(level): D2Shrine[]`: a generated level's seeded shrines/wells, filtered
+  out of its own presets. Synchronous, no generation. `x`/`y` are world **subtiles**;
+  `tileX`/`tileY` are `Math.floor(x/5)`; `isWell` is `classId === 130`.
+- `shrines(seed, levelId, difficulty?=0, actNo?=0): Promise<D2Shrine[]>`: **deprecated**,
+  the same list but it generates an act to find what the level already carries.
 - `generateAct(seed, difficulty?=0, actNo?=0): Promise<D2Act>`: every level in an act
   with its generated rooms.
 - `abiVersion(): Promise<number>`: the module's C-ABI version.

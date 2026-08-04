@@ -8,6 +8,14 @@
  */
 #include <stdint.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#  define D2DRLG_DEPRECATED(msg) __attribute__((deprecated(msg)))
+#elif defined(_MSC_VER)
+#  define D2DRLG_DEPRECATED(msg) __declspec(deprecated(msg))
+#else
+#  define D2DRLG_DEPRECATED(msg)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -117,12 +125,23 @@ typedef struct D2DrlgShrine {
 } D2DrlgShrine;
 
 /*
+ * DEPRECATED. Every shrine this returns is already in the level's PRESETS, folded in as an
+ * eType-2 object at the same position, so this call regenerates a whole act to produce a
+ * strict subset of d2drlg_act_level_presets / d2drlg_level_presets. Filter those instead for
+ * the objects.txt rows the outdoor spawner draws from — 2, 81, 83 and 84 are the shrine
+ * variants, 130 is the well — and convert the level-local subtiles to world by adding the
+ * level origin * 5. Verified identical over 1632 levels: five acts, four seeds, all three
+ * difficulties, 144 of them carrying shrines, zero differences.
+ *
+ * Still exported and still correct; it will go in the next ABI major.
+ *
  * Generate an act and write up to `cap` of a level's seeded OUTDOOR SHRINES/WELLS
  * into `out`. difficulty: 0=normal 1=nightmare 2=hell. Returns the FULL shrine count
  * (>=0, may exceed `cap` => truncated), 0 if the level has none, or a negative error
  * code. x/y are world subtile coords (divide by 5 for tiles). NOTE: regenerates the
  * whole act internally, so it is not cheap.
  */
+D2DRLG_DEPRECATED("every shrine is already in the level's presets; filter those instead")
 int32_t d2drlg_level_shrines(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
                              int32_t level_id, D2DrlgShrine *out, int32_t cap);
 
