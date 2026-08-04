@@ -91,7 +91,7 @@ if (pLevelTxt == NULL || pLevelTxt->Teleport == 0)
     return 0;                                        // level forbids teleport
 
 if (pLevelTxt->Teleport == 2 &&
-    TestCollisionByCoordinates(pUnit, nCursorX, nCursorY, COLLISION_LOS_WALL))
+    TestCollisionByCoordinates(pUnit, nCursorX, nCursorY, 0x804))
     return 0;                                        // level gates the destination
 
 return SUNIT_RelocateUnit(pGame, pUnit, NULL, nCursorX, nCursorY, 0, 0);
@@ -104,7 +104,7 @@ goes through walls. The `Levels.txt` `Teleport` column:
 |-|-|-|
 | 0 | The skill is refused outright | only level 0 (`Null`) |
 | 1 | Free teleport | everything else |
-| 2 | Destination must not carry the line-of-sight bits | only level 73, Duriel's Lair |
+| 2 | Destination must not carry `0x804` (door \| missile_barrier) | only level 73, Duriel's Lair |
 
 ### `SUNIT_RelocateUnit` @ `0x554ea0`
 
@@ -177,9 +177,20 @@ tests each `ppRoomList[i]->eFlags & 1`.)
 - Across a **warp-linked** border: **yes, in principle** — but only while the destination room is
   loaded, which is runtime state.
 
-This package therefore routes seam borders as walks and does not plan teleports across level
-boundaries at all: a planned cast that fails is worse than a slightly longer route. A caller with
-live room state can consult `RoomSet` directly and add the hop.
+This package supports the warp-linked case behind `Options.teleport_across_levels`, off by default.
+`d2-drlg` hands over the engine's own cross-level entries (`RoomLink`, harvested from
+`ppDrlgRoomsExNear` after `LinkNearRoomsByVis` has run), and `World.crossLevelCast` accepts a
+boundary cast only when a real link exists **and** the two cells clear the 50-subtile gate measured
+in WORLD coordinates — the two rooms live in different level-local frames, and a warp destination is
+usually placed far away in the shared world frame, so most linked pairs fail the distance gate and
+correctly yield nothing.
+
+Turn it on when the whole act is resident server-side, which makes the activation filter moot. Seam
+borders remain walks under all settings, because those rooms are never linked at all.
+
+Even then it is not taken blindly: a cast crossing drags you to the link room, which can be further
+away than the ordinary exit. `route` builds both the walk-out leg and the cast-out leg and keeps the
+cheaper one.
 
 ---
 
@@ -193,7 +204,20 @@ room→near-set list. `teleport.zig` accepts a cast only when it clears **both**
 2. the destination room is the caster's room or in its near set.
 
 Landing cells are snapped with `COLMASK_PLAYER_PATH` (0x1c09), matching `SUNIT_RelocateUnit`, and a
-level whose `Teleport` is 2 additionally ORs in the line-of-sight bits, matching the `== 2` branch.
+level whose `Teleport` is 2 additionally ORs in `COLMASK_PLAYER_FLYING` (0x804) — read off the
+instruction itself, `PUSH 0x804` at `0x5ca3a6`, not guessed from the parameter's name.
+
+### Where this package is deliberately stricter than the engine
+
+Two places, both in the safe direction — it will never emit a cast the server refuses, though it may
+decline one the server would have accepted:
+
+- **Landing cells.** `SUNIT_RelocateUnit` SNAPS a blocked request to a free cell inside the resolved
+  room (`GetFreeCoordinates_WithNeighboorRooms`), so a cast aimed into a wall can still succeed.
+  This package only ever emits cells that are already free under the landing mask.
+- **Unit footprint.** The engine snaps using `GetUnitSizeX(pUnit)`; the search models a single
+  subtile (`COLLISION_PATTERN_NONE`). In practice this changes where a cast lands by a subtile or
+  two rather than whether it is accepted, because the engine snaps rather than rejects.
 
 Cost is counted in **casts**, not distance, because that is what the character pays in mana and in
 time. Two searches, chosen by whether a distance gate is in force:
@@ -225,8 +249,9 @@ distance gate.
 | What else can fail a cast? | Destination must be in your room or an adjacent one | `DRLGROOM_FindBetterNearbyRoom` @ `0x463740` |
 | When are two rooms adjacent? | Bbox gap < 6 tiles on both axes, same level | `DefineRoomsNear` @ `0x66bc20` |
 | Cross-level adjacency? | Only across a warp/vis link, and only while loaded | `0x66c220` / `0x66be80`, filtered by `0x66bd00` |
+| Can a cast cross a level boundary? | Yes, on a warp-linked pair also within 50 subtiles in world coords | `Options.teleport_across_levels` |
 | Can you teleport through walls? | Yes — no line-of-sight check | `Skills_SrvDoFunc_027_Teleport` |
 | Where must you land? | A free cell under mask `0x1c09` | `GetFreeCoordinates_WithNeighboorRooms` call in `0x554ea0` |
 | Which levels forbid it? | `Levels.txt Teleport == 0` — only level 0 | `Skills_SrvDoFunc_027_Teleport` |
-| Which levels gate it? | `== 2` — only Duriel's Lair (73), destination must be LOS-clear | same |
+| Which levels gate it? | `== 2` — only Duriel's Lair (73); destination must be clear of `0x804` | `PUSH 0x804` at `0x5ca3a6` |
 | Why do people use 39/40? | Margin under the 50 gate, because the server's view of your position lags | derived |
