@@ -1239,3 +1239,91 @@ test "freeCoordinates honours the footprint the unit occupies" {
     }
     try testing.expect(checked > 20);
 }
+
+test "the Arcane Sanctuary is crossable only because of its teleport pads" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{1});
+    defer f.deinit();
+
+    const lv = f.world.level(pf.portals.ARCANE_SANCTUARY) orelse return error.NoLevel;
+    // Ground truth for the premise: the walkable surface really is many islands, and the pads
+    // really do pair up. If either stops being true this test is no longer testing anything.
+    const pm = try lv.passMap(pf.Colmask.player_path);
+    const comp = try pm.components(alloc);
+    try testing.expect(pm.comp_count > 5);
+    try testing.expect(lv.pads.len > 0);
+    for (lv.pads) |p| try testing.expect(p.at.x != p.to.x or p.at.y != p.to.y);
+
+    // Start at the entry portal — where a character actually arrives — and aim at the far end
+    // of a pad that drops into a different region. Picking arbitrary cells does not work: several
+    // of the 17 islands are pockets no pad serves, and a route between two of those SHOULD fail.
+    var portal: ?pf.Point = null;
+    for (lv.presets) |up| {
+        if (up.etype == 2 and up.txt_file_no == 298) portal = .{ .x = up.x, .y = up.y };
+    }
+    const from = pf.grid.nearestPassable(pm, (portal orelse return error.NoPortal).x, (portal orelse return error.NoPortal).y, 32) orelse
+        return error.NoPassableCell;
+    const from_c = comp[pm.index(from.x, from.y)];
+
+    var to: ?pf.Point = null;
+    for (lv.pads) |pd| {
+        const land = pf.grid.nearestPassable(pm, pd.to.x, pd.to.y, 8) orelse continue;
+        if (comp[pm.index(land.x, land.y)] != from_c) {
+            to = land;
+            break;
+        }
+    }
+    const goal = to orelse return error.NoFarRegion;
+
+    var r = try f.world.route(
+        .{ .level = lv.id, .x = from.x, .y = from.y },
+        .{ .level = lv.id, .x = goal.x, .y = goal.y },
+        .{},
+    );
+    defer r.deinit();
+
+    var pads_used: usize = 0;
+    for (r.legs) |leg| {
+        for (leg.moves) |m| {
+            if (m.kind == .pad) pads_used += 1;
+        }
+    }
+    try testing.expect(pads_used > 0);
+
+    // Every pad move must land on a real pad's far end — snapped to walkable ground, since the
+    // pad object itself can sit on a cell the mask rejects.
+    for (r.legs) |leg| {
+        for (leg.moves, 0..) |m, mi| {
+            if (m.kind != .pad or mi == 0) continue;
+            var matched = false;
+            for (lv.pads) |p| {
+                if (@abs(p.to.x - m.x) <= 8 and @abs(p.to.y - m.y) <= 8) matched = true;
+            }
+            try testing.expect(matched);
+        }
+    }
+}
+
+test "levels without pads are unaffected by the pad search" {
+    const alloc = testing.allocator;
+    var f = try Fixture.load(alloc, &.{0});
+    defer f.deinit();
+
+    // Act 1 has no teleport pads at all, so no level there may grow one, and routing must still
+    // produce pure walks.
+    for (f.world.levels.items) |*lv| try testing.expectEqual(@as(usize, 0), lv.pads.len);
+
+    const lv = f.world.level(2) orelse return error.NoLevel;
+    const pm = try lv.passMap(pf.Colmask.player_path);
+    const a = pf.grid.nearestPassable(pm, @divTrunc(lv.w, 4), @divTrunc(lv.h, 4), 64) orelse return;
+    const b = pf.grid.nearestPassable(pm, lv.w - @divTrunc(lv.w, 4), lv.h - @divTrunc(lv.h, 4), 64) orelse return;
+    var r = try f.world.route(
+        .{ .level = lv.id, .x = a.x, .y = a.y },
+        .{ .level = lv.id, .x = b.x, .y = b.y },
+        .{},
+    );
+    defer r.deinit();
+    for (r.legs) |leg| {
+        for (leg.moves) |m| try testing.expect(m.kind == .walk);
+    }
+}

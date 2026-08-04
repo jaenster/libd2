@@ -57,6 +57,24 @@ pub const Door = struct {
     }
 };
 
+/// A one-way hop between two points of the SAME level: step on `at`, arrive at `to`.
+///
+/// The Arcane Sanctuary is the case that forces this to exist — its walkable ground is 17
+/// disconnected islands and only the one holding the entry portal is reachable on foot, so
+/// without the pads a router cannot leave the landing platform.
+///
+/// Pairing is `OBJOP_RevealAutomapArea` (0x581bf0, the Objects.txt `OperateFn` 27 handler): take
+/// the pad stepped on, scan its own room's unit list for another OBJECT of the SAME class id that
+/// is not itself, and failing that scan every adjacent room via `DRLGROOM_GetAdjacentRoomsList`.
+/// First match wins. Each pad of a pair is its own object, so both directions exist as separate
+/// entries here.
+pub const Pad = struct {
+    at: grid.Point,
+    to: grid.Point,
+    /// The Objects.txt id shared by both ends — the key the engine pairs on.
+    class_id: i32,
+};
+
 pub const Level = struct {
     id: i32,
     /// World TILE origin. Levels of one act share a world frame; add `origin * 5` to a
@@ -79,6 +97,8 @@ pub const Level = struct {
     /// which is how a caller finds a waypoint, a seal or a chest to path to.
     presets: []drlg.PresetUnit,
     exits: []Exit,
+    /// Paired teleporters WITHIN this level (the Arcane Sanctuary pads). Owned.
+    pads: []Pad,
     /// Levels.txt `Teleport`: 0 refuses teleport outright, 1 allows it, 2 gates the destination.
     teleport: TeleportRule,
 
@@ -103,6 +123,7 @@ pub const Level = struct {
         self.alloc.free(self.exits);
         self.alloc.free(self.links);
         self.alloc.free(self.presets);
+        self.alloc.free(self.pads);
         self.rooms.deinit(self.alloc);
         self.* = undefined;
     }

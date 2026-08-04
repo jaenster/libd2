@@ -382,7 +382,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
             return;
         };
         const text = @import("d2-data").file("Objects");
-        print("level {d} ({d}x{d}) preset objects:\n", .{ u(objs_level), u(lv.w), u(lv.h) });
+        // Component of the walkable region each object sits in (or the nearest walkable cell to
+        // it): two objects with different labels are not reachable from one another on foot.
+        const opm = try lv.passMap(pf.Colmask.player_path);
+        const ocomp = try opm.components(gpa);
+        print("level {d} ({d}x{d}) preset objects, {d} walkable regions, {d} pads:\n", .{ u(objs_level), u(lv.w), u(lv.h), opm.comp_count, lv.pads.len });
         for (lv.presets) |unit| {
             if (unit.etype != 2) continue;
             // Find the Objects.txt row with this Id and print its Name + description.
@@ -395,8 +399,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 const idtxt = cols.next() orelse continue;
                 const id = std.fmt.parseInt(i32, std.mem.trim(u8, idtxt, "\r "), 10) catch continue;
                 if (id != unit.txt_file_no) continue;
-                print("  id {d:3}  ({d:4},{d:4})  {s:<22} {s}\n", .{
-                    u(unit.txt_file_no), u(unit.x), u(unit.y), name, desc,
+                const near = pf.grid.nearestPassable(opm, unit.x, unit.y, 24);
+                const reg: i64 = if (near) |n| @intCast(ocomp[opm.index(n.x, n.y)]) else -1;
+                const rm: i64 = if (lv.rooms.atSubtile(unit.x, unit.y)) |r| @intCast(r) else -1;
+                print("  id {d:3}  ({d:4},{d:4})  region {d:3}  room {d:4}  {s:<22} {s}\n", .{
+                    u(unit.txt_file_no), u(unit.x), u(unit.y), reg, rm, name, desc,
                 });
                 break;
             }
