@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-/* From d2drlg.h. Declared here so this header stands alone; include d2drlg.h for the rest. */
+/* From d2drlg.h, for the doc comments below. Include d2drlg.h to actually make one. */
 typedef struct D2DrlgCtx D2DrlgCtx;
 
 /* Opaque routing world: the acts loaded into it and the collision maps built per level. */
@@ -101,9 +101,19 @@ void d2pf_options_default(D2PfOptions *out);
 
 /*
  * Create a routing world over a d2drlg context. difficulty: 0=normal 1=nightmare 2=hell.
- * The context must outlive the world. Returns NULL on failure.
+ * Returns NULL on failure.
+ *
+ * `drlg_ctx_core` is what `d2drlg_ctx_core(ctx)` returns, NOT the D2DrlgCtx handle itself:
+ *
+ *     D2DrlgCtx *ctx = d2drlg_ctx_create();
+ *     D2PfWorld *w   = d2pf_world_create(d2drlg_ctx_core(ctx), seed, 0);
+ *
+ * It is typed void * rather than D2DrlgCtx * so that passing the handle by mistake is a
+ * compile error instead of a crash — C would convert a D2DrlgCtx * silently.
+ *
+ * The context must outlive the world.
  */
-D2PfWorld *d2pf_world_create(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty);
+D2PfWorld *d2pf_world_create(void *drlg_ctx_core, uint32_t seed, int32_t difficulty);
 
 /* Frees a world (NULL-safe). Routes taken from it are independent and outlive it. */
 void d2pf_world_destroy(D2PfWorld *world);
