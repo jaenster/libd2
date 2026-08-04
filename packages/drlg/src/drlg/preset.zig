@@ -326,6 +326,67 @@ pub fn unpackDs1(a: std.mem.Allocator, rel: []const u8) ?ds1mod.Ds1 {
     return ds1blob.unpack(a, rec) catch null;
 }
 
+var g_ds1_cache: std.StringHashMapUnmanaged(*ds1mod.Ds1) = .empty;
+// This std's Thread exposes no Mutex, and the blob index above already spins for its
+// once-init, so the cache guards itself the same way. The critical sections are a hash probe
+// and a map insert, and only a cache MISS ever contends.
+var g_ds1_lock = std.atomic.Value(u8).init(0);
+
+fn ds1CacheLock() void {
+    while (g_ds1_lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) std.atomic.spinLoopHint();
+}
+
+fn ds1CacheUnlock() void {
+    g_ds1_lock.store(0, .release);
+}
+
+/// Shared, process-lifetime parse of a blob DS1. The collision build unpacks the SAME preset
+/// files once per room — a level made of 40 rooms off one LvlPrest re-parsed the same layers
+/// 40 times. The result is immutable (`materializeDs1` takes it const), so one parse serves
+/// every room and every worker. Never freed: the working set is the handful of preset DS1s an
+/// act touches. Returns null only for a key the blob does not hold (same as `unpackDs1`).
+pub fn cachedDs1(rel: []const u8) ?*const ds1mod.Ds1 {
+    ds1CacheLock();
+    if (g_ds1_cache.get(rel)) |d| {
+        ds1CacheUnlock();
+        return d;
+    }
+    ds1CacheUnlock();
+
+    const rec = ds1BlobIndex().get(rel) orelse return null;
+    const a = pool.default_allocator;
+    const parsed = ds1blob.unpack(a, rec) catch return null;
+    const boxed = a.create(ds1mod.Ds1) catch return null;
+    boxed.* = parsed;
+
+    // The key comes from the caller's LvlPrest table, which dies with its Ctx — the cache
+    // outlives that, so it owns its own copy.
+    const key = a.dupe(u8, rel) catch {
+        boxed.deinit();
+        a.destroy(boxed);
+        return null;
+    };
+
+    ds1CacheLock();
+    defer ds1CacheUnlock();
+    // Another worker may have parsed the same key while this one was decoding; keep the
+    // winner so the pointer a caller already holds stays valid.
+    const gop = g_ds1_cache.getOrPut(a, key) catch {
+        a.free(key);
+        boxed.deinit();
+        a.destroy(boxed);
+        return null;
+    };
+    if (gop.found_existing) {
+        a.free(key);
+        boxed.deinit();
+        a.destroy(boxed);
+        return gop.value_ptr.*;
+    }
+    gop.value_ptr.* = boxed;
+    return boxed;
+}
+
 fn ds1BlobIndex() *const ds1blob.Index {
     if (g_blobState.load(.acquire) != 2) {
         if (g_blobState.cmpxchgStrong(0, 1, .acquire, .monotonic) == null) {

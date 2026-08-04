@@ -54,6 +54,7 @@ const ds1 = @import("d2-formats").ds1;
 const dt1pix_data = @import("d2-formats").dt1pix_data;
 const preset = @import("drlg/preset.zig");
 const materialize = @import("drlg/materialize.zig");
+pub const prof = @import("prof.zig");
 
 /// Generation-internal surface exposed for the sibling `d2-render` package. Its
 /// automap + DT1-tile-art layer is a pure post-generation consumer, but it drives
@@ -426,8 +427,14 @@ fn deflateLevelColl(
     deflate_fn: ?DeflateFn,
     want_walk: bool,
 ) !struct { w: i32, h: i32, deflated: []u8, walk_deflated: []u8 } {
-    if (try materializeLevelColl(sa, ctx, idx, pLevel, lid)) |lc| {
-        if (try compositeLevelRaw(sa, lc)) |rc| {
+    const t_mat = prof.begin();
+    const maybe_lc = try materializeLevelColl(sa, ctx, idx, pLevel, lid);
+    prof.end(.materialize, t_mat);
+    if (maybe_lc) |lc| {
+        const t_comp = prof.begin();
+        const maybe_rc = try compositeLevelRaw(sa, lc);
+        prof.end(.composite, t_comp);
+        if (maybe_rc) |rc| {
             // The CollMap is already a u16 array; on a little-endian host its wire form is
             // the same bytes, so deflate straight out of it instead of copying the whole
             // level into a second buffer first.
@@ -438,15 +445,19 @@ fn deflateLevelColl(
                 for (rc.cells, 0..) |cell, i| std.mem.writeInt(u16, tmp[i * 2 ..][0..2], cell, .little);
                 break :blk tmp;
             };
+            const t_def = prof.begin();
             const deflated = if (deflate_fn) |df| try df(out_alloc, src) else try deflateZlib(out_alloc, src);
+            prof.end(.deflate, t_def);
             // Walk grid: 1 byte/cell (0=blocked, 1=walkable). Only the `?walk=` responses
             // carry it, and it used to be built AND deflated for every request regardless —
             // a whole extra level-sized grid through zlib, then discarded by the serializer.
             var walk_deflated: []u8 = &.{};
             if (want_walk) {
+                const t_walk = prof.begin();
                 const walk = try sa.alloc(u8, rc.cells.len);
                 for (rc.cells, 0..) |cell, i| walk[i] = @intFromBool(collision.walkable(cell));
                 walk_deflated = if (deflate_fn) |df| try df(out_alloc, walk) else try deflateZlib(out_alloc, walk);
+                prof.end(.walk, t_walk);
             }
             return .{ .w = @intCast(rc.w), .h = @intCast(rc.h), .deflated = deflated, .walk_deflated = walk_deflated };
         }
@@ -471,6 +482,7 @@ fn collectLevelFull(
     lid: i32,
     deflate_fn: ?DeflateFn,
 ) !LevelFull {
+    const t_collect = prof.begin();
     var rooms: std.ArrayListUnmanaged(RoomRect) = .empty;
     errdefer rooms.deinit(out_alloc);
     var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
@@ -494,6 +506,7 @@ fn collectLevelFull(
     errdefer out_alloc.free(presets);
     const adjacents = try out_alloc.dupe(LevelAdjacent, try collectLevelAdjacents(sa, pLevel));
     errdefer out_alloc.free(adjacents);
+    prof.end(.collect, t_collect);
 
     const coll = try deflateLevelColl(out_alloc, sa, ctx, idx, pLevel, lid, deflate_fn, want_walk);
     errdefer if (coll.deflated.len != 0) out_alloc.free(coll.deflated);
@@ -615,7 +628,9 @@ pub fn generateActFull(
         // On-demand, like the engine: the collision builder's warp-node linking inits
         // warp-DESTINATION levels early, and a second InitLevel would regenerate and
         // corrupt them (same guard as generateActCollisionAll).
+        const t_gen = prof.begin();
         if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
+        prof.end(.generate, t_gen);
         try out.append(out_alloc, try collectLevelFull(want_walk, out_alloc, sa, ctx, idx, &act, pLevel, lid, deflate_fn));
     }
 
@@ -1639,14 +1654,18 @@ fn buildLevelRoomColl(
     var near_tiles: materialize.NearTileIndex = .{};
     defer near_tiles.deinit(out_alloc);
 
+    const t_rooms = prof.begin();
     var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
     while (pr) |p| : (pr = p.pRoomExNext) {
         tilegen.probe_cur_room = .{ p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB };
         const tiles: []materialize.CollTile = blk: {
             if (roomPMap(p)) |pmap| {
-                var d = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
-                defer d.deinit();
-                var mr = materialize.materializeDs1(out_alloc, &d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap), .{
+                const t_unpack = prof.begin();
+                const d = preset.cachedDs1(preset.presetDs1Path(pmap) orelse continue) orelse continue;
+                prof.end(.mat_ds1_unpack, t_unpack);
+                const t_build = prof.begin();
+                defer prof.end(.mat_ds1_build, t_build);
+                var mr = materialize.materializeDs1(out_alloc, d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap), .{
                     .index = &near_tiles,
                     .alloc = out_alloc,
                     .wx = p.sCoords.WorldPosition.x,
@@ -1682,6 +1701,8 @@ fn buildLevelRoomColl(
                     }
                     break :t .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
                 };
+                const t_out = prof.begin();
+                defer prof.end(.mat_outdoor, t_out);
                 var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), .{
                         .index = &near_tiles,
                         .alloc = out_alloc,
@@ -1705,6 +1726,8 @@ fn buildLevelRoomColl(
             .room = p,
         });
     }
+    prof.end(.mat_rooms, t_rooms);
+    const t_foreign = prof.begin();
         // Cross-LEVEL contributors. A room's near list (DRLGROOMEX_LinkNearRoomsByVis)
         // reaches into other levels, and AllocRoomCollisionGrid gathers from all of them
         // — so a neighbouring level's +1-ring wall stamps into this level's rooms. Seen
@@ -1760,9 +1783,8 @@ fn buildLevelRoomColl(
                         break :blk nl;
                     };
                     const pmap = roomPMap(near) orelse continue;
-                    var fd = preset.unpackDs1(out_alloc, preset.presetDs1Path(pmap) orelse continue) orelse continue;
-                    defer fd.deinit();
-                    var fmr = materialize.materializeDs1(out_alloc, &fd, roomDts(lib.dts, lib.bits, pmap, &fbuf), roomWindow(near, pmap), null) catch continue;
+                    const fd = preset.cachedDs1(preset.presetDs1Path(pmap) orelse continue) orelse continue;
+                    var fmr = materialize.materializeDs1(out_alloc, fd, roomDts(lib.dts, lib.bits, pmap, &fbuf), roomWindow(near, pmap), null) catch continue;
                     defer fmr.deinit(out_alloc);
                     try rbs.append(out_alloc, .{
                         .wpx = near.*.sCoords.WorldPosition.x,
@@ -1777,6 +1799,7 @@ fn buildLevelRoomColl(
                 }
             }
         }
+    prof.end(.mat_foreign, t_foreign);
 
     if (rbs.items.len == 0) return;
 
@@ -1835,6 +1858,7 @@ fn buildLevelRoomColl(
     // when rooms overlap (D2's Room2 model is not a strict partition), and the engine
     // stamps it into each — so this is per-room containment, not a single-owner routing.
     // Source rooms whose tile bbox cannot reach R are skipped (they contribute nothing).
+    const t_stamp = prof.begin();
     for (rbs.items, 0..) |R, ri| {
         if (R.foreign) continue; // gathered FROM, never emitted
         const gw: usize = @intCast(R.wtx * SUB);
@@ -1896,6 +1920,7 @@ fn buildLevelRoomColl(
             }
         }
     }
+    prof.end(.mat_stamp, t_stamp);
 
     // Void-fill: any subtile whose tile-cell got no floor tile is engine void —
     // the always-appended Blank.dt1 (main=30) stamped into uncovered cells. Its sub-index
@@ -1914,6 +1939,7 @@ fn buildLevelRoomColl(
     // coarse per-cell OR here over-fills exactly where the engine leaves the
     // bare wall stamp (golden 0x01 vs ours 0x05).
     const void_flag: u8 = if (tlv.lvl_type == 19) 0x01 else 0x05;
+    const t_void = prof.begin();
     for (rbs.items, 0..) |rb, i| {
         if (rb.is_ds1) continue;
         const gw: usize = @intCast(rb.wtx * SUB);
@@ -1924,6 +1950,7 @@ fn buildLevelRoomColl(
             if (!floors[i][(sy / SUB) * wtxu + (sx / SUB)]) cell.* |= void_flag;
         }
     }
+    prof.end(.mat_voidfill, t_void);
 
     try rooms.ensureUnusedCapacity(out_alloc, rbs.items.len);
     for (rbs.items, 0..) |rb, i| {

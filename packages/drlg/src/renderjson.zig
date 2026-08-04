@@ -176,12 +176,14 @@ pub fn renderJson(ctx: *lib.Ctx, alloc: std.mem.Allocator, seed: u32, act_no: i3
     errdefer out.deinit();
     const w = &out.writer;
 
+    const t_ser = lib.prof.begin();
     try w.print("{{\"seed\":{d},\"levels\":[", .{seed});
     for (result.levels, 0..) |lf, li| {
         if (li != 0) try w.writeByte(',');
         try writeLevel(w, a, ctx, act_no, lf, deflate_fn, include_walk);
     }
     try w.writeAll("]}");
+    lib.prof.end(.serialize, t_ser);
 
     return out.toOwnedSlice();
 }
