@@ -58,6 +58,22 @@ const act_mod = @import("../act.zig");
 const fog = @import("d2-fog").memory;
 const TileSub = @import("TileSub.zig");
 const prof = @import("../prof.zig");
+
+/// Reusable per-room transient scratch. These builders used to nest a fresh ArenaAllocator in
+/// the caller's allocator, which on the render path IS an arena — so `deinit` handed the pages
+/// back to a no-op free and every room grew the level arena by a fresh set of pages instead of
+/// reusing the previous room's. One arena per call site, reset on entry, reuses them. Resetting
+/// on ENTRY rather than freeing on exit only ever extends a lifetime, never shortens one.
+fn roomScratch(slot: *?std.heap.ArenaAllocator) std.mem.Allocator {
+    if (slot.* == null) slot.* = std.heap.ArenaAllocator.init(dpool.default_allocator);
+    _ = slot.*.?.reset(.retain_capacity);
+    return slot.*.?.allocator();
+}
+
+threadlocal var scratch_ds1: ?std.heap.ArenaAllocator = null;
+threadlocal var scratch_outdoor_room: ?std.heap.ArenaAllocator = null;
+threadlocal var scratch_outdoor_tiles: ?std.heap.ArenaAllocator = null;
+
 const drlg_rng = @import("rng.zig");
 
 const SUBTILES = collision.SUBTILES_PER_TILE;
@@ -1030,9 +1046,7 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     const win_ncells = winW * winH;
 
     // Arena for all the transient grid/room scaffolding.
-    var arena_impl = std.heap.ArenaAllocator.init(a);
-    defer arena_impl.deinit();
-    const ar = arena_impl.allocator();
+    const ar = roomScratch(&scratch_ds1);
 
     var tlib = tilegen.TileLib{ .dts = dts };
     var drlg = std.mem.zeroes(s.D2DrlgStrc);
@@ -1716,9 +1730,7 @@ pub fn materializeOutdoorFloorRoom(
     nShrineCount: i32,
     near: ?NearRooms,
 ) !MaterializeResult {
-    var arena_impl = std.heap.ArenaAllocator.init(a);
-    defer arena_impl.deinit();
-    const ar = arena_impl.allocator();
+    const ar = roomScratch(&scratch_outdoor_room);
 
     // Grid is (WorldSize+1) per InitGridCells; the floor footprint is 8x8.
     const gw: usize = @intCast(ws_x + 1);
@@ -1929,9 +1941,7 @@ pub fn outdoorFloorRoomTiles(
     room_seed: i32,
     overlay: ?OutdoorOverlay,
 ) ![]PlacedTile {
-    var arena_impl = std.heap.ArenaAllocator.init(a);
-    defer arena_impl.deinit();
-    const ar = arena_impl.allocator();
+    const ar = roomScratch(&scratch_outdoor_tiles);
 
     const gw: usize = @intCast(ws_x + 1);
     const gh: usize = @intCast(ws_y + 1);
