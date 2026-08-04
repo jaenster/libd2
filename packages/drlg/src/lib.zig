@@ -1833,7 +1833,10 @@ fn buildLevelRoomColl(
             flibs.deinit(out_alloc);
         }
         {
-            var seen_foreign = std.AutoHashMapUnmanaged(*abi.D2RoomExStrc, void).empty;
+            // A flat list, not a hash map: this holds the handful of rooms in OTHER levels
+            // that this level gathers from, and a pointer scan over a dozen entries beats
+            // hashing every candidate.
+            var seen_foreign: std.ArrayListUnmanaged(*abi.D2RoomExStrc) = .empty;
             defer seen_foreign.deinit(out_alloc);
             var fbuf: [35]dt1.Dt1 = undefined;
             var fp: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
@@ -1845,8 +1848,8 @@ fn buildLevelRoomColl(
                     const near = p.ppDrlgRoomsExNear[i] orelse continue;
                     const nlv = near.*.pLevel orelse continue;
                     if (nlv == pLevel) continue;
-                    if (seen_foreign.contains(near)) continue;
-                    try seen_foreign.put(out_alloc, near, {});
+                    if (std.mem.indexOfScalar(*abi.D2RoomExStrc, seen_foreign.items, near) != null) continue;
+                    try seen_foreign.append(out_alloc, near);
                     const flid: i32 = @intFromEnum(nlv.*.eD2LevelId);
                     const lib = blk: {
                         for (flibs.items) |fl| {

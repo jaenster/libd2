@@ -346,8 +346,19 @@ fn ds1CacheUnlock() void {
 /// every room and every worker. Never freed: the working set is the handful of preset DS1s an
 /// act touches. Returns null only for a key the blob does not hold (same as `unpackDs1`).
 pub fn cachedDs1(rel: []const u8) ?*const ds1mod.Ds1 {
+    // Consecutive rooms of a level usually come off the same LvlPrest file, so the same key
+    // arrives over and over. Comparing it against the last hit skips hashing the path and
+    // probing the map. The remembered key is the map's OWN copy, which lives as long as the
+    // cache — the caller's slice points into a per-Ctx table that can go away.
+    if (last_ds1) |d| {
+        if (std.mem.eql(u8, last_ds1_key, rel)) return d;
+    }
+
     ds1CacheLock();
-    if (g_ds1_cache.get(rel)) |d| {
+    if (g_ds1_cache.getEntry(rel)) |e| {
+        const d = e.value_ptr.*;
+        last_ds1_key = e.key_ptr.*;
+        last_ds1 = d;
         ds1CacheUnlock();
         return d;
     }
@@ -384,8 +395,14 @@ pub fn cachedDs1(rel: []const u8) ?*const ds1mod.Ds1 {
         return gop.value_ptr.*;
     }
     gop.value_ptr.* = boxed;
+    last_ds1_key = gop.key_ptr.*;
+    last_ds1 = boxed;
     return boxed;
 }
+
+/// One-entry memo in front of `g_ds1_cache` (see `cachedDs1`).
+threadlocal var last_ds1_key: []const u8 = &.{};
+threadlocal var last_ds1: ?*const ds1mod.Ds1 = null;
 
 fn ds1BlobIndex() *const ds1blob.Index {
     if (g_blobState.load(.acquire) != 2) {

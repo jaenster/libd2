@@ -109,6 +109,21 @@ inline fn dprint(comptime fmt: []const u8, args: anytype) void {
     if (comptime @import("builtin").target.os.tag != .freestanding) std.debug.print(fmt, args);
 }
 
+/// AutoContext hashes an integer key with wyhash, which is several multiplies and rounds of
+/// mixing. These keys are packed world coordinates probed once per placed tile — the hottest
+/// map in the collision build — and a multiply-shift spreads them just as well. Nothing
+/// iterates these maps, so the bucket order this changes is unobservable.
+const TileKeyContext = struct {
+    pub fn hash(_: TileKeyContext, k: u64) u64 {
+        var h = k *% 0x9E3779B97F4A7C15;
+        h ^= h >> 29;
+        return h;
+    }
+    pub fn eql(_: TileKeyContext, a: u64, b: u64) bool {
+        return a == b;
+    }
+};
+
 pub const NearTileIndex = struct {
     /// One already-built room, kept alive past its own materialization: the engine's
     /// UpdateTileType re-resolve rolls on the OWNER room's seed and resolves in the
@@ -120,13 +135,13 @@ pub const NearTileIndex = struct {
     };
     owners: std.ArrayListUnmanaged(Owner) = .empty,
     /// key = world tile (x,y) + link class; value = the owning tile's identity bits.
-    map: std.AutoHashMapUnmanaged(u64, Entry) = .empty,
+    map: std.HashMapUnmanaged(u64, Entry, TileKeyContext, 80) = .empty,
     /// Seam hits where UpdateTileType's bNeedUpdate fired: the owner's tile is a
     /// FLOOR carrying the Blank (main 30, sub 0) entry, so the engine re-resolves it
     /// against the VISITING room's grid flags and swaps the owner tile's library
     /// entry — the owner's solid-rock blank stops being solid rock. Recorded here so
     /// the caller can apply it to the owner's already-collected tile list.
-    blank_replaced: std.AutoHashMapUnmanaged(u64, Swap) = .empty,
+    blank_replaced: std.HashMapUnmanaged(u64, Swap, TileKeyContext, 80) = .empty,
     patch_alloc: std.mem.Allocator = undefined,
 
     pub const Entry = struct { n_tile_type: i32, n_flags: i32, ox: i32, oy: i32, ow: i32, oh: i32, is_blank: bool = false, owner_idx: usize = 0 };
