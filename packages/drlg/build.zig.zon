@@ -4,18 +4,15 @@
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xe8cb450ec651b73e,
 
-    // The pure parsers + the pool allocator were factored out into sibling
-    // packages; drlg consumes them as modules (d2-formats / d2-fog).
-    // The pure parsers, the pool allocator and the excel tables are sibling packages; drlg
-    // consumes them as modules. d2-core is here for one leaf namespace only — the collision
-    // bit/mask vocabulary (`core.collision`), which the producer of a collision grid and its
+    // The pure parsers and the excel tables are sibling packages; drlg consumes them as
+    // modules. d2-core owns the seed-RNG, the Fog::Memory pool allocator, and the collision
+    // bit/mask vocabulary (`core.collision`) that the producer of a collision grid and its
     // consumers have to agree on. Lazy-decl DCE keeps core's stat/item/unit half out of the
     // wasm build.
     .dependencies = .{
         .d2_formats = .{ .path = "../formats" },
-        .d2_fog = .{ .path = "../fog" },
-        .d2_data = .{ .path = "../data" },
         .d2_core = .{ .path = "../core" },
+        .d2_data = .{ .path = "../data" },
     },
 
     .paths = .{

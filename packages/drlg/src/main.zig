@@ -5,7 +5,7 @@ const oracle = @import("oracle.zig");
 const verify = @import("verify.zig");
 const dtables = @import("drlg/tables.zig");
 const dpool = @import("drlg/pool.zig");
-const fogmem = @import("d2-fog").memory;
+const fogmem = @import("d2-core").memory;
 const presettables = @import("drlg/presettables.zig");
 const drlglib = @import("lib.zig");
 

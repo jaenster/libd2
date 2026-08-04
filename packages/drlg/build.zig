@@ -14,17 +14,16 @@ pub fn build(b: *std.Build) void {
     const opts = b.addOptions();
     opts.addOption(bool, "ds1_disk", false);
 
-    // Sibling packages factored out of drlg: the pure DS1/DT1 parsers and the
-    // Fog::Memory pool allocator. drlg's sources reach them via
-    // `@import("d2-formats")` / `@import("d2-fog")`.
+    // Sibling packages factored out of drlg: the pure DS1/DT1 parsers, and d2-core which
+    // owns the seed-RNG, the Fog::Memory pool allocator and the shared collision bit/mask
+    // vocabulary (`core.collision`). drlg's sources reach them via `@import("d2-formats")`
+    // / `@import("d2-core")`.
     const formats = b.dependency("d2_formats", .{ .target = target, .optimize = optimize });
-    const fog = b.dependency("d2_fog", .{ .target = target, .optimize = optimize });
     // The authoritative 1.14d excel tables. drlg reaches them via `@import("d2-data")`
     // and the DCE-friendly `d2data.file("Name")` (comptime embed), so the wasm target
     // links only the tables drlg actually names — not all 72.
     const data = b.dependency("d2_data", .{ .target = target, .optimize = optimize });
     const data_mod = data.module("d2-data");
-    // Only for `core.collision` — the shared collision bit/mask vocabulary. See build.zig.zon.
     const core = b.dependency("d2_core", .{ .target = target, .optimize = optimize });
     const core_mod = core.module("d2-core");
 
@@ -38,9 +37,8 @@ pub fn build(b: *std.Build) void {
     });
     mod.addOptions("build_options", opts);
     mod.addImport("d2-formats", formats.module("d2-formats"));
-    mod.addImport("d2-fog", fog.module("d2-fog"));
-    mod.addImport("d2-data", data_mod);
     mod.addImport("d2-core", core_mod);
+    mod.addImport("d2-data", data_mod);
 
     // The CLI/tests use std.process.Args + file loaders (native only); guard them
     // out for wasm, where only the C-ABI reactor module is built. The CLI exe also
@@ -59,9 +57,8 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addOptions("build_options", opts);
     exe.root_module.addImport("d2-formats", formats.module("d2-formats"));
-    exe.root_module.addImport("d2-fog", fog.module("d2-fog"));
-    exe.root_module.addImport("d2-data", data_mod);
     exe.root_module.addImport("d2-core", core_mod);
+    exe.root_module.addImport("d2-data", data_mod);
     if (cli and !is_wasm) b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -81,9 +78,8 @@ pub fn build(b: *std.Build) void {
     });
     tests.root_module.addOptions("build_options", opts);
     tests.root_module.addImport("d2-formats", formats.module("d2-formats"));
-    tests.root_module.addImport("d2-fog", fog.module("d2-fog"));
-    tests.root_module.addImport("d2-data", data_mod);
     tests.root_module.addImport("d2-core", core_mod);
+    tests.root_module.addImport("d2-data", data_mod);
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
@@ -96,7 +92,7 @@ pub fn build(b: *std.Build) void {
         const capi_optimize: std.builtin.OptimizeMode =
             if (is_wasm and b.args == null) .ReleaseSmall else (if (optimize == .Debug) .ReleaseFast else optimize);
         const CapiMod = struct {
-            fn make(bb: *std.Build, tgt: std.Build.ResolvedTarget, opt: std.builtin.OptimizeMode, o: *std.Build.Step.Options, fm: *std.Build.Module, fg: *std.Build.Module, dm: *std.Build.Module, cm: *std.Build.Module) *std.Build.Module {
+            fn make(bb: *std.Build, tgt: std.Build.ResolvedTarget, opt: std.builtin.OptimizeMode, o: *std.Build.Step.Options, fm: *std.Build.Module, cm: *std.Build.Module, dm: *std.Build.Module) *std.Build.Module {
                 const m = bb.createModule(.{
                     .root_source_file = bb.path("src/capi.zig"),
                     .target = tgt,
@@ -104,23 +100,21 @@ pub fn build(b: *std.Build) void {
                 });
                 m.addOptions("build_options", o);
                 m.addImport("d2-formats", fm);
-                m.addImport("d2-fog", fg);
-                m.addImport("d2-data", dm);
                 m.addImport("d2-core", cm);
+                m.addImport("d2-data", dm);
                 return m;
             }
         };
         const fmod = formats.module("d2-formats");
-        const gmod = fog.module("d2-fog");
 
         if (is_wasm) {
-            const wasm = b.addExecutable(.{ .name = "d2drlg", .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, gmod, data_mod, core_mod) });
+            const wasm = b.addExecutable(.{ .name = "d2drlg", .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, core_mod, data_mod) });
             wasm.entry = .disabled;
             wasm.rdynamic = true;
             b.installArtifact(wasm);
         } else {
-            const static_lib = b.addLibrary(.{ .name = "d2drlg", .linkage = .static, .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, gmod, data_mod, core_mod) });
-            const shared_lib = b.addLibrary(.{ .name = "d2drlg", .linkage = .dynamic, .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, gmod, data_mod, core_mod) });
+            const static_lib = b.addLibrary(.{ .name = "d2drlg", .linkage = .static, .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, core_mod, data_mod) });
+            const shared_lib = b.addLibrary(.{ .name = "d2drlg", .linkage = .dynamic, .root_module = CapiMod.make(b, target, capi_optimize, opts, fmod, core_mod, data_mod) });
             b.installArtifact(static_lib);
             b.installArtifact(shared_lib);
             b.getInstallStep().dependOn(&b.addInstallHeaderFile(b.path("include/d2drlg.h"), "d2drlg.h").step);
