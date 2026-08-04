@@ -68,10 +68,16 @@ for pkgdir in "${artifacts_root}"/*/; do
     out="${proj}/runtimes/${rid}/native/$(basename "$lib")"
     cp "$lib" "$out"
     # ELF carries debug info that triples its size, and this package ships one binary per
-    # platform per subsystem. Best effort: a missing strip tool must never fail a release.
-    if command -v llvm-strip >/dev/null 2>&1; then llvm-strip "$out" 2>/dev/null || true
-    elif command -v strip >/dev/null 2>&1; then strip "$out" 2>/dev/null || true
-    fi
+    # platform per subsystem. GNU strip only understands the HOST architecture, so on an x86_64
+    # runner it silently leaves every arm/riscv build unstripped; llvm-strip handles them all.
+    # Never fatal, but say so when a binary could not be stripped rather than shipping 10 MB
+    # quietly.
+    stripped=""
+    for tool in llvm-strip llvm-strip-20 llvm-strip-19 llvm-strip-18 llvm-strip-17 llvm-strip-16 strip; do
+      command -v "$tool" >/dev/null 2>&1 || continue
+      if "$tool" "$out" 2>/dev/null; then stripped="$tool"; break; fi
+    done
+    [ -z "$stripped" ] && echo "nuget-pack: WARNING could not strip $(basename "$out") for ${rid}; shipping it unstripped"
     echo "nuget-pack: ${pkg} ${triple} -> runtimes/${rid}/native/$(basename "$out") ($(( $(wc -c <"$out") / 1024 )) KB)"
     found=$((found + 1))
   done
