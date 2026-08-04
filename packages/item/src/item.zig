@@ -93,8 +93,6 @@ pub fn rollDrop(
         }
         if (pk.kind != .item) continue;
 
-        // Type-token entries (e.g. "weap3","armo3") need the compiled tiered
-        // Items array (ITEMDROP_RollItemClassByLevel) — RESIDUAL. Emit as-is.
         const flags = itemFlags(t, pk.code);
         const is_real_item = t.itemRef(pk.code) != null;
 
@@ -102,7 +100,7 @@ pub fn rollDrop(
         setCode(&d, pk.code);
 
         if (!is_real_item) {
-            // class-token: quality/affixes require item-class resolution (residual)
+            // Not a base item: a TC entry naming a unique/set row rather than a code.
             try drops.append(gpa, d);
             continue;
         }
@@ -134,9 +132,9 @@ pub fn rollDrop(
     return drops.toOwnedSlice(gpa);
 }
 
-/// ITEM_ApplyQualityAndAffixes dispatch (item MOD seed). Magic/rare fully ported;
-/// set/unique/crafted/runeword are TODO stubs. Sockets roll for low/normal/
-/// superior only (magic/rare/set/unique drops are never socketed — faithful).
+/// ITEM_ApplyQualityAndAffixes dispatch (item MOD seed): magic/rare affixes, the unique/set row,
+/// and the superior QualityItems bonus. Sockets roll for low/normal/superior only (magic/rare/set/
+/// unique drops are never socketed — faithful). Crafted/tempered are cube recipes, not drops.
 pub fn applyAffixes(
     gpa: std.mem.Allocator,
     item_seed: *rng.Seed,
@@ -177,8 +175,11 @@ pub fn applyAffixes(
             const sid = try affix.rollSetItem(gpa, item_seed, t, d.code(), d.item_level, opts.is_expansion);
             if (sid != 0) d.set_id = sid else d.quality = .normal;
         },
-        // TODO(follow-up): crafted (QualityItems.txt) + runeword detection/apply; per-property value
-        // rolls (UniqueItems/SetItems prop1..N min/max) are deferred like the magic/rare affix values.
+        // ITEMMOD_GenerateQualityItem @0x5c2970 — a superior drop picks one QualityItems.txt row
+        // (rejection-sampled against the base's type gate) for its bonus.
+        .superior => d.quality_id = try affix.rollQualityItem(gpa, item_seed, t, d.code()),
+        // Crafted / tempered are cube recipes, not drops: GAME_GetItemQuality never rolls them, so
+        // this package's scope (drop generation) leaves them to the cube layer.
         .crafted, .tempered => {},
         else => {},
     }
@@ -249,6 +250,28 @@ test "rollDrop on a gem TC yields real gem items" {
         }
     }
     try testing.expect(found);
+}
+
+test "a superior drop picks a QualityItems row whose type gate accepts the base" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+
+    // A weapon and an armor base, forced through the superior path directly.
+    for ([_][]const u8{ "ssd", "cap" }) |code| {
+        var d = Drop{ .kind = .item, .quality = .superior, .item_level = 40 };
+        setCode(&d, code);
+        var s = rng.Seed.init(0x2468, 0x29a);
+        try applyAffixes(testing.allocator, &s, &t, &d, itemFlags(&t, code), .{});
+        try testing.expect(d.quality_id != 0);
+
+        // …and it rolls real stats off the same seed stream.
+        const properties = @import("properties.zig");
+        var out: std.ArrayListUnmanaged(properties.RolledStat) = .empty;
+        defer out.deinit(testing.allocator);
+        var s2 = rng.Seed.init(0x1357, 0x29a);
+        try properties.rollDropStats(testing.allocator, &out, &s2, &t, &d);
+        try testing.expect(out.items.len > 0);
+    }
 }
 
 test "high MF shifts quality upward over many drops" {

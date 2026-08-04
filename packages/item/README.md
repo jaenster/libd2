@@ -1,8 +1,8 @@
-# d2-items
+# d2-item
 
 A clean-room Zig reimplementation of Diablo II 1.14d **item generation** — the
-deterministic, seed-driven drop pipeline: treasure-class resolution, item-class
-roll by level, quality determination, and magic/rare affix selection.
+deterministic, seed-driven drop pipeline: treasure-class resolution, quality
+determination, affix/unique/set selection, and the property value rolls.
 
 Sibling to [`drlg`](../drlg) (the map-generation clean-room port); same
 philosophy: **faithful-to-Ghidra, all-Zig, no C deps, seeded + verifiable,
@@ -27,18 +27,27 @@ roll-exact — no curve-fitting, no approximation.
 | Rare affixes (1..N, no-dup-group, rare names) | 0x5c21d0 | done (name-pick internals residual) |
 | Affix type eligibility (itype/etype + Equiv chain) | 0x65e620 | done |
 | Socket count | 0x556b60 | done |
-| Item-class-by-level (type tokens `weap3`/`armo3`) | 0x556240 | residual (needs compiled Items array) |
-| Unique / set / crafted / runeword | 0x5566b0 | stubbed (TODO) |
+| Auto item-type classes (`weap3`/`armo24`/…) | 0x6541c0 | done |
+| Negative Picks ("each entry once", RNG-free) | 0x55a6d0 | done |
+| Unique / set selection | 0x5566b0 / 0x5c25c0 | done, weighted |
+| Superior (QualityItems) bonus | 0x5c2970 | done |
+| Property value rolls (PROPERTIESFUNCTIONS dispatch) | 0x65fd70 | done, 22 of 24 handlers |
+| Runeword detection | — | done (props not applied) |
 
 ### Known residuals
 - **drop-seed → item-seed derivation** lives in `SUnit::CreateUnit` (not
   decompiled). A dropped item has two seed streams (base `sSeed` + affix "mod"
   seed); this port is roll-exact **given** both seeds — see `src/verify.zig`.
-- **type-token entries** (`weap3`, `armo3`, …) select from the engine's compiled
-  unified normal/exceptional/elite Items array (`ITEMDROP_RollItemClassByLevel`);
-  reproducing that index space needs the item-compile sort order.
-- unique/set/crafted/runeword affixes; rare-name pick internals (`GetMaxToRoll`);
-  class-specific affix restriction; magiclvl weight multiplier.
+- **charged-skill properties** (property funcs 11/19) only apply when the level is
+  given explicitly; the derived-from-item-level branch needs Skills.txt req/max
+  levels. Funcs 14 (sockets) and 23 (ethereal) set item flags, not mod stats.
+- rare-name pick internals (`GetMaxToRoll`); class-specific affix restriction;
+  magiclvl weight multiplier; per-entry TC quality modifiers (`cu=`/`cs=`/`cr=`/
+  `cm=`) — only the `mul=` gold multiplier is parsed.
+- crafted / tempered are cube recipes, not drops (`GAME_GetItemQuality` never
+  rolls them), so they are out of this package's scope.
+- classic (non-expansion) resolution carries its own cumulative weights but is far
+  less exercised than the expansion path.
 
 ## Build
 
@@ -49,11 +58,11 @@ zig build run -- <seed> <treasureclass> <mlvl> [mf]
 
 Zig 0.16.
 
-## Data (private)
+## Data
 
-`src/excel/*.txt` are Blizzard's game data tables (`data/global/excel`), required
-at build time via `@embedFile`. They are copyrighted — this repo is **private**
-and must not be published with them. Regenerate from your own 1.14d install.
+The Blizzard excel tables live in [`d2-data`](../data), which owns them and
+`@embedFile`s every one — this package holds no copy of its own and needs no
+filesystem at runtime.
 
 ## Golden verification
 

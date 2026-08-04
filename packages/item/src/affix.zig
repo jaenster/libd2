@@ -363,6 +363,82 @@ fn collides(existing: []const AffixResult, roll: AffixResult) bool {
     return false;
 }
 
+/// ITEMMOD_GenerateQualityItem 0x5c2970 — the SUPERIOR ("hiquality") bonus. Rejection-samples a
+/// QualityItems.txt row off the item's own seed until one whose type gate accepts this base item is
+/// hit; every re-roll advances the seed, including the re-rolls that land on an already-visited row.
+/// The table is clamped to its first 4 rows for throwables and for items with no durability.
+/// Returns the 1-based row, or 0 when nothing matches.
+pub fn rollQualityItem(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.Tables, code: []const u8) !u16 {
+    const qt = &t.quality_items;
+    const ref = t.itemRef(code) orelse return 0;
+    const tbl = t.itemTable(ref.table);
+
+    var types = try itemtype.typesForItem(gpa, t, code);
+    defer types.deinit(gpa);
+
+    var n = qt.rowCount();
+    if (n == 0) return 0;
+    const throwable = blk: {
+        const row = t.itypeRow(tbl.str(ref.row, "type")) orelse break :blk false;
+        break :blk t.item_types.int(row, "Throwable") != 0;
+    };
+    if (throwable or tbl.int(ref.row, "nodurability") != 0) n = @min(n, 4);
+
+    var visited = [_]bool{false} ** 64;
+    while (true) {
+        var idx: usize = 0;
+        while (true) {
+            idx = @intCast(seed.pick(@intCast(n)));
+            if (!visited[idx]) break;
+        }
+        if (qualityRowAccepts(qt, idx, &types, tbl.str(ref.row, "type"))) return @intCast(idx + 1);
+        visited[idx] = true;
+        var all = true;
+        for (visited[0..n]) |v| {
+            if (!v) all = false;
+        }
+        if (all) return 0;
+    }
+}
+
+/// ITEMMOD_MatchesRepairType 0x65e7d0 — the QualityItems row's type gate. "weapon" means any weapon
+/// that is not a staff/bow/crossbow/scepter/wand; "armor" means any armor that is not a
+/// shield/boots/gloves/belt; the rest are exact-type flags (bow covers crossbows).
+fn qualityRowAccepts(
+    qt: *const txt.Table,
+    row: usize,
+    types: *const itemtype.TypeSet,
+    exact_type: []const u8,
+) bool {
+    const is = struct {
+        fn eq(a: []const u8, b: []const u8) bool {
+            return std.mem.eql(u8, a, b);
+        }
+    };
+    if (qt.int(row, "weapon") != 0 and types.has("weap") and
+        !is.eq(exact_type, "staf") and !is.eq(exact_type, "bow") and !is.eq(exact_type, "xbow") and
+        !is.eq(exact_type, "scep") and !is.eq(exact_type, "wand")) return true;
+    if (qt.int(row, "armor") != 0 and types.has("armo") and
+        !is.eq(exact_type, "shie") and !is.eq(exact_type, "boot") and
+        !is.eq(exact_type, "glov") and !is.eq(exact_type, "belt")) return true;
+
+    const gates = [_]struct { col: []const u8, type_code: []const u8 }{
+        .{ .col = "shield", .type_code = "shie" },
+        .{ .col = "scepter", .type_code = "scep" },
+        .{ .col = "wand", .type_code = "wand" },
+        .{ .col = "staff", .type_code = "staf" },
+        .{ .col = "bow", .type_code = "bow" },
+        .{ .col = "bow", .type_code = "xbow" },
+        .{ .col = "boots", .type_code = "boot" },
+        .{ .col = "gloves", .type_code = "glov" },
+        .{ .col = "belt", .type_code = "belt" },
+    };
+    for (gates) |g| {
+        if (is.eq(exact_type, g.type_code) and qt.int(row, g.col) != 0) return true;
+    }
+    return false;
+}
+
 const testing = std.testing;
 
 test "computeAlvl matches the classic quality-level curve" {

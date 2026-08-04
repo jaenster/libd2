@@ -7,7 +7,7 @@
 //! (the `invfile` column). MPQ override order: Patch_D2 > d2exp > d2data.
 //!
 //! StormLib is the one C dependency here (encryption + compression); the runtime
-//! d2-items library itself stays pure Zig. Config: env D2_MPQ_DIR = dir with
+//! d2-item library itself stays pure Zig. Config: env D2_MPQ_DIR = dir with
 //! d2data.mpq / d2exp.mpq / Patch_D2.mpq.
 //!
 //! Build (StormLib via brew):

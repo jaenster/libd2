@@ -1,13 +1,14 @@
-//! d2-items public library API — faithful D2 1.14d item-generation port.
+//! d2-item public library API — faithful D2 1.14d item-generation port.
 //!
-//! Scope: seed-driven DROP GENERATION — treasure-class resolution, drop-time
-//! quality (with magic find), magic/rare affix selection, sockets. All roll-exact
-//! to the reconstructed 1.14d Game.exe (Ghidra session 62fbfe69); every ported
-//! function cites its address in its module doc-comment.
+//! Scope: seed-driven DROP GENERATION — treasure-class resolution (including the
+//! auto-generated `weap3`/`armo24` item-type classes), drop-time quality with
+//! magic find, magic/rare/unique/set/superior selection, sockets, and the
+//! property value rolls each of those feeds. All roll-exact to the reconstructed
+//! 1.14d Game.exe (Ghidra session 62fbfe69); every ported function cites its
+//! address in its module doc-comment.
 //!
-//! Follow-ups (stubbed with TODOs): set / unique / crafted / runeword affixes,
-//! and the item-type-token class roll (ITEMDROP_RollItemClassByLevel, which needs
-//! the engine's compiled unified Items array).
+//! Out of scope: crafted/tempered and runeword APPLICATION (cube and socket
+//! recipes rather than drops). See README.md for the remaining residuals.
 
 const std = @import("std");
 

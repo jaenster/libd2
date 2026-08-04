@@ -10,15 +10,15 @@
 //!
 //! Usage: dump_save_items <path-to-save.d2s>
 //!
-//! Build/run (from packages/items):
-//!   zig build-exe tools/dump_save_items.zig --dep d2items \
-//!     -Mroot=tools/dump_save_items.zig -Md2items=src/lib.zig -femit-bin=/tmp/dump_save_items
+//! Build/run (from packages/item):
+//!   zig build-exe tools/dump_save_items.zig --dep d2item \
+//!     -Mroot=tools/dump_save_items.zig -Md2item=src/lib.zig -femit-bin=/tmp/dump_save_items
 //!   /tmp/dump_save_items /path/to/EpicSorc.d2s
 
 const std = @import("std");
-const d2items = @import("d2items");
-const wire = d2items.wire;
-const BitReader = d2items.WireBitReader;
+const d2item = @import("d2item");
+const wire = d2item.wire;
+const BitReader = d2item.WireBitReader;
 
 // ItemStatCost ids (verified against src/excel/ItemStatCost.txt):
 const ID_MAXHP = 7; // maxhp (+life)

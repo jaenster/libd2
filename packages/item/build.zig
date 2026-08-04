@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const items_mod = b.addModule("d2-items", .{
+    const items_mod = b.addModule("d2-item", .{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
 
     // Smoke/demo CLI: roll a drop for a seed+TC+mlvl.
     const exe = b.addExecutable(.{
-        .name = "d2-items",
+        .name = "d2-item",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
@@ -85,7 +85,7 @@ pub fn build(b: *std.Build) void {
     if (capi) {
         if (is_wasm) {
             const wasm = b.addExecutable(.{
-                .name = "d2items",
+                .name = "d2item",
                 .root_module = b.createModule(.{
                     .root_source_file = b.path("src/capi.zig"),
                     .target = target,
@@ -100,7 +100,7 @@ pub fn build(b: *std.Build) void {
         } else {
             const capi_optimize = if (optimize == .Debug) .ReleaseFast else optimize;
             const static_lib = b.addLibrary(.{
-                .name = "d2items",
+                .name = "d2item",
                 .linkage = .static,
                 .root_module = b.createModule(.{
                     .root_source_file = b.path("src/capi.zig"),
@@ -109,7 +109,7 @@ pub fn build(b: *std.Build) void {
                 }),
             });
             const shared_lib = b.addLibrary(.{
-                .name = "d2items",
+                .name = "d2item",
                 .linkage = .dynamic,
                 .root_module = b.createModule(.{
                     .root_source_file = b.path("src/capi.zig"),
@@ -123,7 +123,7 @@ pub fn build(b: *std.Build) void {
             shared_lib.root_module.addImport("d2-data", data_mod);
             b.installArtifact(static_lib);
             b.installArtifact(shared_lib);
-            b.getInstallStep().dependOn(&b.addInstallHeaderFile(b.path("include/d2items.h"), "d2items.h").step);
+            b.getInstallStep().dependOn(&b.addInstallHeaderFile(b.path("include/d2item.h"), "d2item.h").step);
         }
     }
 

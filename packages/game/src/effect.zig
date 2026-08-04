@@ -54,4 +54,7 @@ pub const Effect = union(enum) {
     /// Drop a lingering AoE at (x,y) that pulses `skill_id`'s elemental damage each frame for
     /// `duration` frames (Fire Wall / Blaze / Blizzard / Volcano / Armageddon).
     ground_effect: struct { skill_id: u16, level: i32, x: i32, y: i32, duration: i32 },
+    /// One-shot elemental burst on every hostile within `radius` of (x,y). `static` selects Static
+    /// Field's %-of-current-life drain; otherwise the skill's staged element (Meteor / Fist of Heavens).
+    elemental_area: struct { skill_id: u16, level: i32, x: i32, y: i32, radius: i32, static: bool },
 };

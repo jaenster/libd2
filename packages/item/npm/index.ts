@@ -1,4 +1,4 @@
-// Tiny typed shim over the d2items wasm C-ABI. Pure TypeScript — runs natively on
+// Tiny typed shim over the d2item wasm C-ABI. Pure TypeScript — runs natively on
 // Node (>=23.6 / --experimental-strip-types), Bun, Deno, and any TS bundler.
 // Construction "just happens on usage": the top-level roll()/abiVersion() lazily
 // load and instantiate the wasm on first call and cache a singleton. No
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const PAGE = 65536;
 
-// D2ItemsDrop layout (C ABI, extern struct — i32 fields force 4-byte alignment):
+// D2ItemDrop layout (C ABI, extern struct — i32 fields force 4-byte alignment):
 //   kind          u8    @ 0
 //   item_code     u8[4] @ 1
 //   quality       u8    @ 5
@@ -27,7 +27,7 @@ const OFF = {
 } as const;
 const CAP = 64; // max drops per roll
 
-export interface D2ItemsDrop {
+export interface D2ItemDrop {
   /** DropKind: none=0 gold=1 item=2 quiver=3 bodypart=4 */
   kind: number;
   /** base item code (4-char, NUL-trimmed) */
@@ -46,10 +46,10 @@ export interface D2ItemsDrop {
 
 interface Exports {
   memory: WebAssembly.Memory;
-  d2items_create(): number;
-  d2items_destroy(ctx: number): void;
-  d2items_roll(ctx: number, seed: number, tcName: number, mlvl: number, mf: number, out: number, cap: number): number;
-  d2items_abi_version(): number;
+  d2item_create(): number;
+  d2item_destroy(ctx: number): void;
+  d2item_roll(ctx: number, seed: number, tcName: number, mlvl: number, mf: number, out: number, cap: number): number;
+  d2item_abi_version(): number;
 }
 
 function scratch(memory: WebAssembly.Memory, bytes: number): number {
@@ -57,10 +57,10 @@ function scratch(memory: WebAssembly.Memory, bytes: number): number {
   return prev * PAGE;
 }
 
-function decodeDrops(memory: WebAssembly.Memory, base: number, count: number): D2ItemsDrop[] {
+function decodeDrops(memory: WebAssembly.Memory, base: number, count: number): D2ItemDrop[] {
   const dv = new DataView(memory.buffer);
   const u8 = new Uint8Array(memory.buffer);
-  const out: D2ItemsDrop[] = [];
+  const out: D2ItemDrop[] = [];
   for (let i = 0; i < count; i++) {
     const b = base + i * DROP;
     let itemCode = '';
@@ -87,11 +87,11 @@ function decodeDrops(memory: WebAssembly.Memory, base: number, count: number): D
 
 /** Load the wasm + game tables and return a roller. */
 export async function open(): Promise<Items> {
-  const bytes = await readFile(fileURLToPath(new URL('./d2items.wasm', import.meta.url)));
+  const bytes = await readFile(fileURLToPath(new URL('./d2item.wasm', import.meta.url)));
   const { instance } = await WebAssembly.instantiate(bytes, {});
   const ex = instance.exports as unknown as Exports;
-  const ctx = ex.d2items_create();
-  if (!ctx) throw new Error('d2items: create failed');
+  const ctx = ex.d2item_create();
+  if (!ctx) throw new Error('d2item: create failed');
   return new Items(ex, ctx);
 }
 
@@ -101,7 +101,7 @@ export class Items {
   constructor(ex: Exports, ctx: number) { this.#ex = ex; this.#ctx = ctx; }
 
   /** Roll a drop for (seed, tcName, mlvl, mf). Returns all produced drops. */
-  roll(seed: number, tcName: string, mlvl: number, mf = 0): D2ItemsDrop[] {
+  roll(seed: number, tcName: string, mlvl: number, mf = 0): D2ItemDrop[] {
     const ex = this.#ex;
     const name = new TextEncoder().encode(tcName);
     // scratch region: NUL-terminated tc name + the out buffer, in one grow.
@@ -110,16 +110,16 @@ export class Items {
     const mem = new Uint8Array(ex.memory.buffer);
     mem.set(name, namePtr);
     mem[namePtr + name.length] = 0;
-    const n = ex.d2items_roll(this.#ctx, seed >>> 0, namePtr, mlvl, mf, outPtr, CAP);
-    if (n < 0) throw new Error(`d2items: roll failed (${n})`);
+    const n = ex.d2item_roll(this.#ctx, seed >>> 0, namePtr, mlvl, mf, outPtr, CAP);
+    if (n < 0) throw new Error(`d2item: roll failed (${n})`);
     return decodeDrops(ex.memory, outPtr, Math.min(n, CAP));
   }
 
   /** ABI version of the loaded module. */
-  abiVersion(): number { return this.#ex.d2items_abi_version(); }
+  abiVersion(): number { return this.#ex.d2item_abi_version(); }
 
   /** Free the context. */
-  close(): void { this.#ex.d2items_destroy(this.#ctx); }
+  close(): void { this.#ex.d2item_destroy(this.#ctx); }
 }
 
 // Lazy singleton: construction just happens on first use.
@@ -127,7 +127,7 @@ let _p: Promise<Items> | undefined;
 const inst = (): Promise<Items> => (_p ??= open());
 
 /** Roll a drop. Lazily loads the wasm on first call. */
-export async function roll(seed: number, tcName: string, mlvl: number, mf = 0): Promise<D2ItemsDrop[]> {
+export async function roll(seed: number, tcName: string, mlvl: number, mf = 0): Promise<D2ItemDrop[]> {
   return (await inst()).roll(seed, tcName, mlvl, mf);
 }
 

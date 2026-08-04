@@ -15,7 +15,7 @@
 //!
 //! MF is NOT applied here — the caller (GAME_GetItemQuality, drop path) folds
 //! magic-find + TC quality-mods into the effective chance before/around this.
-//! This port models the raw cascade; see item.zig for the MF wiring (TODO).
+//! This port models the raw cascade; item.zig does the MF wiring.
 
 const std = @import("std");
 const rng = @import("rng.zig");
