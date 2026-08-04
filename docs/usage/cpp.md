@@ -2,7 +2,7 @@
 
 The headers are `extern "C"`-guarded, so they work unchanged from C++. Grab
 `include/d2<pkg>.h` + `lib/libd2<pkg>.*` from the package's GitHub Release. See the
-[API reference](../../README.md#reference-api-the-drlg-map-generator).
+[API reference](c.md#reference-the-drlg-c-api).
 
 ## drlg — generate a map from a seed
 
@@ -34,10 +34,10 @@ c++ main.cpp -I./include -L./lib -ld2drlg -o demo && ./demo
 ## items — roll a drop
 
 ```cpp
-#include "d2items.h"
-auto *ctx = d2items_create();
-D2ItemsDrop d[16];
-int n = d2items_roll(ctx, 12345, "Act 1 Equip A", 5, 0, d, 16);
+#include "d2item.h"
+auto *ctx = d2item_create();
+D2ItemDrop d[16];
+int n = d2item_roll(ctx, 12345, "Act 1 Equip A", 5, 0, d, 16);
 // … use d[0..n] …
-d2items_destroy(ctx);
+d2item_destroy(ctx);
 ```

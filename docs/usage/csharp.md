@@ -3,7 +3,7 @@
 No special build — P/Invoke the shared library from the package's GitHub Release
 (`d2drlg.dll` / `libd2drlg.so` / `libd2drlg.dylib`, etc.). Put it next to your
 executable or on the loader path. See the
-[API reference](../../README.md#reference-api-the-drlg-map-generator).
+[API reference](c.md#reference-the-drlg-c-api).
 
 ## drlg — generate a map from a seed
 
@@ -42,16 +42,19 @@ class Program {
 
 ```csharp
 [StructLayout(LayoutKind.Sequential)]
-struct D2ItemsDrop {
+struct D2ItemDrop {
     public byte kind;
     [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)] public byte[] item_code;
     public byte quality;
     public ushort prefix_id, suffix_id;
     [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)] public ushort[] rare_prefix_ids;
     [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)] public ushort[] rare_suffix_ids;
-    public byte sockets;
+    public ushort rare_prefix_name, rare_suffix_name;
+    public ushort unique_id, set_id, quality_id, low_quality_id, auto_prefix_id;
+    public byte sockets, ethereal;
     public int quantity, item_level;
+    public uint item_seed;
 }
-[DllImport("d2items")] static extern IntPtr d2items_create();
-[DllImport("d2items")] static extern int d2items_roll(IntPtr c, uint seed, string tc, int mlvl, int mf, [Out] D2ItemsDrop[] o, int cap);
+[DllImport("d2item")] static extern IntPtr d2item_create();
+[DllImport("d2item")] static extern int d2item_roll(IntPtr c, uint seed, string tc, int mlvl, int mf, [Out] D2ItemDrop[] o, int cap);
 ```

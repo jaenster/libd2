@@ -1,13 +1,12 @@
 # libd2
 
-A clean-room reimplementation of the **Diablo II 1.14d** engine core in [Zig](https://ziglang.org),
-reverse-engineered from the retail binary with no Blizzard code.
+A clean-room reimplementation of the **Diablo II 1.14d** engine core in [Zig](https://ziglang.org)
+([why Zig](docs/WHY-ZIG.md)), reverse-engineered from the retail binary with no Blizzard code.
 
-It began with the seed-driven map generator — give it a seed and it produces the same world the
-game does — and now covers the systems around it: item generation, the rules the server applies,
+It began with the seed-driven map generator: give it a seed and it produces the same world the
+game does. It now covers the surrounding systems too, including item generation, the rules the server applies,
 the D2GS wire protocol, save files, and routing over a generated world. Every package stands on
-its own; `drlg` and `item` additionally ship a C ABI and a WebAssembly build, so they are usable
-from any language with a C FFI.
+its own.
 
 If libd2 is useful to you, you can [**sponsor the work on GitHub**](https://github.com/sponsors/jaenster).
 It is a long reverse-engineering effort and sponsorship is what keeps it moving.
@@ -19,52 +18,69 @@ built on top of them live under `apps/`.
 
 | package | module | depends on | what it is |
 |-|-|-|-|
-| [`data`](packages/data) | `d2-data` | — | The authoritative 1.14d Blizzard excel tables (Patch_D2 override order, extracted from the retail MPQs) plus a generic TSV reader. Every table is `@embedFile`d, so the loader needs no filesystem and cross-compiles to wasm. |
-| [`core`](packages/core) | `d2-core` | `data` | The shared model foundation: the seed-RNG, the `Stat` enum + `StatList`, the `Unit` base type, ItemStatCost metadata, the save-file item bit-decoder, and the `Fog::Memory` segregated-slab pool allocator. Owning these here is what keeps them from being vendored twice. |
-| [`formats`](packages/formats) | `d2-formats` | — | Pure parsers/decoders for D2 on-disk data: `ds1` (level structure), `dt1` (tile art + collision flags), `dc6`/`dcc`/`cof` (sprites/animations), `dt1pix`, the fixed `.d2s` save header, and the baked-blob container codecs. Byte slice in, typed records out; no engine state. |
-| [`save`](packages/save) | `d2-save` | `core`, `data`, `item`, `formats` | The `.d2s` character save format, read and write: the marker-delimited quest, waypoint, NPC, attribute, skill and item sections on top of the fixed header `formats` owns. Byte-exact round-trip over real saves. |
-| [`drlg`](packages/drlg) | `d2-drlg` | `formats`, `core`, `data` | **DRLG** — the map generator. Given a seed, produces the room/tile layout, collision grid, roads and object/monster population for every level in all five acts. Pure generation, verified byte-exact over 1000+ seeds. |
-| [`render`](packages/render) | `d2-render` | `drlg`, `formats` | Turns drlg's generation output into visuals: automap sprite cells and real DT1 tile-art materialization. A pure post-generation consumer. |
-| [`item`](packages/item) | `d2-item` | `core`, `data` | Seed-driven item drops: treasure-class resolution, item-class roll by level, quality, and magic/rare affix selection. |
-| [`pathfinding`](packages/pathfinding) | `d2-pathfinding` | `drlg`, `core`, `data` | Routing over a generated world: walk and teleport, within a level and across as many as it takes. Models the gates the server actually applies — the cast range check, the adjacent-room rule, line of sight, and unit footprints — so a planned move is one the server would accept. |
-| [`game`](packages/game) | `d2-game` | `core`, `data`, `drlg`, `net` | The rules engine: units, stats, combat, skills, monsters, missiles, objects and character state. What the server decides; the host only applies it. |
-| [`net`](packages/net) | `d2-net` | — | The D2GS wire protocol, both directions: the server→client and client→server opcode spaces, byte-exact including the variable and bit-packed packets. |
-| [`util`](packages/util) | `d2-util` | — | Cross-cutting primitives with no domain of their own: the D2GS server→client Huffman packet codec and the length-prefix framing / `AF` greeting around it. |
+| [`data`](packages/data) | `d2-data` | — | The 1.14d Blizzard excel tables, `@embedFile`d, so no filesystem is needed and it cross-compiles to wasm. |
+| [`core`](packages/core) | `d2-core` | `data` | Shared foundation: seed-RNG, stats, the `Unit` base type, the item bit-decoder, the Fog pool allocator. |
+| [`formats`](packages/formats) | `d2-formats` | — | Parsers for D2 on-disk data: `ds1`, `dt1`, `dc6`/`dcc`/`cof`, the `.d2s` header. Bytes in, records out. |
+| [`save`](packages/save) | `d2-save` | `core`, `data`, `item`, `formats` | The `.d2s` character save, read and write. Byte-exact round trip over real saves. |
+| [`drlg`](packages/drlg) | `d2-drlg` | `formats`, `core`, `data` | **The map generator.** A seed in, and every level of all five acts out: rooms, tiles, collision, roads, objects and monsters. |
+| [`render`](packages/render) | `d2-render` | `drlg`, `formats` | Turns generation output into visuals: automap cells and real DT1 tile art. |
+| [`item`](packages/item) | `d2-item` | `core`, `data` | Seed-driven item drops: treasure class, item class, quality, and magic/rare affixes. |
+| [`pathfinding`](packages/pathfinding) | `d2-pathfinding` | `drlg`, `core`, `data` | Routing over a generated world, walking or teleporting, across as many levels as it takes, using the movement gates the server enforces. |
+| [`game`](packages/game) | `d2-game` | `core`, `data`, `drlg`, `net` | The rules engine: units, stats, combat, skills, monsters, missiles, objects, character state. |
+| [`net`](packages/net) | `d2-net` | — | The D2GS wire protocol, both directions, including the variable and bit-packed packets. |
+| [`util`](packages/util) | `d2-util` | — | Cross-cutting primitives: the D2GS Huffman packet codec and its framing. |
 
 ## Apps
 
 | app | built on | what it is |
 |-|-|-|
-| [`drlg-server`](apps/drlg-server) | `drlg` | Native multi-threaded HTTP server that serves an act's map JSON straight from `d2-drlg`. Compresses per-level collision concurrently and gzips its responses. Runs at [libd2.typeguru.nl](https://libd2.typeguru.nl). |
+| [`drlg-server`](apps/drlg-server) | `drlg` | Serves a generated act as JSON over HTTP. A live instance runs at [libd2.typeguru.nl](https://libd2.typeguru.nl); see below. |
 
-## How it is verified
+## Does it match the game?
 
-Every subsystem is checked against ground truth captured from the real 1.14d engine, not
-against itself. Generation is compared cell-for-cell with engine dumps across many seeds,
-and some seeds are held back as **blind holdouts** — never looked at while developing, so
-they cannot have been fitted. Where the engine's own rule was recovered from the binary,
-the address is in the comment next to the code that implements it.
+Map generation is compared **cell for cell** against dumps captured from the retail engine:
+11.1M subtiles per seed, every level of all five acts, zero differing cells. Two of the seeds
+are blind holdouts, captured up front and never looked at while developing. Those per-cell
+captures are all Nightmare; Normal and Hell are checked per level rather than per cell.
 
-```sh
-zig build test               # every package
-zig build test-drlg          # one package
-cd packages/drlg && zig build test -Doptimize=ReleaseFast -Dtest-filter="all-acts golden"
-```
-
-Building the packages, native libs and wasm from source: see
-[docs/BUILDING.md](docs/BUILDING.md).
+Other packages rest on weaker evidence than that, and it is worth knowing which before you
+depend on one: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 ## Using it
 
-From Zig, add the packages as source modules and import them directly — that works for
-all of them.
+From Zig, add the packages as source modules and import them directly. That works for
+all of them. Building from source: [docs/BUILDING.md](docs/BUILDING.md); why the project is
+written in Zig at all: [docs/WHY-ZIG.md](docs/WHY-ZIG.md).
 
 From anything else, use the **C ABI**: an `export fn` surface compiled to native shared +
 static libs with a C header, plus a **WebAssembly** build, so the same artifacts work from
-any language with a C FFI. Two packages ship that today — `drlg` and `item` — and they are
-the ones the language guides below use.
+any language with a C FFI. Two packages ship that today, `drlg` and `item`, and they are the
+ones the language guides below use.
 
-### Quick start — TypeScript / Node
+### Try it without installing anything
+
+A `drlg-server` instance is live, so you can generate a real act with one request:
+
+```sh
+curl --compressed "https://libd2.typeguru.nl/api/render?seed=1337&acts=1&difficulty=0"
+```
+
+`acts` is 1..5 and `difficulty` is 0/1/2. That returns every level of the act: rooms,
+preset objects and monsters, level adjacency, and the collision grid:
+
+```json
+{ "seed": 1337, "levels": [
+    { "levelNo": 1, "name": "RogueCamp", "displayName": "Rogue Encampment", "act": 1,
+      "origin": [5520, 5400], "size": [280, 200],
+      "rooms": [ ... ], "presets": [ ... ], "adjacents": [ ... ],
+      "collisionWidth": 280, "collisionHeight": 200 }
+  ] }
+```
+
+Act I at seed 1337 is 39 levels and about 230 KB gzipped, generated on the fly in well
+under a second. `GET /health` returns `ok`.
+
+### Quick start: TypeScript
 
 ```sh
 npm install @jaenster/d2drlg
@@ -73,7 +89,7 @@ npm install @jaenster/d2drlg
 ```ts
 import { shrines } from '@jaenster/d2drlg';
 
-// Cold Plains (level 3) for seed 1337. The wasm loads lazily on first call — no setup.
+// Cold Plains (level 3) for seed 1337. The wasm loads lazily on first call, so no setup.
 const s = await shrines(1337, 3);
 console.log(`${s.length} shrines/wells:`);
 for (const sh of s)
@@ -87,8 +103,10 @@ for (const sh of s)
 //   shrine class 83 at tile (1002, 1090)
 ```
 
-Tiny typed shim, ESM + CommonJS, runs natively on modern Node/Bun/Deno. `item` has the
-same shape, as `@jaenster/d2item`.
+Tiny typed shim, ESM, no native addon and no build step. The same package runs
+in **Node, Bun, Deno and the browser**. The wasm is freestanding and libc-free, so its import
+object is empty and the shim reads it with `fetch` or the filesystem depending on where it finds
+itself. `item` has the same shape, as `@jaenster/d2item`.
 
 ### Language guides
 
@@ -99,42 +117,11 @@ same shape, as `@jaenster/d2item`.
 - [Zig](docs/usage/zig.md)
 
 Where to get the artifacts:
-- **Native libs + headers** — attached to the package's GitHub Release
+- **Native libs + headers**: attached to the package's GitHub Release
   (`<pkg>-vX.Y.Z`), one archive per target: linux / macos / windows × x64 / arm64.
-- **WebAssembly** — published to npm as `@jaenster/d2<pkg>` (e.g. `@jaenster/d2drlg`),
-  a tiny typed TypeScript shim over the wasm (ESM + CommonJS).
-
-### Reference API (the `drlg` map generator)
-
-The language guides use `drlg` (`d2drlg`) as the running example — given a seed it
-generates an entire act's room layout — and `item` (`d2item`) as a second one.
-The `drlg` C API:
-
-```c
-typedef struct D2DrlgCtx D2DrlgCtx;   // loaded game tables
-typedef struct D2DrlgAct D2DrlgAct;   // a generated act
-typedef struct D2DrlgRoom { int32_t x, y, w, h, n_type, n_preset_type; } D2DrlgRoom;
-typedef struct D2DrlgShrine { int32_t class_id, x, y; } D2DrlgShrine;  // x/y are subtiles (÷5 for tiles)
-
-D2DrlgCtx *d2drlg_ctx_create(void);
-void       d2drlg_ctx_destroy(D2DrlgCtx *ctx);
-// generate a whole act. difficulty 0/1/2; act_no 0..4. NULL on error.
-D2DrlgAct *d2drlg_gen_act(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty, int32_t act_no);
-void       d2drlg_act_free(D2DrlgAct *act);
-int32_t    d2drlg_act_level_count(D2DrlgAct *act);
-int32_t    d2drlg_act_level_id(D2DrlgAct *act, int32_t level_index);
-int32_t    d2drlg_act_level_room_count(D2DrlgAct *act, int32_t level_index);
-// writes up to `cap` rooms of a level into `out`; returns full count (may exceed cap) or <0.
-int32_t    d2drlg_act_rooms(D2DrlgAct *act, int32_t level_index, D2DrlgRoom *out, int32_t cap);
-// writes up to `cap` of a level's seeded outdoor shrines/wells; returns full count or <0.
-int32_t    d2drlg_level_shrines(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
-                                int32_t level_id, D2DrlgShrine *out, int32_t cap);
-uint32_t   d2drlg_abi_version(void);
-```
-
-Both C APIs follow the same shape: `d2<pkg>_create`/`_destroy` (or `_ctx_create`), typed
-`extern struct` records, and caller-provided output buffers. The headers ship in each
-release and live at `packages/<pkg>/include/`.
+- **WebAssembly**: published to npm as `@jaenster/d2<pkg>` (e.g. `@jaenster/d2drlg`),
+  a tiny typed TypeScript shim over the wasm. ESM; `require()` works from CommonJS on
+  Node 22.12+, which is the floor the package declares.
 
 ## About the baked assets
 
@@ -148,4 +135,4 @@ Entertainment. Diablo II is © Blizzard Entertainment.
 
 ## License
 
-[MIT](LICENSE) — the Zig source, that is. See the note above about the baked assets.
+[MIT](LICENSE), for the Zig source. See the note above about the baked assets.

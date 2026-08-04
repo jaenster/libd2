@@ -48,5 +48,5 @@ try { console.log(drlg.shrines(1337, 3)); }
 finally { drlg.close(); }
 ```
 
-Every other package (e.g. `@jaenster/d2items`) ships the same shape: lazy
+Every other package (e.g. `@jaenster/d2item`) ships the same shape: lazy
 top-level functions over its own typed shim.
