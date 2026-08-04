@@ -133,18 +133,19 @@ public sealed class MapGenerator : IDisposable
     }
 
     /// <summary>The seeded outdoor shrines and wells of one level.</summary>
-    /// <remarks>This regenerates the act internally. Prefer <see cref="GenerateAct"/> when you
-    /// need more than one thing from the same world.</remarks>
+    /// <remarks>This has to generate the act the level belongs to, only to hand back something
+    /// that act already contains. It is kept so that code written against it keeps working.</remarks>
+    [Obsolete("Use Level.Shrines instead. Every shrine is already an object preset of its level, " +
+              "so this generates a whole act to return data a Level you can keep already carries.")]
     public IReadOnlyList<Shrine> GetShrines(uint seed, int levelId, Difficulty difficulty = Difficulty.Normal)
     {
         ThrowIfDisposed();
-        var n = Native.d2drlg_level_shrines(_ctx, seed, (int)difficulty, levelId, Array.Empty<Shrine>(), 0);
-        if (n < 0) throw new DrlgException($"reading shrines of level {levelId} failed");
-        if (n == 0) return Array.Empty<Shrine>();
-
-        var buf = new Shrine[n];
-        Native.d2drlg_level_shrines(_ctx, seed, (int)difficulty, levelId, buf, n);
-        return buf;
+        for (var act = 0; act < 5; act++)
+        {
+            var level = GenerateAct(seed, difficulty, act).GetLevel(levelId);
+            if (level != null) return level.Shrines;
+        }
+        throw new DrlgException($"reading shrines of level {levelId} failed");
     }
 
     /// <summary>The in-game name of a level id, or an empty string if unknown.</summary>

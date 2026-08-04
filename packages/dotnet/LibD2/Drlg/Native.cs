@@ -67,9 +67,6 @@ internal static class Native
     internal static extern int d2drlg_level_name(IntPtr ctx, int levelId, [Out] byte[] buf, int cap);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int d2drlg_level_shrines(IntPtr ctx, uint seed, int difficulty, int levelId, [Out] Shrine[] outShrines, int cap);
-
-    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int d2drlg_object_name(int txtFileNo, [Out] byte[] buf, int cap);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]

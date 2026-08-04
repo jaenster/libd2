@@ -25,7 +25,6 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 const PAGE = 65536;
 const ROOM = 28; // sizeof(D2DrlgRoom): 7 x int32
-const SHRINE = 12; // sizeof(D2DrlgShrine): 3 x int32
 const PRESET = 16; // sizeof(D2DrlgPreset): 4 x int32
 const ADJ = 12; // sizeof(D2DrlgAdjacent): 3 x int32
 
@@ -154,6 +153,14 @@ export interface D2Adjacent {
   /** level-LOCAL subtile Y of the bridge tile (this level's frame) */
   bridgeY: number;
 }
+/**
+ * The Objects.txt rows the Act-1/2 outdoor shrine spawner draws from: 2, 81, 83 and 84 are
+ * the four shrine variants, 130 is the well. A level's shrines are exactly its preset
+ * objects on these rows — see `levelShrines`.
+ */
+export const SHRINE_TXT_FILE_NOS: readonly number[] = [2, 81, 83, 84, 130];
+const SHRINE_ROWS = new Set(SHRINE_TXT_FILE_NOS);
+
 export interface D2Shrine {
   /** objects.txt class id: 130=Well, 84/2/81/83=Shrine variants */
   classId: number;
@@ -191,7 +198,6 @@ interface Exports {
   d2drlg_act_level_collision_zlib(act: number, i: number, out: number, cap: number, outW: number, outH: number): number;
   d2drlg_deflate_zlib(inPtr: number, inLen: number, out: number, cap: number): number;
   d2drlg_level_name(ctx: number, levelId: number, buf: number, cap: number): number;
-  d2drlg_level_shrines(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_level_presets(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_level_adjacents(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number): number;
   d2drlg_level_collision_raw(ctx: number, seed: number, diff: number, levelId: number, out: number, cap: number, outW: number, outH: number): number;
@@ -431,30 +437,43 @@ export class Drlg {
   /**
    * The seeded OUTDOOR SHRINES/WELLS of one level. `levelId` is a Levels.txt id
    * (Cold Plains = 3); the owning act is derived internally, so `actNo` is accepted
-   * only for API symmetry and is ignored. Returns [] if the level has none.
+   * only for API symmetry (it is used as a starting hint). Returns [] if the level
+   * has none.
+   *
+   * @deprecated Generates a whole act to return data the level already carries. Take the
+   * level from `render()` and pass it to `levelShrines(level)` instead — its shrines are
+   * already among its `presets`, so that costs nothing but a filter.
    */
   shrines(seed: number, levelId: number, difficulty = 0, actNo = 0): D2Shrine[] {
-    void actNo;
+    return levelShrines(this.#levelOriginAndPresets(seed, levelId, difficulty, actNo));
+  }
+
+  // The `{origin (SUBTILES), presets}` of one level, found by generating the act that owns
+  // it: acts are tried from `hintAct` onward, so a caller that names the right act pays a
+  // single act generation. Only the deprecated `shrines()` needs this — every other
+  // per-level accessor lets the Zig side derive the act from the Levels.txt Act column.
+  #levelOriginAndPresets(seed: number, levelId: number, difficulty: number, hintAct: number): Pick<D2Level, 'origin' | 'presets'> {
     const ex = this.#ex;
-    let cap = 64;
-    let base = this.#scratch(cap * SHRINE);
-    let n = ex.d2drlg_level_shrines(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
-    if (n < 0) throw new Error('d2drlg: level_shrines failed (' + n + ')');
-    if (n > cap) { // truncated: regrow to the full count and refetch
-      cap = n;
-      base = this.#scratch(cap * SHRINE);
-      n = ex.d2drlg_level_shrines(this.#ctx, seed >>> 0, difficulty, levelId, base, cap);
+    const ACTS = 5;
+    for (let k = 0; k < ACTS; k++) {
+      const actNo = (((hintAct | 0) % ACTS) + ACTS + k) % ACTS;
+      const act = ex.d2drlg_gen_act(this.#ctx, seed >>> 0, difficulty, actNo);
+      if (!act) throw new Error('d2drlg: gen_act failed');
+      try {
+        const n = ex.d2drlg_act_level_count(act);
+        for (let i = 0; i < n; i++) {
+          if (ex.d2drlg_act_level_id(act, i) !== levelId) continue;
+          const outp = this.#scratch(8);
+          ex.d2drlg_act_level_origin(act, i, outp, outp + 4);
+          const dv = new DataView(ex.memory.buffer);
+          const origin: [number, number] = [dv.getInt32(outp, true) * 5, dv.getInt32(outp + 4, true) * 5];
+          return { origin, presets: this.#actPresets(act, i) };
+        }
+      } finally {
+        ex.d2drlg_act_free(act);
+      }
     }
-    const dv = new DataView(ex.memory.buffer);
-    const out: D2Shrine[] = [];
-    for (let i = 0; i < n; i++) {
-      const b = base + i * SHRINE;
-      const classId = dv.getInt32(b, true);
-      const x = dv.getInt32(b + 4, true);
-      const y = dv.getInt32(b + 8, true);
-      out.push({ classId, x, y, tileX: Math.floor(x / 5), tileY: Math.floor(y / 5), isWell: classId === 130 });
-    }
-    return out;
+    throw new Error('d2drlg: no act contains level ' + levelId);
   }
 
   // Objects.txt Name/description cache, keyed by txtFileNo. `buf` is a persistent
@@ -654,7 +673,32 @@ export async function render(seed: number, actNo = 0, difficulty = 0): Promise<D
   return (await inst()).render(seed, actNo, difficulty);
 }
 
-/** A level's seeded outdoor shrines/wells. Lazily loads the wasm on first call. */
+/**
+ * The seeded outdoor shrines/wells of an ALREADY-GENERATED level (a `D2Level` from
+ * `render()`), derived from its own `presets`: every shrine is folded into the level's
+ * preset units as an obj entry at the same position, so this is a filter over
+ * `SHRINE_TXT_FILE_NOS` plus the level-local -> world subtile shift (`origin` is already
+ * in subtiles). Costs no wasm call and no regeneration. Returns [] if the level has none.
+ */
+export function levelShrines(level: Pick<D2Level, 'origin' | 'presets'>): D2Shrine[] {
+  const [ox, oy] = level.origin;
+  const out: D2Shrine[] = [];
+  for (const p of level.presets) {
+    if (p.type !== 'obj' || !SHRINE_ROWS.has(p.txtFileNo)) continue;
+    const x = ox + p.x;
+    const y = oy + p.y;
+    out.push({ classId: p.txtFileNo, x, y, tileX: Math.floor(x / 5), tileY: Math.floor(y / 5), isWell: p.txtFileNo === 130 });
+  }
+  return out;
+}
+
+/**
+ * A level's seeded outdoor shrines/wells. Lazily loads the wasm on first call.
+ *
+ * @deprecated Generates a whole act to return data the level already carries. Take the
+ * level from `render()` and pass it to `levelShrines(level)` instead — its shrines are
+ * already among its `presets`, so that costs nothing but a filter.
+ */
 export async function shrines(seed: number, levelId: number, difficulty = 0, actNo = 0): Promise<D2Shrine[]> {
   return (await inst()).shrines(seed, levelId, difficulty, actNo);
 }

@@ -67,7 +67,9 @@ int32_t    d2drlg_act_level_id(D2DrlgAct *act, int32_t level_index);
 int32_t    d2drlg_act_level_room_count(D2DrlgAct *act, int32_t level_index);
 // writes up to `cap` rooms of a level into `out`; returns full count (may exceed cap) or <0.
 int32_t    d2drlg_act_rooms(D2DrlgAct *act, int32_t level_index, D2DrlgRoom *out, int32_t cap);
-// writes up to `cap` of a level's seeded outdoor shrines/wells; returns full count or <0.
+// DEPRECATED: these are already in the level's presets as eType-2 objects at the same
+// position, so this regenerates a whole act to return a subset of d2drlg_act_level_presets.
+// Filter those for rows 2/81/83/84 (shrine variants) and 130 (well) instead.
 int32_t    d2drlg_level_shrines(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
                                 int32_t level_id, D2DrlgShrine *out, int32_t cap);
 uint32_t   d2drlg_abi_version(void);

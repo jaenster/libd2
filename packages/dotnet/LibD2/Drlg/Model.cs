@@ -186,6 +186,36 @@ public sealed class Level
     public IReadOnlyList<Adjacent> Adjacents { get; }
 
     /// <summary>
+    /// The seeded outdoor shrines and wells of this level, at world SUBTILE coordinates.
+    /// The generator folds every one of them into <see cref="Presets"/> as an object at the same
+    /// position, so this is a filter over data the level already carries: it generates nothing.
+    /// Only Act I and Act II wilderness levels have any.
+    /// </summary>
+    public IReadOnlyList<Shrine> Shrines => _shrines ??= FindShrines();
+
+    private IReadOnlyList<Shrine>? _shrines;
+
+    /// <summary>
+    /// Presets are level-local subtiles and shrines are world subtiles, so each one moves by the
+    /// level's origin, which is in tiles and therefore worth five subtiles apiece.
+    /// </summary>
+    private IReadOnlyList<Shrine> FindShrines()
+    {
+        List<Shrine>? found = null;
+        foreach (var unit in Presets)
+        {
+            if (unit.Kind != PresetKind.Object || !IsShrineObject(unit.TxtFileNo)) continue;
+            found ??= new List<Shrine>();
+            found.Add(new Shrine(unit.TxtFileNo, OriginX * 5 + unit.X, OriginY * 5 + unit.Y));
+        }
+        return found ?? (IReadOnlyList<Shrine>)Array.Empty<Shrine>();
+    }
+
+    /// <summary>The Objects.txt rows the outdoor shrine spawner draws from: four shrines and the well.</summary>
+    private static bool IsShrineObject(int txtFileNo) =>
+        txtFileNo == 2 || txtFileNo == 81 || txtFileNo == 83 || txtFileNo == 84 || txtFileNo == 130;
+
+    /// <summary>
     /// The subtile collision grid, or null unless the act was generated with
     /// <c>includeCollision: true</c>. A whole act of grids is tens of megabytes, so it is not
     /// copied out unless asked for.
