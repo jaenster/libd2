@@ -1,5 +1,7 @@
 # libd2
 
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/MHK2Dg9)
+
 A clean-room reimplementation of the **Diablo II 1.14d** engine core in [Zig](https://ziglang.org)
 ([why Zig](docs/WHY-ZIG.md)), reverse-engineered from the retail binary with no Blizzard code.
 
@@ -18,6 +20,7 @@ It is a long reverse-engineering effort and sponsorship is what keeps it moving.
 | **Rust** | `cargo add libd2` | [guide](docs/usage/rust.md) |
 | **.NET** | `dotnet add package LibD2` | [guide](docs/usage/csharp.md) |
 | **Node, Bun, Deno, browser** | `npm install libd2` | [guide](docs/usage/node.md) |
+| **Go** | `go get github.com/jaenster/libd2-go` | [guide](docs/usage/go.md) |
 | **Zig** | add the packages as source modules | [guide](docs/usage/zig.md) |
 | **C** | header + native lib from a Release | [guide](docs/usage/c.md) |
 | **C++** | header + native lib from a Release | [guide](docs/usage/cpp.md) |
