@@ -13,3 +13,7 @@ packages/dotnet/**/runtimes/
 packages/dotnet/**/bin/
 packages/dotnet/**/obj/
 *.nupkg
+
+# Go: native assets + their generated embed files are staged by scripts/go-sync-natives.sh
+packages/go/**/natives/
+packages/go/**/embed_*.go

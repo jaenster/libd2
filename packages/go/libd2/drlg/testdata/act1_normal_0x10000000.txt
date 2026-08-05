@@ -1,0 +1,40 @@
+seed 0x10000000 normal act 1 levels 39
+  1 Rogue Encampment             preset      placed=true origin=864,912 size=56x40 rooms=35 npcs=18 objects=25 adjacents=15
+  2 Blood Moor                   wilderness  placed=true origin=920,904 size=96x56 rooms=83 npcs=1 objects=14 adjacents=31
+  3 Cold Plains                  wilderness  placed=true origin=1016,920 size=80x80 rooms=97 npcs=11 objects=29 adjacents=46
+  4 Stony Field                  wilderness  placed=true origin=1000,1000 size=80x80 rooms=87 npcs=14 objects=41 adjacents=19
+  5 Dark Wood                    wilderness  placed=true origin=3096,954 size=80x80 rooms=90 npcs=38 objects=35 adjacents=19
+  6 Black Marsh                  wilderness  placed=true origin=3080,1034 size=80x80 rooms=93 npcs=12 objects=33 adjacents=38
+  7 Tamoe Highland               wilderness  placed=true origin=3000,1018 size=80x80 rooms=96 npcs=13 objects=25 adjacents=65
+  8 Den of Evil                  maze        placed=false origin=1500,1000 size=200x200 rooms=27 npcs=1 objects=15 adjacents=1
+  9 Cave Level 1                 maze        placed=false origin=1500,1300 size=200x200 rooms=45 npcs=6 objects=26 adjacents=2
+ 10 Underground Passage Level 1  maze        placed=false origin=1500,1600 size=200x200 rooms=63 npcs=9 objects=48 adjacents=3
+ 11 Hole Level 1                 maze        placed=false origin=1500,1900 size=200x200 rooms=36 npcs=0 objects=23 adjacents=2
+ 12 Pit Level 1                  maze        placed=false origin=1500,2200 size=200x200 rooms=36 npcs=5 objects=31 adjacents=2
+ 13 Cave Level 2                 preset      placed=false origin=1500,2500 size=24x24 rooms=9 npcs=6 objects=11 adjacents=1
+ 14 Underground Passage Level 2  preset      placed=false origin=1500,2624 size=24x24 rooms=9 npcs=6 objects=13 adjacents=1
+ 15 Hole Level 2                 preset      placed=false origin=1500,2748 size=24x24 rooms=9 npcs=4 objects=8 adjacents=1
+ 16 Pit Level 2                  preset      placed=false origin=1500,2872 size=24x24 rooms=9 npcs=5 objects=12 adjacents=1
+ 17 Burial Grounds               wilderness  placed=true origin=1096,968 size=40x48 rooms=30 npcs=1 objects=11 adjacents=14
+ 18 Crypt                        maze        placed=false origin=2000,1000 size=200x200 rooms=12 npcs=1 objects=61 adjacents=1
+ 19 Mausoleum                    maze        placed=false origin=2000,1300 size=200x200 rooms=13 npcs=0 objects=19 adjacents=1
+ 20 Forgotten Tower              preset      placed=false origin=2000,1600 size=8x8 rooms=1 npcs=0 objects=0 adjacents=2
+ 21 Tower Cellar Level 1         maze        placed=false origin=2500,1000 size=200x200 rooms=7 npcs=0 objects=13 adjacents=2
+ 22 Tower Cellar Level 2         maze        placed=false origin=2500,1300 size=200x200 rooms=7 npcs=1 objects=9 adjacents=2
+ 23 Tower Cellar Level 3         maze        placed=false origin=2500,1600 size=200x200 rooms=8 npcs=1 objects=10 adjacents=2
+ 24 Tower Cellar Level 4         maze        placed=false origin=2500,1900 size=200x200 rooms=8 npcs=0 objects=15 adjacents=2
+ 25 Tower Cellar Level 5         preset      placed=false origin=2500,2200 size=30x30 rooms=16 npcs=3 objects=40 adjacents=1
+ 26 Monastery Gate               preset      placed=true origin=3000,1000 size=64x18 rooms=24 npcs=0 objects=12 adjacents=66
+ 27 Outer Cloister               preset      placed=false origin=3000,960 size=56x40 rooms=35 npcs=0 objects=1 adjacents=25
+ 28 Barracks                     maze        placed=false origin=3022,904 size=40x56 rooms=48 npcs=10 objects=30 adjacents=6
+ 29 Jail Level 1                 maze        placed=false origin=3500,1000 size=200x200 rooms=12 npcs=4 objects=18 adjacents=2
+ 30 Jail Level 2                 maze        placed=false origin=3500,1300 size=200x200 rooms=14 npcs=3 objects=31 adjacents=2
+ 31 Jail Level 3                 maze        placed=false origin=3500,1600 size=200x200 rooms=18 npcs=5 objects=34 adjacents=2
+ 32 Inner Cloister               preset      placed=false origin=4000,1000 size=18x20 rooms=9 npcs=0 objects=3 adjacents=21
+ 33 Cathedral                    preset      placed=false origin=3996,966 size=28x34 rooms=20 npcs=1 objects=29 adjacents=21
+ 34 Catacombs Level 1            maze        placed=false origin=4500,1000 size=200x200 rooms=13 npcs=6 objects=14 adjacents=2
+ 35 Catacombs Level 2            maze        placed=false origin=4500,1300 size=200x200 rooms=15 npcs=11 objects=53 adjacents=2
+ 36 Catacombs Level 3            maze        placed=false origin=4500,1600 size=200x200 rooms=16 npcs=8 objects=34 adjacents=2
+ 37 Catacombs Level 4            preset      placed=false origin=4500,1900 size=22x31 rooms=12 npcs=8 objects=92 adjacents=1
+ 38 Tristram                     preset      placed=false origin=5000,1000 size=43x48 rooms=36 npcs=4 objects=83 adjacents=0
+ 39 Moo Moo Farm                 wilderness  placed=true origin=5000,1148 size=80x80 rooms=87 npcs=1 objects=8 adjacents=0
