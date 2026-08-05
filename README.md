@@ -10,8 +10,7 @@ game does. It now covers the surrounding systems too, including item generation,
 the D2GS wire protocol, save files, and routing over a generated world. Every package stands on
 its own.
 
-If libd2 is useful to you, you can [**sponsor the work on GitHub**](https://github.com/sponsors/jaenster).
-It is a long reverse-engineering effort and sponsorship is what keeps it moving.
+If libd2 is useful to you, you can [sponsor the work](https://github.com/sponsors/jaenster).
 
 ## Using it
 
