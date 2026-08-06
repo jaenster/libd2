@@ -1,0 +1,139 @@
+name: go
+
+# The Go module is versioned and released on its own, separately from the zig packages, the same
+# way the .NET package is: it covers several subsystems at once and being able to ship a binding
+# fix without re-releasing anything else is worth a workflow of its own.
+#
+# Go has no package registry. A module is published by pushing a tagged commit to the repository
+# its module path names, so this builds the module tree, proves it works on every OS, and pushes
+# it to libd2/go. Publishing needs LIBD2_GO_TOKEN — a token with contents: write on that
+# repository.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Module version, e.g. 0.1.0 (tagged v0.1.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build and test only — no push, no tag'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-gnu
+          - aarch64-linux-gnu
+          - arm-linux-gnueabihf
+          - riscv64-linux-gnu
+          - x86_64-freebsd
+          - aarch64-freebsd
+          - x86_64-macos
+          - aarch64-macos
+          - x86-windows-gnu
+          - x86_64-windows-gnu
+          - aarch64-windows-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - name: Build every package that has a C ABI for ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          # A package ships a C ABI iff it has a capi.zig; nothing else is reachable from Go.
+          for capi in packages/*/src/capi.zig; do
+            pkg="$(basename "$(dirname "$(dirname "$capi")")")"
+            echo "== $pkg -> ${{ matrix.target }}"
+            # -Dcli only exists where there is a dev CLI to skip; passing it elsewhere is an error.
+            cli=""
+            ( cd "packages/$pkg" && zig build -h 2>&1 | grep -q -- '-Dcli' ) && cli="-Dcli=false"
+            ( cd "packages/$pkg" && zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast \
+                $cli --prefix "$GITHUB_WORKSPACE/dist/$pkg/${{ matrix.target }}" )
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
+  pack:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, pattern: go-*, merge-multiple: true }
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.24' }
+      - name: Pack
+        run: scripts/go-pack.sh "${{ inputs.version }}" artifacts "$GITHUB_WORKSPACE/libd2-go"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libd2-go-${{ inputs.version }}
+          path: libd2-go/
+          if-no-files-found: error
+
+  # The point of the whole exercise is that a consumer needs no toolchain, so the assembled module
+  # is tested exactly as one would get it: downloaded, on a runner with no zig and nothing built.
+  test:
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: libd2-go-${{ inputs.version }}, path: libd2-go }
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.24' }
+      - name: Test
+        working-directory: libd2-go
+        run: go test ./...
+      - name: Test without the embedded binaries
+        working-directory: libd2-go
+        # Nothing on the runner provides these libraries, so this must fail — and it must fail
+        # with the message that says how to point at one, not with a crash.
+        shell: bash
+        run: |
+          if go test -tags libd2_nolib ./drlg/ 2>&1 | tee out.txt; then
+            echo "expected the no-embed build to fail without a library on the system" >&2
+            exit 1
+          fi
+          grep -q "Set LIBD2_D2DRLG_PATH" out.txt
+
+  publish:
+    needs: test
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: libd2-go-${{ inputs.version }}, path: libd2-go }
+      - name: Push to the module repository
+        working-directory: libd2-go
+        env:
+          TOKEN: ${{ secrets.LIBD2_GO_TOKEN }}
+        run: |
+          set -euo pipefail
+          # A fresh tree each release rather than a merge: the mirror holds no history worth
+          # keeping, and the tag is what `go get` actually resolves.
+          git init -q
+          git config user.name "libd2 release"
+          git config user.email "release@libd2.invalid"
+          git add -A
+          # SOURCE, written by go-pack.sh, names the upstream commit this tree was cut from; the
+          # mirror has no history of its own, so the message carries it too.
+          git commit -qm "libd2-go ${{ inputs.version }} ($(sed -n 's/^commit /jaenster\/libd2@/p' SOURCE))"
+          git remote add origin "https://x-access-token:${TOKEN}@github.com/libd2/go.git"
+          git push -f origin HEAD:main
+          git tag "v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"

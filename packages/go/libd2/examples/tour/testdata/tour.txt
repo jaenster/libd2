@@ -1,0 +1,41 @@
+libd2 drlg ABI 3, seed 1337
+
+== Act 1: 39 levels ==
+Rogue Encampment             preset       35 rooms   42 presets  20 warps  56x40 tiles
+Blood Moor                   wilderness   83 rooms   12 presets  36 warps  96x56 tiles
+Cold Plains                  wilderness   97 rooms   42 presets  40 warps  80x80 tiles
+Stony Field                  wilderness   91 rooms   55 presets  16 warps  80x80 tiles
+Dark Wood                    wilderness   93 rooms   79 presets  19 warps  80x80 tiles
+Black Marsh                  wilderness   93 rooms   47 presets  41 warps  80x80 tiles
+
+Cold Plains leads to:
+  Cave Level 1                 via level-local subtile 300,220
+  Blood Moor                   via level-local subtile 380,380
+  Burial Grounds               via level-local subtile 140,380
+  Stony Field                  via level-local subtile 300,20
+
+== Frames ==
+Cold Plains sits at tile 984,1080 = subtile 4920,5400, and is 80x80 tiles
+  bed                    local  303,258  -> world subtile 5223,5658
+  chest                  local  250,100  -> world subtile 5170,5500
+  fire                   local  172,55   -> world subtile 5092,5455
+
+== Grids ==
+Blood Moor collision is 480x280 subtiles: 82696 walkable, 50104 blocked terrain, 1600 never covered
+
+== Routing ==
+level 1 119,119 -> level 3 200,200
+crosses 3 levels: [1 2 3]
+walking: 3 legs, 36 moves
+  level 1:    9 moves, exits into level 2
+  level 2:   18 moves, exits into level 3
+  level 3:    9 moves, arrives
+teleporting: 14 moves, 11 of them casts (max 50 subtiles each)
+
+== Drops ==
+"Act 5 (H) Super Cx" at mlvl 87 with 800 magic find: 5 drops
+  magic 7p7 ilvl 87            mod seed 0x920e3483
+  normal hp4 ilvl 87           mod seed 0x46cfa5c4
+  normal hp5 ilvl 87           mod seed 0xf273dad5
+  normal hp4 ilvl 87           mod seed 0xa6f9b2b0
+  normal hp4 ilvl 87           mod seed 0x6e41c74c
