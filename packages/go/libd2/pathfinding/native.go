@@ -8,7 +8,7 @@ import (
 )
 
 // abiVersion is the d2pf C ABI these bindings were written against.
-const abiVersion = 1
+const abiVersion = 2
 
 // cOptions mirrors D2PfOptions exactly, which is why it is not the type callers see: Options
 // spells the same settings with Go types, and this is what it converts into.
@@ -28,6 +28,11 @@ type api struct {
 
 	worldCreate  func(drlgCore uintptr, seed uint32, difficulty int32) uintptr
 	worldDestroy func(world uintptr)
+
+	unitPlace    func(world uintptr, level int32, unitID uint32, unitType uint8, sizeX, x, y int32) int32
+	unitLift     func(world uintptr, level int32, unitID uint32) int32
+	unitsClear   func(world uintptr, level int32) int32
+	terrainEdit  func(world uintptr, level, x0, y0, x1, y1 int32, add, remove uint16) int32
 	worldLoadAct func(world uintptr, actNo int32) int32
 
 	route     func(world uintptr, fromLevel, fromX, fromY, toLevel, toX, toY int32, opts unsafe.Pointer) uintptr
@@ -79,6 +84,10 @@ func load() (*api, error) {
 			{&a.walkable, "d2pf_walkable"},
 			{&a.lineOfSight, "d2pf_line_of_sight"},
 			{&a.nearestPassable, "d2pf_nearest_passable"},
+			{&a.unitPlace, "d2pf_unit_place"},
+			{&a.unitLift, "d2pf_unit_lift"},
+			{&a.unitsClear, "d2pf_units_clear"},
+			{&a.terrainEdit, "d2pf_terrain_edit"},
 		}
 		for _, b := range binds {
 			if err := lib.Bind(l, b.fn, b.sym); err != nil {
