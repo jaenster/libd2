@@ -19,7 +19,7 @@ If libd2 is useful to you, you can [sponsor the work](https://github.com/sponsor
 | **Rust** | `cargo add libd2` | [guide](docs/usage/rust.md) |
 | **.NET** | `dotnet add package LibD2` | [guide](docs/usage/csharp.md) |
 | **Node, Bun, Deno, browser** | `npm install libd2` | [guide](docs/usage/node.md) |
-| **Go** | `go get github.com/jaenster/libd2-go` | [guide](docs/usage/go.md) |
+| **Go** | `go get github.com/libd2/go` | [guide](docs/usage/go.md) |
 | **Zig** | add the packages as source modules | [guide](docs/usage/zig.md) |
 | **C** | header + native lib from a Release | [guide](docs/usage/c.md) |
 | **C++** | header + native lib from a Release | [guide](docs/usage/cpp.md) |

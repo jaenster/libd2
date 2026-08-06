@@ -1,0 +1,46 @@
+seed=1 tc="Act 1 Equip A" mlvl=45 mf=300 -> 1 drop(s):
+  [0] ne7 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+seed=7 tc="Act 1 Equip A" mlvl=45 mf=300 -> 1 drop(s):
+  [0] 92h quality=superior pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=4 auto=0 sockets=0 qty=0
+seed=12345 tc="Act 1 Equip A" mlvl=45 mf=300 -> 1 drop(s):
+  [0] 9cr quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=3 qty=0
+seed=424242 tc="Act 1 Equip A" mlvl=45 mf=300 -> 1 drop(s):
+  [0] xlm quality=low pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=2 qty=0
+seed=1 tc="Act 5 (H) Super Cx" mlvl=87 mf=800 -> 5 drop(s):
+  [0] 7fb quality=rare pfx=0 sfx=0 rare=5/9 rare_pfx={ 527, 192, 0 } rare_sfx={ 200, 360, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [1] rvl quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [2] hp4 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [3] mp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [4] mp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+seed=2 tc="Act 5 (H) Super Cx" mlvl=87 mf=800 -> 5 drop(s):
+  [0] uhg quality=rare pfx=0 sfx=0 rare=18/97 rare_pfx={ 145, 437, 0 } rare_sfx={ 183, 403, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [1] hp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [2] mp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [3] hp4 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [4] hp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+seed=5 tc="Act 5 (H) Super Cx" mlvl=87 mf=800 -> 6 drop(s):
+  [0] 7ts quality=rare pfx=0 sfx=0 rare=15/51 rare_pfx={ 597, 0, 0 } rare_sfx={ 168, 199, 406 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=1
+  [1] 7ts quality=rare pfx=0 sfx=0 rare=9/5 rare_pfx={ 245, 597, 187 } rare_sfx={ 610, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=1
+  [2] hp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [3] rvl quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [4] rvl quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [5] mp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+seed=6 tc="Act 5 (H) Super Cx" mlvl=87 mf=800 -> 5 drop(s):
+  [0] rin quality=set pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=30 qid=0 auto=0 sockets=0 qty=0
+  [1] hp4 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [2] mp4 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [3] hp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [4] mp4 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+seed=7 tc="Act 5 (H) Super Cx" mlvl=87 mf=800 -> 5 drop(s):
+  [0] ci3 quality=magic pfx=439 sfx=229 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [1] hp4 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [2] mp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [3] hp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [4] hp4 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+seed=99999 tc="Act 5 (H) Super Cx" mlvl=87 mf=800 -> 6 drop(s):
+  [0] uth quality=magic pfx=0 sfx=123 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [1] uhb quality=rare pfx=0 sfx=0 rare=25/106 rare_pfx={ 351, 0, 0 } rare_sfx={ 183, 254, 311 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [2] hp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [3] mp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [4] mp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
+  [5] hp5 quality=normal pfx=0 sfx=0 rare=0/0 rare_pfx={ 0, 0, 0 } rare_sfx={ 0, 0, 0 } uid=0 sid=0 qid=0 auto=0 sockets=0 qty=0
