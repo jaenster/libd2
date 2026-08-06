@@ -21,6 +21,8 @@
 
 const std = @import("std");
 const grid = @import("grid.zig");
+const wd = @import("d2-world");
+const pf_collision = @import("d2-core").collision;
 
 pub const Point = grid.Point;
 
@@ -255,8 +257,10 @@ pub const Pather = struct {
                 try self.push(tentative + grid.heuristic(nx, ny, goal.x, goal.y), @intCast(ni));
             }
         }
-        // A consistent heuristic plus the component pre-check means an exhausted heap can only
-        // happen if the component labels and the bitset disagree, which would be a build bug.
+        // The component pre-check rules out terrain sealing the goal off, so an exhausted heap
+        // means the LIVE world did: units standing shoulder to shoulder across the only corridor.
+        // The labels are terrain-only on purpose (see grid.zig), which is what makes them a cheap
+        // and still-correct "definitely not reachable" test rather than a complete one.
         return error.Unreachable;
     }
 
@@ -315,24 +319,46 @@ pub fn compressRuns(out: *std.ArrayListUnmanaged(Point), first: usize, max_step:
 
 const testing = std.testing;
 
-fn testMap(alloc: std.mem.Allocator, w: i32, h: i32, walls: []const [2]i32) !grid.PassMap {
-    const cells = try alloc.alloc(u16, @intCast(w * h));
-    defer alloc.free(cells);
-    @memset(cells, 0);
-    for (walls) |p| cells[@intCast(p[1] * w + p[0])] = 0x01;
-    return grid.buildPassMap(alloc, cells, w, h, 0x1c09, .point);
+/// A synthetic level plus one view of it. Heap-allocated because a `PassMap` holds `*const Level`
+/// and the level has to outlive it at a stable address — which is exactly how a real `World` keeps
+/// them.
+const TestLevel = struct {
+    alloc: std.mem.Allocator,
+    lv: wd.Level,
+    pm: grid.PassMap,
+
+    fn init(alloc: std.mem.Allocator, w: i32, h: i32, walls: []const [2]i32) !*TestLevel {
+        const cells = try alloc.alloc(u16, @intCast(w * h));
+        @memset(cells, 0);
+        for (walls) |p| cells[@intCast(p[1] * w + p[0])] = pf_collision.Colbit.wall;
+        const self = try alloc.create(TestLevel);
+        self.* = .{ .alloc = alloc, .lv = try wd.Level.initBare(alloc, w, h, cells), .pm = undefined };
+        self.pm = try grid.buildPassMap(alloc, &self.lv, pf_collision.Colmask.player_path, .point);
+        return self;
+    }
+
+    fn deinit(self: *TestLevel) void {
+        self.pm.deinit(self.alloc);
+        self.lv.deinit();
+        self.alloc.destroy(self);
+    }
+};
+
+fn testMap(alloc: std.mem.Allocator, w: i32, h: i32, walls: []const [2]i32) !*TestLevel {
+    return TestLevel.init(alloc, w, h, walls);
 }
 
 test "A* finds the straight-line path across open ground" {
     const alloc = testing.allocator;
-    var pm = try testMap(alloc, 32, 32, &.{});
-    defer pm.deinit(alloc);
+    const t = try testMap(alloc, 32, 32, &.{});
+    defer t.deinit();
+    const pm = &t.pm;
     var p = Pather.init(alloc);
     defer p.deinit();
     var out: std.ArrayListUnmanaged(Point) = .empty;
     defer out.deinit(alloc);
 
-    try p.find(&pm, 0, 0, 20, 20, .{}, &out);
+    try p.find(pm, 0, 0, 20, 20, .{}, &out);
     // Pure diagonal: compressed to just the endpoints.
     try testing.expectEqual(@as(usize, 2), out.items.len);
     try testing.expectEqual(Point{ .x = 0, .y = 0 }, out.items[0]);
@@ -344,14 +370,15 @@ test "A* routes around a wall and reports the true cost" {
     // A vertical wall at x=5 spanning y=0..14, leaving a gap at y=15.
     var walls: [15][2]i32 = undefined;
     for (0..15) |i| walls[i] = .{ 5, @intCast(i) };
-    var pm = try testMap(alloc, 24, 24, &walls);
-    defer pm.deinit(alloc);
+    const t = try testMap(alloc, 24, 24, &walls);
+    defer t.deinit();
+    const pm = &t.pm;
     var p = Pather.init(alloc);
     defer p.deinit();
     var out: std.ArrayListUnmanaged(Point) = .empty;
     defer out.deinit(alloc);
 
-    try p.find(&pm, 2, 2, 10, 2, .{ .compress = false }, &out);
+    try p.find(pm, 2, 2, 10, 2, .{ .compress = false }, &out);
     try testing.expectEqual(Point{ .x = 2, .y = 2 }, out.items[0]);
     try testing.expectEqual(Point{ .x = 10, .y = 2 }, out.items[out.items.len - 1]);
     // Every step is a legal 8-neighbour move onto passable ground, and none crosses the wall.
@@ -369,38 +396,41 @@ test "a walled-off goal is rejected by the component check, not by searching" {
     // Seal x=5 completely: the right half becomes its own component.
     var walls: [24][2]i32 = undefined;
     for (0..24) |i| walls[i] = .{ 5, @intCast(i) };
-    var pm = try testMap(alloc, 24, 24, &walls);
-    defer pm.deinit(alloc);
+    const t = try testMap(alloc, 24, 24, &walls);
+    defer t.deinit();
+    const pm = &t.pm;
     var p = Pather.init(alloc);
     defer p.deinit();
     var out: std.ArrayListUnmanaged(Point) = .empty;
     defer out.deinit(alloc);
 
-    try testing.expectError(error.Unreachable, p.find(&pm, 2, 2, 10, 2, .{ .snap_radius = 0 }, &out));
+    try testing.expectError(error.Unreachable, p.find(pm, 2, 2, 10, 2, .{ .snap_radius = 0 }, &out));
     try testing.expectEqual(@as(u32, 2), pm.comp_count);
 }
 
 test "a start inside collision snaps to the nearest free cell" {
     const alloc = testing.allocator;
-    var pm = try testMap(alloc, 16, 16, &.{.{ 3, 3 }});
-    defer pm.deinit(alloc);
+    const t = try testMap(alloc, 16, 16, &.{.{ 3, 3 }});
+    defer t.deinit();
+    const pm = &t.pm;
     var p = Pather.init(alloc);
     defer p.deinit();
     var out: std.ArrayListUnmanaged(Point) = .empty;
     defer out.deinit(alloc);
 
-    try p.find(&pm, 3, 3, 10, 10, .{}, &out);
+    try p.find(pm, 3, 3, 10, 10, .{}, &out);
     try testing.expect(!std.meta.eql(out.items[0], Point{ .x = 3, .y = 3 }));
     try testing.expect(pm.passable(out.items[0].x, out.items[0].y));
 
     try out.resize(alloc, 0);
-    try testing.expectError(error.StartBlocked, p.find(&pm, 3, 3, 10, 10, .{ .snap_radius = 0 }, &out));
+    try testing.expectError(error.StartBlocked, p.find(pm, 3, 3, 10, 10, .{ .snap_radius = 0 }, &out));
 }
 
 test "the scratch is reused across searches without clearing" {
     const alloc = testing.allocator;
-    var pm = try testMap(alloc, 64, 64, &.{});
-    defer pm.deinit(alloc);
+    const t = try testMap(alloc, 64, 64, &.{});
+    defer t.deinit();
+    const pm = &t.pm;
     var p = Pather.init(alloc);
     defer p.deinit();
     var out: std.ArrayListUnmanaged(Point) = .empty;
@@ -408,9 +438,65 @@ test "the scratch is reused across searches without clearing" {
 
     for (0..50) |i| {
         try out.resize(alloc, 0);
-        const t: i32 = @intCast(i);
-        try p.find(&pm, 0, 0, 40 + @mod(t, 20), 30, .{}, &out);
+        const k: i32 = @intCast(i);
+        try p.find(pm, 0, 0, 40 + @mod(k, 20), 30, .{}, &out);
         try testing.expectEqual(Point{ .x = 0, .y = 0 }, out.items[0]);
     }
     try testing.expectEqual(@as(u32, 50), p.gen);
+}
+
+test "a unit standing in the only corridor makes the goal unreachable, and lifting it restores the path" {
+    const alloc = testing.allocator;
+    // A wall across x=8 with a single one-subtile doorway at y=6.
+    var walls: [15][2]i32 = undefined;
+    var n: usize = 0;
+    for (0..16) |i| {
+        if (i == 6) continue;
+        walls[n] = .{ 8, @intCast(i) };
+        n += 1;
+    }
+    const t = try testMap(alloc, 16, 16, walls[0..n]);
+    defer t.deinit();
+    const pm = &t.pm;
+
+    var p = Pather.init(alloc);
+    defer p.deinit();
+    var out: std.ArrayListUnmanaged(Point) = .empty;
+    defer out.deinit(alloc);
+
+    try p.find(pm, 2, 6, 14, 6, .{}, &out);
+    try testing.expectEqual(Point{ .x = 14, .y = 6 }, out.items[out.items.len - 1]);
+
+    // A small monster in the doorway: its `nopath` centre alone seals it, and player_path tests
+    // that bit. The component labels are terrain-only, so this failure comes out of the search.
+    try t.lv.addUnit(1, .{ .x = 8, .y = 6 }, .monster(2, false, .{}));
+    try out.resize(alloc, 0);
+    try testing.expectError(error.Unreachable, p.find(pm, 2, 6, 14, 6, .{ .snap_radius = 0 }, &out));
+
+    t.lv.removeUnit(1);
+    try out.resize(alloc, 0);
+    try p.find(pm, 2, 6, 14, 6, .{}, &out);
+    try testing.expectEqual(Point{ .x = 14, .y = 6 }, out.items[out.items.len - 1]);
+}
+
+test "the same monster is invisible to a mask without the presence bits" {
+    const alloc = testing.allocator;
+    const t = try testMap(alloc, 16, 16, &.{});
+    defer t.deinit();
+    const pm = &t.pm;
+    // The same level, viewed with the presence bits dropped from the mask.
+    var terrain_only = try grid.buildPassMap(
+        alloc,
+        &t.lv,
+        pf_collision.Colmask.player_path & ~pf_collision.PRESENCE_BITS,
+        .point,
+    );
+    defer terrain_only.deinit(alloc);
+
+    try t.lv.addUnit(1, .{ .x = 8, .y = 8 }, .monster(2, false, .{}));
+
+    try testing.expect(!pm.passable(8, 8));
+    try testing.expect(terrain_only.passable(8, 8));
+    // Neither sees it as terrain — that is the point of the split.
+    try testing.expect(pm.staticPassable(8, 8));
 }
