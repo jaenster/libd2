@@ -1,0 +1,22 @@
+.{
+    .name = .d2_world,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xff2992f5d657bdb,
+
+    // d2-drlg generates a level's collision, rooms and warp adjacency; d2-core supplies the
+    // collision bit/mask vocabulary and the per-unit-type collision rules a unit stamps with;
+    // d2-data supplies Levels.txt and Objects.txt, which say which levels allow teleport and
+    // which object classes are doors or teleport pads.
+    .dependencies = .{
+        .d2_drlg = .{ .path = "../drlg" },
+        .d2_core = .{ .path = "../core" },
+        .d2_data = .{ .path = "../data" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
