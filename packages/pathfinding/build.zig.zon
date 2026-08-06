@@ -8,6 +8,7 @@
     // the collision bit/mask vocabulary both sides have to agree on; d2-data supplies Levels.txt,
     // which is where the per-level teleport rule lives.
     .dependencies = .{
+        .d2_world = .{ .path = "../world" },
         .d2_drlg = .{ .path = "../drlg" },
         .d2_core = .{ .path = "../core" },
         .d2_data = .{ .path = "../data" },
