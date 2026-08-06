@@ -14,7 +14,7 @@ pub struct ActHandle {
 }
 
 /// The ABI this binding was written against; checked once when a generator is created.
-pub const EXPECTED_ABI: u32 = 3;
+pub const EXPECTED_ABI: u32 = 5;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

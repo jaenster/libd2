@@ -4,11 +4,13 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const world = b.dependency("d2_world", .{ .target = target, .optimize = optimize });
     const drlg = b.dependency("d2_drlg", .{ .target = target, .optimize = optimize });
     const core = b.dependency("d2_core", .{ .target = target, .optimize = optimize });
     const data = b.dependency("d2_data", .{ .target = target, .optimize = optimize });
 
     const imports = [_]std.Build.Module.Import{
+        .{ .name = "d2-world", .module = world.module("d2-world") },
         .{ .name = "d2-drlg", .module = drlg.module("d2-drlg") },
         .{ .name = "d2-core", .module = core.module("d2-core") },
         .{ .name = "d2-data", .module = data.module("d2-data") },
