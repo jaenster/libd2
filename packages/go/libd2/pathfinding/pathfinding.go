@@ -241,3 +241,84 @@ func readMoves(a *api, route uintptr, leg int32) ([]Move, error) {
 	}
 	return buf[:got], nil
 }
+
+// UnitType is eD2UnitType: which kind of game object a unit is. It decides, together with the
+// unit's size, which cells the unit claims in the collision grid and with which bit — exactly as
+// the engine decides it when it allocates the unit's path.
+type UnitType uint8
+
+const (
+	UnitPlayer   UnitType = 0
+	UnitMonster  UnitType = 1
+	UnitObject   UnitType = 2
+	UnitMissile  UnitType = 3
+	UnitItem     UnitType = 4
+	UnitRoomTile UnitType = 5
+)
+
+// PlaceUnit puts a unit on a level, or moves one already there.
+//
+// Everything the world answers — Walkable, Route, LineOfSight, NearestPassable — sees it from the
+// next call on. A monster standing in a doorway makes that doorway impassable, because that is
+// what it does in the game.
+//
+// sizeX is the unit's GetUnitSizeX (0..3): 0 claims nothing, 1 and 2 claim a cross, 3 a 3x3 box.
+// Calling it again for an id already placed MOVES that unit — the cells it used to cover go back
+// to what the rest of the world says about them.
+func (w *World) PlaceUnit(level int32, unitID uint32, t UnitType, sizeX, x, y int32) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.world == 0 {
+		return ErrClosed
+	}
+	if rc := w.api.unitPlace(w.world, level, unitID, uint8(t), sizeX, x, y); rc != 0 {
+		return fmt.Errorf("libd2/pathfinding: placing unit %d on level %d failed (%d)", unitID, level, rc)
+	}
+	return nil
+}
+
+// RemoveUnit takes a unit off a level, restoring every cell it covered.
+func (w *World) RemoveUnit(level int32, unitID uint32) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.world == 0 {
+		return ErrClosed
+	}
+	if rc := w.api.unitLift(w.world, level, unitID); rc != 0 {
+		return fmt.Errorf("libd2/pathfinding: remove unit failed (%d)", rc)
+	}
+	return nil
+}
+
+// ClearUnits empties a level of everything standing on it, leaving terrain alone.
+func (w *World) ClearUnits(level int32) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.world == 0 {
+		return ErrClosed
+	}
+	if rc := w.api.unitsClear(w.world, level); rc != 0 {
+		return fmt.Errorf("libd2/pathfinding: clear units failed (%d)", rc)
+	}
+	return nil
+}
+
+// EditTerrain changes the map itself over an inclusive subtile rectangle: a door opens, a quest
+// barrier drops. add and remove are raw collision-bit masks (0x01 wall, 0x800 door, ...).
+//
+// This is not the same thing as placing a unit, and it is far more expensive: it rewrites the
+// generated grid and throws away the reachability caches built on it, because unlike a unit it can
+// make a cell MORE passable and so join two regions that were separate. Use it for the handful of
+// events per game that really change the map; use PlaceUnit for everything that merely stands on
+// it.
+func (w *World) EditTerrain(level, x0, y0, x1, y1 int32, add, remove uint16) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.world == 0 {
+		return ErrClosed
+	}
+	if rc := w.api.terrainEdit(w.world, level, x0, y0, x1, y1, add, remove); rc != 0 {
+		return fmt.Errorf("libd2/pathfinding: edit terrain failed (%d)", rc)
+	}
+	return nil
+}
