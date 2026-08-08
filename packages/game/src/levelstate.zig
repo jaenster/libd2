@@ -18,6 +18,7 @@ const buff = @import("buff.zig");
 const shrines = @import("shrines.zig");
 const spell = @import("spell.zig");
 const items = @import("d2-item");
+const pf = @import("d2-pathfinding");
 
 const Unit = unit.Unit;
 const MonsterAI = ai.MonsterAI;
@@ -108,7 +109,14 @@ pub const LevelState = struct {
     summary: world.LevelSummary,
     entry_x: i32,
     entry_y: i32,
-    path_grid: ?world.PathGrid = null,
+    /// The level's live map — terrain collision plus the occupancy layer every unit in `units` is
+    /// stamped into. BORROWED from the game's `World` (or, in tests, from a bare level the caller
+    /// owns), so it is never freed here. Null on a level with no generated collision; the host then
+    /// falls back to straight-line movement.
+    level: ?*world.Level = null,
+    /// Search caches over `level` (passability bitsets, components, clearance), built on the first
+    /// path query and reused for the level's lifetime. Owned.
+    nav: ?pf.Nav = null,
 
     units: std.AutoHashMapUnmanaged(u32, Unit) = .empty,
     targets: std.AutoHashMapUnmanaged(u32, MoveTarget) = .empty,
@@ -219,8 +227,62 @@ pub const LevelState = struct {
         self.objects.deinit(gpa);
         self.npcs.deinit(gpa);
         self.timers.deinit(gpa);
-        if (self.path_grid) |*pg| pg.deinit(gpa);
+        if (self.nav) |*n| n.deinit();
         self.summary.deinit(gpa);
+    }
+
+    // --- collision, over the live map ---------------------------------------
+    //
+    // Every query here is `cell & mask == 0` against `Level.liveAt`, which is the terrain word OR
+    // whoever is standing on it. That is the whole reason for the occupancy layer: a monster that
+    // steps into a doorway blocks the doorway for everything that asks afterwards, and stops doing
+    // so the frame it steps out. Callers pass the mask their unit actually collides with, so a
+    // walking player, a walking monster and a bolt in flight are the same three lines of code.
+    //
+    // A LevelState with no map (the bare fixtures in tests, and any level the generator produced no
+    // collision for) reads as wide open rather than as a wall, so those keep working uncollided.
+
+    /// The pathfinding caches over this level, built on first use. Null when there is no map.
+    pub fn navigator(self: *LevelState, gpa: std.mem.Allocator) ?*pf.Nav {
+        const lv = self.level orelse return null;
+        if (self.nav == null) self.nav = pf.Nav.init(gpa, lv);
+        return &self.nav.?;
+    }
+
+    /// World subtile -> this level's grid, or null when the position is off the map.
+    pub fn toLocal(self: *const LevelState, wx: i32, wy: i32) ?world.Point {
+        const lv = self.level orelse return null;
+        const p = lv.fromWorld(.{ .x = wx, .y = wy });
+        return if (lv.inBounds(p.x, p.y)) p else null;
+    }
+
+    /// May a unit colliding with `mask` stand on world subtile (x,y)? Off the map is impassable.
+    pub fn passable(self: *const LevelState, wx: i32, wy: i32, mask: u16) bool {
+        const lv = self.level orelse return true;
+        const p = lv.fromWorld(.{ .x = wx, .y = wy });
+        return lv.passable(p.x, p.y, mask);
+    }
+
+    /// `SKILLS_HasLineOfSight` (0x645910) between two world subtiles, with the sight mask — walls
+    /// and missile barriers only. Objects and doors carry their own bits and are deliberately not
+    /// in it, so an object does not block the sight-line to itself.
+    pub fn hasLineOfSight(self: *const LevelState, x0: i32, y0: i32, x1: i32, y1: i32) bool {
+        const lv = self.level orelse return true;
+        return lv.hasLineOfSight(
+            lv.fromWorld(.{ .x = x0, .y = y0 }),
+            lv.fromWorld(.{ .x = x1, .y = y1 }),
+            pf.Colmask.missile_flight,
+        );
+    }
+
+    /// `GetFreeCoordinates` (0x64dea0): the cell nearest (x,y) a unit colliding with `mask` can
+    /// actually stand on, within `radius`. This is where a teleport lands and where a repositioning
+    /// skill puts you. World subtiles in, world subtiles out.
+    pub fn freeNear(self: *const LevelState, wx: i32, wy: i32, mask: u16, radius: i32) ?world.Point {
+        const lv = self.level orelse return null;
+        const p = lv.fromWorld(.{ .x = wx, .y = wy });
+        const found = lv.nearestFree(p.x, p.y, .point, mask, radius) orelse return null;
+        return lv.toWorld(found);
     }
 
     pub fn monsterCount(self: *const LevelState) u32 {

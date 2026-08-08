@@ -11,14 +11,16 @@
 
 const std = @import("std");
 const realdrlg = @import("d2-drlg");
+const wd = @import("d2-world");
 
 pub const Difficulty = enum(u8) { normal = 0, nightmare = 1, hell = 2 };
 
-/// The faithful unit pathfinder + its collision-view adapter, re-exported from
-/// d2-drlg so the game host can path monsters over a level's real collision.
-pub const path = realdrlg.path;
-pub const PathGrid = realdrlg.PathGrid;
-pub const Point = realdrlg.path.Point;
+/// The live map of a running game, re-exported from d2-world: a `Level` is the terrain grid, its
+/// rooms and exits, AND the units currently standing on it. The host paths and shoots over that
+/// rather than over a private walkability bitmap, so a monster blocks a bolt the frame it steps
+/// into its way and a door that opens is passable for everything at once.
+pub const Level = wd.Level;
+pub const Point = wd.Point;
 
 /// A room's placement in world (tile) space, as the real generator reports it.
 pub const RoomRect = struct {
@@ -199,22 +201,52 @@ pub const Populated = struct {
     objects: []Object = &.{},
     entry_x: i32,
     entry_y: i32,
-    /// The level's composited walkability grid (world-subtile space) for monster/
-    /// player pathfinding, or null when the level has no preset collision grids
-    /// (maze/wilderness rooms without a preset DrlgMap — callers fall back to
-    /// straight-line movement). Owned; freed by `deinit`.
-    path_grid: ?PathGrid = null,
+    /// The level's live map, BORROWED from the `World` that generated it — collision, rooms and
+    /// the occupancy layer the host stamps units into. Null for a level the act generator produced
+    /// no collision for, and for the standalone `generatePopulated` path which has no World to
+    /// borrow from; callers then fall back to straight-line movement.
+    level: ?*Level = null,
 
     pub fn deinit(self: *Populated, gpa: std.mem.Allocator) void {
         self.summary.deinit(gpa);
         gpa.free(self.spawns);
         gpa.free(self.warps);
         gpa.free(self.objects);
-        if (self.path_grid) |*pg| pg.deinit(gpa);
+    }
+
+    /// Shift every position by the level's world origin (`ox`,`oy` in TILES).
+    ///
+    /// Single-level generation does not run the act's inter-level placement, so the rooms it hands
+    /// back sit at a world position of zero and everything derived from them comes out level-local.
+    /// The act path places the same level at its real coordinates, and so does the live map. One
+    /// space or the other, not both: positions on the wire are world subtiles, so the unplaced ones
+    /// get moved.
+    fn rebase(self: *Populated, ox: i32, oy: i32) void {
+        if (ox == 0 and oy == 0) return;
+        const sx = ox * SUBTILES_PER_TILE;
+        const sy = oy * SUBTILES_PER_TILE;
+        self.entry_x += sx;
+        self.entry_y += sy;
+        for (self.spawns) |*m| {
+            m.x += sx;
+            m.y += sy;
+        }
+        for (self.objects) |*o| {
+            o.x += sx;
+            o.y += sy;
+        }
+        for (self.summary.rooms.items) |*r| {
+            r.x += ox;
+            r.y += oy;
+        }
     }
 };
 
 const SUBTILES_PER_TILE: i32 = 5;
+
+/// How far a level entry point may be moved to find floor. A room is 8 tiles across, so this covers
+/// the whole first room rather than giving up at its edge.
+const ENTRY_SNAP_RADIUS: i32 = 8 * SUBTILES_PER_TILE;
 
 /// Generate a level AND run the faithful seeded monster population over its rooms.
 /// Returns the level summary, a per-room monster spawn list, and the player entry
@@ -383,10 +415,6 @@ fn populateSingle(
     for (coll.grids) |g| cells += @intCast(@max(0, g.w) * @max(0, g.h));
     summary.collision_cells = cells;
 
-    // Composited walkability grid for pathfinding (null for maze/wilderness levels
-    // without preset collision — the game host then straight-lines movement).
-    const pg = realdrlg.buildPathGrid(ctx, gpa, seed, @intCast(level_id), diff) catch null;
-
     // Outgoing adjacency from the real d2-drlg warp/seam graph (this level's neighbours).
     const warps = try warpTargets(ctx, gpa, seed, difficulty, level_id);
     errdefer gpa.free(warps);
@@ -397,7 +425,6 @@ fn populateSingle(
         .warps = warps,
         .entry_x = entry_x,
         .entry_y = entry_y,
-        .path_grid = pg,
     };
 }
 
@@ -408,26 +435,18 @@ fn populateSingle(
 /// CRASH the single-level generate() path — `World` routes them through `generateAct`.
 const DRLG_WILDERNESS: i32 = 3;
 
-/// Subtile-flag bits (dt1.SubtileFlag) as read out of a materialized collision cell.
-const COLL_BLOCK_WALK: u8 = 0x01; // impassable to walking
-const COLL_NO_FLOOR: u8 = 0x20; // cell carries no floor (not walkable ground)
-
 /// One generated act, cached: every level's rooms (world coords, via the real
-/// inter-level placement) + every level's materialized collision. Both are owned,
+/// inter-level placement) + its seeded object population. Both are owned,
 /// pool-independent copies (the fog pool is torn down inside the generate calls), so
-/// this is safe to hold for the game's lifetime.
+/// this is safe to hold for the game's lifetime. Collision does NOT live here — it is
+/// the live map, and `World.map` owns it.
 const ActData = struct {
     act_no: i32,
     rooms: realdrlg.ActResult,
-    coll: realdrlg.ActCollResult,
     objs: realdrlg.ActObjectsResult,
 
     fn levelRooms(self: *const ActData, level_id: u16) ?realdrlg.LevelRooms {
         for (self.rooms.levels) |lr| if (lr.level_id == @as(i32, level_id)) return lr;
-        return null;
-    }
-    fn levelColl(self: *const ActData, level_id: u16) ?realdrlg.LevelColl {
-        for (self.coll.levels) |lc| if (lc.level_id == @as(i32, level_id)) return lc;
         return null;
     }
     fn levelObjs(self: *const ActData, level_id: u16) []const realdrlg.ObjSpawn {
@@ -436,7 +455,6 @@ const ActData = struct {
     }
     fn deinit(self: *ActData, gpa: std.mem.Allocator) void {
         self.rooms.deinit(gpa);
-        self.coll.deinit(gpa);
         self.objs.deinit(gpa);
     }
 };
@@ -445,8 +463,13 @@ const ActData = struct {
 /// across every hosted level, plus a per-act cache. `populated(level_id)` routes each
 /// level to the right generation path: INTERIOR levels (maze/preset) use the byte-exact
 /// single-level `generate()`; OUTDOOR (wilderness) levels — which crash single-level
-/// generation — are extracted from the whole-act placement result (`generateAct` +
-/// `generateActCollisionAll`), generated once per act and cached.
+/// generation — are extracted from the whole-act placement result (`generateAct`),
+/// generated once per act and cached.
+///
+/// Collision is not part of that split. `map` is a d2-world `World`, loaded one act at a
+/// time, and it holds every level of the act as a live `Level` — full collision words, not
+/// a walk boolean, plus the occupancy layer units are stamped into. `levelMap(id)` is how
+/// the host gets at one.
 pub const World = struct {
     gpa: std.mem.Allocator,
     ctx: realdrlg.Ctx,
@@ -456,6 +479,8 @@ pub const World = struct {
     seed: u32,
     difficulty: Difficulty,
     acts: std.AutoHashMapUnmanaged(i32, *ActData) = .empty,
+    /// The live maps, by level id. Loaded per act alongside `acts`; owns every `Level`.
+    map: wd.World,
 
     pub fn init(gpa: std.mem.Allocator, seed: u32, difficulty: Difficulty) !World {
         return .{
@@ -465,6 +490,7 @@ pub const World = struct {
             .objtbl = try realdrlg.gen.objects.load(gpa),
             .seed = seed,
             .difficulty = difficulty,
+            .map = wd.World.init(gpa, seed, @enumFromInt(@intFromEnum(difficulty))),
         };
     }
 
@@ -475,6 +501,7 @@ pub const World = struct {
             self.gpa.destroy(ap.*);
         }
         self.acts.deinit(self.gpa);
+        self.map.deinit();
         self.objtbl.deinit();
         self.montbl.deinit();
         self.ctx.deinit();
@@ -586,31 +613,60 @@ pub const World = struct {
         const ad = try self.gpa.create(ActData);
         errdefer self.gpa.destroy(ad);
         const diff: realdrlg.Difficulty = @enumFromInt(@intFromEnum(self.difficulty));
-        // Whole-act room placement (world coords) + materialized collision. Each call
-        // generates the act on a private fog pool and returns owned copies.
+        // Whole-act room placement (world coords). Generates the act on a private fog pool
+        // and returns owned copies.
         var rooms = try realdrlg.generateAct(&self.ctx, self.gpa, act_no, self.seed, diff);
         errdefer rooms.deinit(self.gpa);
-        var coll = try realdrlg.generateActCollisionAll(&self.ctx, self.gpa, act_no, self.seed, diff);
-        errdefer coll.deinit(self.gpa);
         // Seeded object population per level (DS1 preset objects + ObjGrp scatter/shrine/
         // chest rolls). World-subtile positions, same space as the outdoor spawns.
         var objs = try realdrlg.generateActObjects(&self.ctx, self.gpa, act_no, self.seed, diff);
         errdefer objs.deinit(self.gpa);
-        ad.* = .{ .act_no = act_no, .rooms = rooms, .coll = coll, .objs = objs };
+        // Every level of the act as a live map. One pass, interiors included — the host no
+        // longer regenerates a level a second time just to learn where its walls are.
+        try self.map.loadAct(&self.ctx, act_no);
+        ad.* = .{ .act_no = act_no, .rooms = rooms, .objs = objs };
         try self.acts.put(self.gpa, act_no, ad);
         return ad;
     }
 
-    /// Generate + populate `level_id` for this world, routing outdoor vs interior.
+    /// The live map for `level_id`, generating its act on first ask. Null for a level the act
+    /// generator produced no collision for.
+    pub fn levelMap(self: *World, level_id: u16) !?*Level {
+        _ = try self.ensureAct(self.levelAct(level_id));
+        return self.map.level(level_id);
+    }
+
+    /// Generate + populate `level_id` for this world, routing outdoor vs interior, and attach the
+    /// live map. Everything that comes out is in world subtiles.
     pub fn populated(self: *World, level_id: u16) !Populated {
-        if (self.isOutdoor(level_id)) return self.populatedOutdoor(level_id);
-        return populateSingle(&self.ctx, &self.montbl, self.gpa, self.seed, level_id, self.difficulty);
+        const outdoor = self.isOutdoor(level_id);
+        var pop = if (outdoor)
+            try self.populatedOutdoor(level_id)
+        else
+            try populateSingle(&self.ctx, &self.montbl, self.gpa, self.seed, level_id, self.difficulty);
+        errdefer pop.deinit(self.gpa);
+        pop.level = try self.levelMap(level_id);
+        if (pop.level) |lv| {
+            pop.summary.collision_cells = @intCast(@max(0, lv.w) * @max(0, lv.h));
+            if (!outdoor) pop.rebase(lv.origin_x, lv.origin_y);
+            // The entry point is the centre of the first room, which in a cave or a dungeon is as
+            // likely to be rock as floor. The engine never places a unit on a raw coordinate — it
+            // asks GetFreeCoordinates — so resolve it here rather than dropping the player inside a
+            // wall and letting every collision test downstream disagree about where they are.
+            const local = lv.fromWorld(.{ .x = pop.entry_x, .y = pop.entry_y });
+            if (lv.nearestFree(local.x, local.y, .point, wd.Colmask.player_path, ENTRY_SNAP_RADIUS)) |free| {
+                const wp = lv.toWorld(free);
+                pop.entry_x = wp.x;
+                pop.entry_y = wp.y;
+            }
+        }
+        return pop;
     }
 
     /// Build a Populated for an OUTDOOR level out of the cached whole-act result: rooms
-    /// come from the placement graph, collision from the act-context materialization
-    /// (composited into one world-subtile PathGrid), monsters from the faithful
-    /// buildAllRegions/spawnRoomMonsters roster run over the extracted rooms.
+    /// come from the placement graph, monsters from the faithful buildAllRegions/
+    /// spawnRoomMonsters roster run over the extracted rooms. Collision is not built here —
+    /// `populated` attaches the live map.
     fn populatedOutdoor(self: *World, level_id: u16) !Populated {
         const act_no = self.levelAct(level_id);
         const ad = try self.ensureAct(act_no);
@@ -628,9 +684,6 @@ pub const World = struct {
 
         const lr = ad.levelRooms(level_id);
         const room_slice: []const realdrlg.RoomRect = if (lr) |x| x.rooms else &.{};
-
-        // Path grid from the act-context materialized collision (covers wilderness).
-        const pg = if (ad.levelColl(level_id)) |lc| try buildActPathGrid(gpa, lc) else null;
 
         // Monster roster for the whole seed; index this level's region out of it.
         const regions = try realdrlg.monpop.buildAllRegions(gpa, &self.montbl, self.seed, @intCast(@intFromEnum(self.difficulty)));
@@ -683,8 +736,6 @@ pub const World = struct {
             }
         }
 
-        if (pg) |g| summary.collision_cells = @intCast(@max(0, g.w) * @max(0, g.h));
-
         const warps = try warpTargets(&self.ctx, gpa, self.seed, self.difficulty, level_id);
         errdefer gpa.free(warps);
 
@@ -706,7 +757,6 @@ pub const World = struct {
             .objects = try objects.toOwnedSlice(gpa),
             .entry_x = entry_x,
             .entry_y = entry_y,
-            .path_grid = pg,
         };
     }
 };
@@ -721,77 +771,6 @@ fn deriveRoomSeed(seed: u32, rx: i32, ry: i32, idx: usize) realdrlg.abi.D2SeedSt
     h = (h ^ @as(u32, @bitCast(ry))) *% 0x100000001b3;
     h = (h ^ @as(u64, idx)) *% 0x100000001b3;
     return .{ .nSeedLow = @bitCast(@as(u32, @truncate(h ^ (h >> 32)))), .nSeedHigh = 0x29a };
-}
-
-/// Composite an act-context level's per-room materialized collision grids into one
-/// world-subtile-space PathGrid for the faithful pathfinder. Grid x/y are LEVEL-LOCAL
-/// subtiles relative to the level's world TILE origin; a cell is walkable ground unless
-/// it carries the no-floor bit, and blocked when the walk-block bit is set. Object
-/// footprints are stamped blocked. Returns null if the level has no grids.
-fn buildActPathGrid(gpa: std.mem.Allocator, lc: realdrlg.LevelColl) !?PathGrid {
-    if (lc.grids.len == 0) return null;
-    const org_x = lc.origin_x * SUBTILES_PER_TILE;
-    const org_y = lc.origin_y * SUBTILES_PER_TILE;
-
-    var min_x: i32 = std.math.maxInt(i32);
-    var min_y: i32 = std.math.maxInt(i32);
-    var max_x: i32 = std.math.minInt(i32);
-    var max_y: i32 = std.math.minInt(i32);
-    for (lc.grids) |g| {
-        min_x = @min(min_x, g.x);
-        min_y = @min(min_y, g.y);
-        max_x = @max(max_x, g.x + g.w);
-        max_y = @max(max_y, g.y + g.h);
-    }
-    for (lc.objects) |o| {
-        min_x = @min(min_x, o.x - @divTrunc(o.sx, 2));
-        min_y = @min(min_y, o.y - @divTrunc(o.sy, 2));
-        max_x = @max(max_x, o.x + @divTrunc(o.sx, 2) + 1);
-        max_y = @max(max_y, o.y + @divTrunc(o.sy, 2) + 1);
-    }
-    const w = max_x - min_x;
-    const h = max_y - min_y;
-    if (w <= 0 or h <= 0) return null;
-    const wu: usize = @intCast(w);
-    const hu: usize = @intCast(h);
-    const blocked = try gpa.alloc(bool, wu * hu);
-    errdefer gpa.free(blocked);
-    const ground = try gpa.alloc(bool, wu * hu);
-    errdefer gpa.free(ground);
-    @memset(blocked, false);
-    @memset(ground, false);
-
-    for (lc.grids) |g| {
-        const gw: usize = @intCast(g.w);
-        const gh: usize = @intCast(g.h);
-        var cy: usize = 0;
-        while (cy < gh) : (cy += 1) {
-            const dy: usize = @intCast(g.y - min_y + @as(i32, @intCast(cy)));
-            var cx: usize = 0;
-            while (cx < gw) : (cx += 1) {
-                const dx: usize = @intCast(g.x - min_x + @as(i32, @intCast(cx)));
-                const cell = g.cells[cy * gw + cx];
-                const di = dy * wu + dx;
-                if (cell & COLL_NO_FLOOR == 0) ground[di] = true;
-                if (cell & COLL_BLOCK_WALK != 0) blocked[di] = true;
-            }
-        }
-    }
-    for (lc.objects) |o| {
-        var dy: i32 = -@divTrunc(o.sy, 2);
-        while (dy <= @divTrunc(o.sy - 1, 2)) : (dy += 1) {
-            const cy = o.y + dy - min_y;
-            if (cy < 0 or cy >= h) continue;
-            var dx: i32 = -@divTrunc(o.sx, 2);
-            while (dx <= @divTrunc(o.sx - 1, 2)) : (dx += 1) {
-                const cx = o.x + dx - min_x;
-                if (cx < 0 or cx >= w) continue;
-                blocked[@intCast(cy * w + cx)] = true;
-            }
-        }
-    }
-
-    return PathGrid{ .origin_x = org_x + min_x, .origin_y = org_y + min_y, .w = w, .h = h, .blocked = blocked, .ground = ground };
 }
 
 test "generatePopulated: monster-bearing level yields spawns + entry point" {
