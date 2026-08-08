@@ -30,6 +30,7 @@ const std = @import("std");
 // (lib.zig) under the historical `sim.` prefix — same names the host used when this lived outside.
 const sim = @import("lib.zig");
 const items = @import("d2-item");
+const pf = @import("d2-pathfinding");
 const drlg = sim.world;
 
 /// Anya (Betrayal of Harrogath) quest all-resist reward per difficulty: +10 / +20 / +30.
@@ -267,6 +268,10 @@ pub const GameInstance = struct {
 
     /// Every hosted level, keyed by level id; generated + populated on demand.
     levels: std.AutoHashMapUnmanaged(u16, *LevelState) = .empty,
+    /// One A* scratch for the whole game — generation-stamped, so it is reused by every path query
+    /// on every level without clearing. `path_buf` is the waypoint list those queries write into.
+    pather: pf.Pather,
+    path_buf: std.ArrayListUnmanaged(pf.Point) = .empty,
     clients: std.ArrayListUnmanaged(*Client) = .empty,
 
     /// The map-generation world (one reused d2-drlg Ctx + per-act cache). Lazily built
@@ -317,6 +322,7 @@ pub const GameInstance = struct {
             .level_id = actStartLevel(act),
             .combat_seed = sim.Seed.fromValue(seed),
             .drop_seed = items.rng.Seed.fromValue(seed),
+            .pather = pf.Pather.init(gpa),
         };
     }
 
@@ -334,6 +340,8 @@ pub const GameInstance = struct {
             self.gpa.destroy(lp.*);
         }
         self.levels.deinit(self.gpa);
+        self.pather.deinit();
+        self.path_buf.deinit(self.gpa);
         if (self.world) |*w| w.deinit();
         if (self.skills) |*s| s.deinit();
         if (self.missile_data) |*m| m.deinit();
@@ -366,7 +374,7 @@ pub const GameInstance = struct {
 
         const world = try self.ensureWorld();
         try self.ensureMonCombat();
-        var pop = try world.populated(level_id);
+        const pop = try world.populated(level_id);
         defer self.gpa.free(pop.spawns);
         defer self.gpa.free(pop.warps);
         defer self.gpa.free(pop.objects);
@@ -378,9 +386,8 @@ pub const GameInstance = struct {
             .summary = pop.summary,
             .entry_x = pop.entry_x,
             .entry_y = pop.entry_y,
-            .path_grid = pop.path_grid,
+            .level = pop.level, // borrowed from self.world; the LevelState does not own it
         };
-        pop.path_grid = null; // ownership moved to ls
         errdefer ls.deinit(self.gpa);
 
         for (pop.spawns) |spawn| {
@@ -1405,6 +1412,14 @@ pub const GameInstance = struct {
         c.pending.appendSlice(self.gpa, bytes) catch {};
     }
 
+    /// What each kind of thing collides with, straight out of the engine's mask table. Every
+    /// collision question the host asks names one of these instead of asking "is this cell walkable",
+    /// which was never a real question: a bolt flies over the object a player has to walk around,
+    /// and a monster is stopped by pets a player passes through.
+    const PLAYER_MASK: u16 = pf.Colmask.player_path;
+    const MONSTER_MASK: u16 = pf.Colmask.monster_path;
+    const MISSILE_MASK: u16 = pf.Colmask.missile_flight;
+
     /// Interact range for objects — SERVER_InteractOrPick @0x548b00 gates the OBJECT
     /// branch at distance < 0x33 subtiles (then LOS via IsObjectInInteractRange — TODO).
     const OBJECT_INTERACT_RANGE: i32 = 0x33;
@@ -1412,41 +1427,6 @@ pub const GameInstance = struct {
     /// Door re-operate debounce in game frames — the engine gates OBJOP_ToggleDoor on GetTickCount +
     /// 500ms; at the 25fps server tick that is 12.5 frames, rounded to 13.
     const DOOR_DEBOUNCE_FRAMES: u64 = 13;
-
-    /// True when subtile (x,y) blocks movement on this level's collision grid (off-grid = blocked).
-    /// No grid loaded (bare test levels) reads as open, so callers keep working without collision.
-    fn cellBlocked(self: *GameInstance, ls: *LevelState, x: i32, y: i32) bool {
-        _ = self;
-        const pg = &(ls.path_grid orelse return false);
-        const lp = pg.toLocal(x, y) orelse return true;
-        return pg.view().collides(lp.x, lp.y, .none);
-    }
-
-    /// Line-of-sight between two world subtiles: a Bresenham walk that fails if any cell strictly
-    /// between the endpoints is blocked. The endpoints themselves are excluded — the object's own
-    /// cell is inherently blocked by its footprint, and the player stands on a walkable cell.
-    fn hasLineOfSight(self: *GameInstance, ls: *LevelState, x0: i32, y0: i32, x1: i32, y1: i32) bool {
-        var x = x0;
-        var y = y0;
-        const adx: i32 = @intCast(@abs(x1 - x0));
-        const ady: i32 = -@as(i32, @intCast(@abs(y1 - y0)));
-        const sx: i32 = if (x0 < x1) 1 else -1;
-        const sy: i32 = if (y0 < y1) 1 else -1;
-        var err = adx + ady;
-        while (true) {
-            if (x == x1 and y == y1) return true; // reached the target's cell — LOS clear
-            if (!(x == x0 and y == y0) and self.cellBlocked(ls, x, y)) return false;
-            const e2 = 2 * err;
-            if (e2 >= ady) {
-                err += ady;
-                x += sx;
-            }
-            if (e2 <= adx) {
-                err += adx;
-                y += sy;
-            }
-        }
-    }
 
     /// Operate a world object — InteractWithObject @0x584420: dispatch on the object's
     /// Objects.txt OperateFn. Modelled families: lootables (1 casket / 3 urn / 4 chest)
@@ -1463,7 +1443,7 @@ pub const GameInstance = struct {
         // SERVER_InteractOrPick @0x548b00 also requires line of sight (IsObjectInInteractRange): a
         // wall between the player and the object rejects the interact. Our path grid tracks walkability
         // (walls block sight too), so we ray-cast walkability between the two — a faithful approximation.
-        if (!self.hasLineOfSight(ls, player.x, player.y, o.x, o.y)) return;
+        if (!ls.hasLineOfSight(player.x, player.y, o.x, o.y)) return;
 
         // Resolve the interaction to Effects (sim.object.operate) and apply each. The decision logic
         // (which OperateFn does what) lives in the pure sim resolver; the host just mutates state.
@@ -2364,10 +2344,10 @@ pub const GameInstance = struct {
         // Resolve a passable LANDING near the requested cell. D2's teleport lands the unit on the
         // nearest walkable subtile to the clicked point (the client's landing validation + server
         // adjust); a click on a wall/corner snaps to the closest open cell rather than failing.
-        // We mirror that with a bounded ring search (radius 0 = the exact cell). If nothing within
-        // the ring budget is passable (or there is no grid), the cast is blocked.
-        const pg = &(ls.path_grid orelse return .blocked);
-        const landing = self.nearestPassable(pg, tx, ty) orelse return .blocked;
+        // GetFreeCoordinates is exactly that search, and it reads the live map — so a cell another
+        // unit is standing on is not a landing. Nothing free within the budget blocks the cast.
+        if (ls.level == null) return .blocked;
+        const landing = ls.freeNear(tx, ty, PLAYER_MASK, TELEPORT_LANDING_RADIUS) orelse return .blocked;
 
         // Mana gate: read the per-cast cost from the table-driven Skills.txt Teleport row.
         const cost = if (self.skills) |*sk| (sk.byId(SKILL_TELEPORT) orelse return .no_mana).manaCost() else return .no_mana;
@@ -2383,30 +2363,6 @@ pub const GameInstance = struct {
 
     /// Radius over which a teleport landing snaps to the nearest walkable subtile (world subtiles).
     const TELEPORT_LANDING_RADIUS: i32 = 8;
-
-    /// Find the passable world cell nearest (wx,wy) within TELEPORT_LANDING_RADIUS, or null if the
-    /// whole neighbourhood is blocked/off-grid. Ring-expanding search (radius 0 first) so the
-    /// closest open cell wins — the faithful teleport-landing snap.
-    fn nearestPassable(self: *GameInstance, pg: *drlg.PathGrid, wx: i32, wy: i32) ?struct { x: i32, y: i32 } {
-        _ = self;
-        const view = pg.view();
-        var r: i32 = 0;
-        while (r <= TELEPORT_LANDING_RADIUS) : (r += 1) {
-            var oy: i32 = -r;
-            while (oy <= r) : (oy += 1) {
-                var ox: i32 = -r;
-                while (ox <= r) : (ox += 1) {
-                    // Only the ring shell at this radius (interior was tested at smaller r).
-                    if (r != 0 and @abs(ox) != r and @abs(oy) != r) continue;
-                    const cx = wx + ox;
-                    const cy = wy + oy;
-                    const lp = pg.toLocal(cx, cy) orelse continue;
-                    if (!view.collides(lp.x, lp.y, .none)) return .{ .x = cx, .y = cy };
-                }
-            }
-        }
-        return null;
-    }
 
     fn ensureSkillTables(self: *GameInstance) !void {
         if (self.skills != null) return;
@@ -2454,9 +2410,7 @@ pub const GameInstance = struct {
         }
 
         pub fn blockedAt(self: HitCtx, x: i32, y: i32) bool {
-            const pg = &(self.ls.path_grid orelse return false);
-            const lp = pg.toLocal(x, y) orelse return true; // off the composited grid => impassable
-            return pg.view().collides(lp.x, lp.y, .none);
+            return !self.ls.passable(x, y, MISSILE_MASK);
         }
 
         pub fn applyHit(self: HitCtx, m: *const sim.Missile, victim: *sim.Unit) void {
@@ -2568,8 +2522,7 @@ pub const GameInstance = struct {
     /// the reposition shared by Whirlwind / Leap / Leap Attack (the skill already paid its cost, so no
     /// range/mana gate). No-op without a grid or a passable landing.
     fn repositionPlayer(self: *GameInstance, ls: *LevelState, c: *Client, caster: *sim.Unit, tx: i32, ty: i32) void {
-        const pg = if (ls.path_grid) |*g| g else return;
-        const land = self.nearestPassable(pg, tx, ty) orelse return;
+        const land = ls.freeNear(tx, ty, PLAYER_MASK, TELEPORT_LANDING_RADIUS) orelse return;
         caster.x = land.x;
         caster.y = land.y;
         c.x = land.x;
@@ -3271,9 +3224,12 @@ pub const GameInstance = struct {
         const scale: f32 = @as(f32, @floatFromInt(BOSS_TELEPORT_LANDING)) / @max(1.0, mag);
         var lx = tx + @as(i32, @intFromFloat(@as(f32, @floatFromInt(dx)) * scale));
         var ly = ty + @as(i32, @intFromFloat(@as(f32, @floatFromInt(dy)) * scale));
-        // Prefer a walkable landing when the collision grid is available.
-        if (ls.path_grid) |*pg| {
-            if (pg.toLocal(lx, ly) == null) {
+        // Prefer a landing the boss can actually stand on; fall back onto the target's own cell.
+        if (ls.level != null and !ls.passable(lx, ly, MONSTER_MASK)) {
+            if (ls.freeNear(lx, ly, MONSTER_MASK, BOSS_TELEPORT_LANDING)) |free| {
+                lx = free.x;
+                ly = free.y;
+            } else {
                 lx = tx;
                 ly = ty;
             }
@@ -3500,11 +3456,54 @@ pub const GameInstance = struct {
         return mc;
     }
 
-    /// Step a unit one tick toward (tx,ty), routing around walls via the level's
-    /// collision path-grid when one is available and the target is within the path
-    /// gate. Returns true once the unit has arrived at the final target. `is_player`
-    /// selects the engine's player path shape (PATH_ExtendPathEndpoint), matching how
-    /// D2 routes players vs. monsters.
+    /// The next waypoint on the route from `u` to (tx,ty), in WORLD subtiles — A* over the level's
+    /// live map, so the route bends around whoever is standing in the way and not just around walls.
+    /// Null when there is no map, no route, or the target is out of a monster's reach.
+    fn nextWaypoint(self: *GameInstance, ls: *LevelState, u: *sim.Unit, tx: i32, ty: i32, is_player: bool) ?pf.Point {
+        const lv = ls.level orelse return null;
+        const nv = ls.navigator(self.gpa) orelse return null;
+
+        // PATH_BuildDirectPathToTarget (0x6492f0) refuses a target further than 99 subtiles on
+        // either axis. A player still gets there: clamp an intermediate goal inside the gate and
+        // re-path next frame from the new position, which is the engine's own incremental
+        // navigation. A monster past the gate does not path at all — there are many of them and
+        // the target is too far away to matter yet.
+        var gx = tx;
+        var gy = ty;
+        const dx = tx - u.x;
+        const dy = ty - u.y;
+        if (@abs(dx) >= PATH_GATE or @abs(dy) >= PATH_GATE) {
+            if (!is_player) return null;
+            const denom: i32 = @intCast(@max(@abs(dx), @abs(dy)));
+            gx = u.x + @divTrunc(dx * (PATH_GATE - 1), denom);
+            gy = u.y + @divTrunc(dy * (PATH_GATE - 1), denom);
+        }
+
+        const mask = if (is_player) PLAYER_MASK else MONSTER_MASK;
+        const pm = nv.passMapFor(mask, .point) catch return null;
+        const from = lv.fromWorld(.{ .x = u.x, .y = u.y });
+        const to = lv.fromWorld(.{ .x = gx, .y = gy });
+        self.path_buf.clearRetainingCapacity();
+        self.pather.find(pm, from.x, from.y, to.x, to.y, .{
+            // A node budget rather than best-effort: an unreachable or too-expensive target falls
+            // back to straight-line stepping, which at least keeps the unit moving, instead of
+            // walking it confidently into the closest reachable dead end.
+            .max_nodes = if (is_player) PLAYER_PATH_NODES else MONSTER_PATH_NODES,
+        }, &self.path_buf) catch return null;
+        if (self.path_buf.items.len == 0) return null;
+        // find() always emits the (possibly snapped) start first; the step target is what follows.
+        const next = self.path_buf.items[@min(1, self.path_buf.items.len - 1)];
+        return lv.toWorld(next);
+    }
+
+    /// A* expansion budget per query. A player is one unit and gets a real search; a monster is one
+    /// of dozens on the level every frame and gets a cheap one.
+    const PLAYER_PATH_NODES: u32 = 20_000;
+    const MONSTER_PATH_NODES: u32 = 2_000;
+
+    /// Step a unit one tick toward (tx,ty), routing around the level's collision when it has a map.
+    /// Returns true once the unit has arrived at the final target. `is_player` selects the engine's
+    /// player path shape (PATH_ExtendPathEndpoint), matching how D2 routes players vs. monsters.
     fn moveUnitToward(self: *GameInstance, ls: *LevelState, u: *sim.Unit, guid: u32, tx: i32, ty: i32, step_in: i32, is_player: bool) bool {
         // A CHILLED unit (Duriel Holy-Freeze aura) crawls at half step until its chill lapses.
         var step = step_in;
@@ -3512,54 +3511,10 @@ pub const GameInstance = struct {
             if (self.tick_count < end) step = @max(1, @divTrunc(step_in, 2)) else _ = ls.chilled.remove(guid);
         }
         var used_path = false;
-        if (ls.path_grid) |*pg| {
-            if (pg.toLocal(u.x, u.y)) |lsl| {
-                if (is_player) {
-                    // Players ALWAYS route through A* so they round walls at any range.
-                    // Far targets exceed the engine's direct-path range (99 subtiles per
-                    // axis, PATH_BuildDirectPathToTarget 0x6492f0 = the PATH_GATE), which
-                    // is also calculatePath's 100-subtile dispatch gate. So clamp an
-                    // intermediate goal within that range toward (tx,ty) and search
-                    // best-effort: findPathAStar returns the path to the closest reachable
-                    // node when the clamped goal is itself unreachable/over-budget, and we
-                    // re-path next frame from the new position (the engine's incremental
-                    // navigation). cost_limit_max stays bounded so each frame is cheap.
-                    const gx = tx - u.x;
-                    const gy = ty - u.y;
-                    var cx = tx;
-                    var cy = ty;
-                    if (@abs(gx) >= PATH_GATE or @abs(gy) >= PATH_GATE) {
-                        const denom: i32 = @intCast(@max(@abs(gx), @abs(gy)));
-                        cx = u.x + @divTrunc(gx * (PATH_GATE - 1), denom);
-                        cy = u.y + @divTrunc(gy * (PATH_GATE - 1), denom);
-                    }
-                    if (pg.toLocal(cx, cy)) |lt| {
-                        const params = drlg.path.AStarParams{ .cost_limit_max = 4096, .best_effort = true };
-                        if (drlg.path.findPathAStar(self.gpa, pg.view(), lsl, lt, params)) |pts| {
-                            defer self.gpa.free(pts);
-                            if (pts.len > 0) {
-                                const wp = pg.toWorld(pts[0]);
-                                if (wp.x != u.x or wp.y != u.y) {
-                                    _ = u.stepToward(wp.x, wp.y, step);
-                                    used_path = true;
-                                }
-                            }
-                        } else |_| {}
-                    }
-                } else if (@abs(u.x - tx) < PATH_GATE and @abs(u.y - ty) < PATH_GATE) {
-                    // Monsters: gated calculatePath (many monsters — keep it cheap).
-                    if (pg.toLocal(tx, ty)) |lt| {
-                        const params = drlg.path.CalcParams{ .is_player = false, .astar = .{ .cost_limit_max = 256 } };
-                        if (drlg.path.calculatePath(self.gpa, pg.view(), lsl, lt, params)) |pts| {
-                            defer self.gpa.free(pts);
-                            if (pts.len > 0) {
-                                const wp = pg.toWorld(pts[0]);
-                                _ = u.stepToward(wp.x, wp.y, step);
-                                used_path = true;
-                            }
-                        } else |_| {}
-                    }
-                }
+        if (self.nextWaypoint(ls, u, tx, ty, is_player)) |wp| {
+            if (wp.x != u.x or wp.y != u.y) {
+                _ = u.stepToward(wp.x, wp.y, step);
+                used_path = true;
             }
         }
         var reached = false;
@@ -4713,26 +4668,31 @@ test "walk sets a target and tick moves the player toward it" {
     try std.testing.expect(ls.moved.contains(c.player_guid));
 }
 
+/// A bare level for tests: `w`x`h` of open floor with nothing on it. Its origin is (0,0), so
+/// level-local subtiles and world subtiles are the same coordinate — a test writes walls straight
+/// into `cells` and talks about them in the same numbers it gives the units.
+fn bareLevel(gpa: std.mem.Allocator, w: i32, h: i32) !drlg.Level {
+    const cells = try gpa.alloc(u16, @intCast(w * h));
+    @memset(cells, 0);
+    errdefer gpa.free(cells);
+    return drlg.Level.initBare(gpa, w, h, cells);
+}
+
 test "player routes around a wall instead of walking through it" {
     const gpa = std.testing.allocator;
     var gi = GameInstance.init(gpa, 1, 0, 0, .normal);
     defer gi.deinit();
 
-    // Synthetic 40x40 path-grid (origin 0,0 -> local == world subtiles): a solid 3-wide
-    // vertical wall at x in {19,20,21} for y in [0,31], leaving a gap along the bottom
-    // (y in [32,39]). A straight line from the player to the target crosses the wall at
+    // A solid 3-wide vertical wall at x in {19,20,21} for y in [0,31], leaving a gap along the
+    // bottom (y in [32,39]). A straight line from the player to the target crosses the wall at
     // y=20, so a collision-blind stepper would land ON a blocked cell; the pathfinder must
     // detour through the gap.
     const w: i32 = 40;
-    const h: i32 = 40;
-    const n: usize = @intCast(w * h);
-    const blocked = try gpa.alloc(bool, n);
-    const ground = try gpa.alloc(bool, n);
-    @memset(blocked, false);
-    @memset(ground, true);
+    var lv = try bareLevel(gpa, w, 40);
+    defer lv.deinit();
     var yy: i32 = 0;
     while (yy <= 31) : (yy += 1) {
-        for ([_]i32{ 19, 20, 21 }) |xx| blocked[@intCast(xx + yy * w)] = true;
+        for ([_]i32{ 19, 20, 21 }) |xx| lv.cells[@intCast(xx + yy * w)] = pf.Colbit.wall;
     }
 
     var ls = LevelState{
@@ -4740,7 +4700,7 @@ test "player routes around a wall instead of walking through it" {
         .summary = .{ .level_id = 0, .seed = 0, .difficulty = .normal, .room_count = 0, .tile_count = 0, .collision_cells = 0 },
         .entry_x = 5,
         .entry_y = 20,
-        .path_grid = drlg.PathGrid{ .origin_x = 0, .origin_y = 0, .w = w, .h = h, .blocked = blocked, .ground = ground },
+        .level = &lv,
     };
     defer ls.deinit(gpa);
 
@@ -4763,8 +4723,8 @@ test "player routes around a wall instead of walking through it" {
             break;
         }
         // The player must never occupy a blocked subtile.
-        const lp = ls.path_grid.?.toLocal(up.x, up.y) orelse return error.PlayerLeftGrid;
-        try std.testing.expect(!blocked[@intCast(lp.x + lp.y * w)]);
+        if (ls.toLocal(up.x, up.y) == null) return error.PlayerLeftGrid;
+        try std.testing.expect(ls.passable(up.x, up.y, GameInstance.PLAYER_MASK));
     }
 
     try std.testing.expect(reached);
@@ -4784,16 +4744,12 @@ test "Teleport moves the player to a passable in-range cell, rejects blocked/out
     // 60x60 grid: passable everywhere except a solid blocked block around (44,44) that is larger
     // than the teleport landing-snap radius (so a cast INTO it cannot snap out to a walkable cell).
     const w: i32 = 60;
-    const h: i32 = 60;
-    const n: usize = @intCast(w * h);
-    const blocked = try gpa.alloc(bool, n);
-    const ground = try gpa.alloc(bool, n);
-    @memset(blocked, false);
-    @memset(ground, true);
+    var lv = try bareLevel(gpa, w, 60);
+    defer lv.deinit();
     var by: i32 = 30;
     while (by <= 58) : (by += 1) {
         var bx: i32 = 30;
-        while (bx <= 58) : (bx += 1) blocked[@intCast(bx + by * w)] = true;
+        while (bx <= 58) : (bx += 1) lv.cells[@intCast(bx + by * w)] = pf.Colbit.wall;
     }
 
     var ls = LevelState{
@@ -4801,7 +4757,7 @@ test "Teleport moves the player to a passable in-range cell, rejects blocked/out
         .summary = .{ .level_id = 0, .seed = 0, .difficulty = .normal, .room_count = 0, .tile_count = 0, .collision_cells = 0 },
         .entry_x = 5,
         .entry_y = 5,
-        .path_grid = drlg.PathGrid{ .origin_x = 0, .origin_y = 0, .w = w, .h = h, .blocked = blocked, .ground = ground },
+        .level = &lv,
     };
     defer ls.deinit(gpa);
 
@@ -5457,6 +5413,34 @@ test "srvmissilea delivery: Inferno/Chain Lightning/Thunder Storm/Firestorm spaw
     }
 }
 
+/// The `skip`-th nearest cell to (x,y) that is both walkable and in plain sight of it — where a test
+/// may put an object it intends to interact with. On a real generated level the cells a fixed offset
+/// from the spawn point are as likely to be rock as floor, and an object in rock is one no player
+/// could ever see, so a test that places one there is testing an impossible map.
+fn visibleSpotNear(ls: *LevelState, x: i32, y: i32, skip: usize) !drlg.Point {
+    var seen: usize = 0;
+    var r: i32 = 1;
+    while (r <= 20) : (r += 1) {
+        var oy: i32 = -r;
+        while (oy <= r) : (oy += 1) {
+            var ox: i32 = -r;
+            while (ox <= r) : (ox += 1) {
+                if (@abs(ox) != r and @abs(oy) != r) continue;
+                const cx = x + ox;
+                const cy = y + oy;
+                if (!ls.passable(cx, cy, GameInstance.PLAYER_MASK)) continue;
+                if (!ls.hasLineOfSight(x, y, cx, cy)) continue;
+                if (seen < skip) {
+                    seen += 1;
+                    continue;
+                }
+                return .{ .x = cx, .y = cy };
+            }
+        }
+    }
+    return error.NoVisibleSpot;
+}
+
 test "operate a chest (drops + Opened) and a shrine (Operating), broadcast 0x0E" {
     const gpa = std.testing.allocator;
     var gi = GameInstance.init(gpa, 1, 0x13572468, 0, .normal);
@@ -5468,8 +5452,10 @@ test "operate a chest (drops + Opened) and a shrine (Operating), broadcast 0x0E"
     const p = ls.units.getPtr(c.player_guid).?;
 
     // A chest (OperateFn 4) + a shrine (OperateFn 2) beside the player, one chest far away.
-    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 5, .x = p.x + 3, .y = p.y, .operate_fn = OPFN_CHEST });
-    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 2, .x = p.x, .y = p.y + 3, .operate_fn = OPFN_SHRINE });
+    const chest_at = try visibleSpotNear(ls, p.x, p.y, 0);
+    const shrine_at = try visibleSpotNear(ls, p.x, p.y, 1);
+    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 5, .x = chest_at.x, .y = chest_at.y, .operate_fn = OPFN_CHEST });
+    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 2, .x = shrine_at.x, .y = shrine_at.y, .operate_fn = OPFN_SHRINE });
     try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 5, .x = p.x + 500, .y = p.y, .operate_fn = OPFN_CHEST });
     const chest = ls.objects.items[0].guid;
     const shrine = ls.objects.items[1].guid;
@@ -5512,9 +5498,12 @@ test "operate waypoint / well / door through the resolve->apply path" {
     const ls = gi.levels.get(gi.level_id).?;
     const p = ls.units.getPtr(c.player_guid).?;
 
-    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 5, .x = p.x + 2, .y = p.y, .operate_fn = 23 }); // waypoint
-    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 5, .x = p.x + 2, .y = p.y + 1, .operate_fn = 22 }); // well
-    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 5, .x = p.x + 2, .y = p.y - 1, .operate_fn = 8 }); // door
+    const wp_at = try visibleSpotNear(ls, p.x, p.y, 0);
+    const well_at = try visibleSpotNear(ls, p.x, p.y, 1);
+    const door_at = try visibleSpotNear(ls, p.x, p.y, 2);
+    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 5, .x = wp_at.x, .y = wp_at.y, .operate_fn = 23 }); // waypoint
+    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 5, .x = well_at.x, .y = well_at.y, .operate_fn = 22 }); // well
+    try ls.objects.append(gpa, .{ .guid = gi.allocGuid(), .class_id = 5, .x = door_at.x, .y = door_at.y, .operate_fn = 8 }); // door
     const wp = ls.objects.items[0].guid;
     const well = ls.objects.items[1].guid;
     const door = ls.objects.items[2].guid;
@@ -5536,21 +5525,18 @@ test "line of sight is broken by a wall between the endpoints, clear otherwise" 
     const gpa = std.testing.allocator;
     var gi = GameInstance.init(gpa, 1, 0x1, 0, .normal);
     defer gi.deinit();
-    var ls = testLevelState();
-    defer ls.deinit(gpa); // frees the path grid we attach below
-
     const W: i32 = 5;
-    const H: i32 = 5;
-    const blocked = try gpa.alloc(bool, @intCast(W * H));
-    const ground = try gpa.alloc(bool, @intCast(W * H));
-    @memset(blocked, false);
-    @memset(ground, true);
-    blocked[@intCast(2 * W + 2)] = true; // a single wall cell at (2,2)
-    ls.path_grid = .{ .origin_x = 0, .origin_y = 0, .w = W, .h = H, .blocked = blocked, .ground = ground };
+    var lv = try bareLevel(gpa, W, 5);
+    defer lv.deinit();
+    lv.cells[@intCast(2 * W + 2)] = pf.Colbit.wall; // a single wall cell at (2,2)
 
-    try std.testing.expect(!gi.hasLineOfSight(&ls, 0, 2, 4, 2)); // row 2 passes through the wall
-    try std.testing.expect(gi.hasLineOfSight(&ls, 0, 0, 4, 0)); // row 0 is clear
-    try std.testing.expect(gi.hasLineOfSight(&ls, 0, 0, 1, 0)); // adjacent endpoints — always clear
+    var ls = testLevelState();
+    defer ls.deinit(gpa);
+    ls.level = &lv;
+
+    try std.testing.expect(!ls.hasLineOfSight(0, 2, 4, 2)); // row 2 passes through the wall
+    try std.testing.expect(ls.hasLineOfSight(0, 0, 4, 0)); // row 0 is clear
+    try std.testing.expect(ls.hasLineOfSight(0, 0, 1, 0)); // adjacent endpoints — always clear
 }
 
 test "a door toggles, then ignores re-operate until the debounce window passes" {
