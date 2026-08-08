@@ -111,11 +111,15 @@ pub const Actor = struct {
     }
 
     /// Pick an item up off the floor.
+    ///
+    /// `param` is the "put it straight to the cursor" flag rather than a body location, which is
+    /// what a pickup wants: the item lands on the cursor and the caller decides where it goes.
     pub fn pickUp(_: *const Actor, guid: u32, out: []u8) []u8 {
-        return clt.InteractWithEntityEx.encode(
-            .{ .unit_type = @intFromEnum(UnitType.item), .unit_guid = guid },
-            out,
-        );
+        return (clt.InteractWithEntityEx{
+            .unit_type = @intFromEnum(UnitType.item),
+            .target_guid = guid,
+            .param = 0,
+        }).encode(out);
     }
 
     /// The largest command buffer any of these needs.
@@ -168,6 +172,29 @@ test "moveToward emits a real command until it arrives, then stops" {
     // Within tolerance there is nothing to send.
     try testing.expect((try actor.moveToward(.{ .x = 1002, .y = 1000 }, false, &buf, 3)) == null);
     try testing.expect(actor.arrived(.{ .x = 1002, .y = 1000 }, 3));
+}
+
+test "every action encodes to its own opcode and names the unit it means" {
+    var w = World.init(testing.allocator);
+    defer w.deinit();
+    const actor = Actor{ .world = &w };
+    var buf: [Actor.MAX_COMMAND]u8 = undefined;
+
+    // These take no world state, so nothing else exercises them — and an encoder nobody calls is
+    // an encoder that stops compiling without anyone noticing.
+    const door = actor.interact(.object, 0x1234, &buf);
+    try testing.expectEqual(clt.InteractWithEntity.OPCODE, door[0]);
+    try testing.expectEqual(@as(u32, 0x1234), (try clt.InteractWithEntity.decode(door)).guid);
+
+    const swing = actor.attack(.monster, 0x5678, &buf);
+    try testing.expectEqual(clt.LeftSkillOnEntity.OPCODE, swing[0]);
+    try testing.expectEqual(@as(u32, 0x5678), (try clt.LeftSkillOnEntity.decode(swing)).unit_guid);
+
+    const grab = actor.pickUp(0x9abc, &buf);
+    const decoded = try clt.InteractWithEntityEx.decode(grab);
+    try testing.expectEqual(clt.InteractWithEntityEx.OPCODE, grab[0]);
+    try testing.expectEqual(@as(u32, @intFromEnum(UnitType.item)), decoded.unit_type);
+    try testing.expectEqual(@as(u32, 0x9abc), decoded.target_guid);
 }
 
 test "acting with no known player position is an error, not a bad command" {
