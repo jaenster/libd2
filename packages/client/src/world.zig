@@ -165,6 +165,8 @@ pub const World = struct {
     /// "the first player seen", which is only right when we are the first.
     local_name: [16]u8 = [_]u8{0} ** 16,
     local_name_len: u8 = 0,
+    /// A player whose name matched `local_name` has been seen, so first-seen no longer applies.
+    local_name_matched: bool = false,
 
     loaded: bool = false, // act data fully streamed (0x04 LoadComplete)
     in_game: bool = true, // cleared by 0x06 GameExit
@@ -423,11 +425,18 @@ pub const World = struct {
         u.name_len = nlen;
         u.x = std.mem.readInt(u16, buf[22..24], .little);
         u.y = std.mem.readInt(u16, buf[24..26], .little);
-        // Prefer the character we said we are; fall back to first-seen only when no name was set.
-        // Latching on arrival order picks a ghost of ourselves when one is already in the game.
-        if (self.local_name_len != 0) {
-            if (self.isLocalName(u.nameSlice())) self.local_player_guid = guid;
-        } else if (self.local_player_guid == null) {
+        // Prefer the character we said we are; latching purely on arrival order would pick a ghost
+        // of ourselves when one is already in the game.
+        //
+        // But a name we never see is worse than no name at all: some servers name the character
+        // from their own records rather than from what we asked for in GAMELOGON, and a client that
+        // insists on its own spelling then never identifies itself and cannot move, act, or even
+        // say where it is standing. So first-seen is the provisional answer whatever we were told,
+        // and an exact name match overrides it whenever one turns up.
+        if (self.isLocalName(u.nameSlice())) {
+            self.local_player_guid = guid;
+            self.local_name_matched = true;
+        } else if (self.local_player_guid == null and !self.local_name_matched) {
             self.local_player_guid = guid;
         }
         note("  world: CreatePlayer \"{s}\" guid=0x{x} at ({d},{d})\n", .{ u.nameSlice(), guid, u.x, u.y });
