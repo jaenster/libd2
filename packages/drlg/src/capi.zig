@@ -362,6 +362,17 @@ export fn d2drlg_deflate_zlib(in: [*]const u8, in_len: i32, out: [*]u8, cap: i32
     return @intCast(deflated.len);
 }
 
+/// The 0-based act a level belongs to (Levels.txt Act column), or a negative error / -1 for an
+/// unknown id.
+///
+/// Cheap — a table lookup, generating nothing. It exists because a caller that wants ONE level has
+/// to generate that level's whole act (the placement graph positions an act's levels together), so
+/// it needs to know which act to ask for before it can ask for anything.
+export fn d2drlg_level_act(ctx: ?*Ctx, level_id: i32) i32 {
+    const c = ctx orelse return -1;
+    return lib.levelActNo(&c.inner, level_id) orelse -1;
+}
+
 /// Write a level's Levels.txt LevelName (in-game display name) into `buf` (NUL-terminated
 /// if it fits) and return its byte length (>=0), or a negative error. Length 0 if the id
 /// is unknown.
