@@ -242,6 +242,47 @@ pub const LevelState = struct {
     // A LevelState with no map (the bare fixtures in tests, and any level the generator produced no
     // collision for) reads as wide open rather than as a wall, so those keep working uncollided.
 
+    /// Put `u` on the map where it currently stands, or move it there if it is already down. This
+    /// is the half of `SUNIT_RelocateUnit` that touches the grid: a unit's cells go back to what the
+    /// terrain says the moment it leaves them, because the occupancy layer refcounts per bit rather
+    /// than clearing. Silently does nothing for a unit with no collision profile.
+    pub fn settle(self: *LevelState, guid: u32, u: *const Unit) void {
+        const lv = self.level orelse return;
+        const at = lv.fromWorld(.{ .x = u.x, .y = u.y });
+        // Placing is lift-then-paint, and the reconcile calls this for every unit every tick. Most
+        // of them have not moved, so check before repainting.
+        if (lv.units.get(guid)) |o| {
+            if (o.at.x == at.x and o.at.y == at.y and std.meta.eql(o.stamp, u.collision.stamp) and o.flags == u.collision.flag) return;
+        }
+        lv.units.placeUnit(guid, at, u.collision) catch {};
+    }
+
+    /// Take `guid` off the map. Every cell it covered goes back to what the rest of the world says.
+    pub fn unsettle(self: *LevelState, guid: u32) void {
+        const lv = self.level orelse return;
+        lv.units.lift(guid);
+    }
+
+    /// Reconcile the occupancy layer against the unit table: settle everyone who is in it, lift
+    /// everyone who is not any more.
+    ///
+    /// A reconcile rather than a hook on every write, because unit positions are set in a dozen
+    /// places (a step, a teleport, a leap, a warp arrival, a spawn) and a missed one leaves a ghost
+    /// standing in a doorway forever. The cost is one hash probe per unit per tick.
+    pub fn syncOccupancy(self: *LevelState, gpa: std.mem.Allocator) void {
+        const lv = self.level orelse return;
+        var it = self.units.iterator();
+        while (it.next()) |e| self.settle(e.key_ptr.*, e.value_ptr);
+
+        var gone: std.ArrayListUnmanaged(u32) = .empty;
+        defer gone.deinit(gpa);
+        var oit = lv.units.occupants.keyIterator();
+        while (oit.next()) |id| {
+            if (!self.units.contains(id.*)) gone.append(gpa, id.*) catch {};
+        }
+        for (gone.items) |id| lv.units.lift(id);
+    }
+
     /// The pathfinding caches over this level, built on first use. Null when there is no map.
     pub fn navigator(self: *LevelState, gpa: std.mem.Allocator) ?*pf.Nav {
         const lv = self.level orelse return null;
@@ -264,15 +305,16 @@ pub const LevelState = struct {
     }
 
     /// `SKILLS_HasLineOfSight` (0x645910) between two world subtiles, with the sight mask — walls
-    /// and missile barriers only. Objects and doors carry their own bits and are deliberately not
-    /// in it, so an object does not block the sight-line to itself.
+    /// and missile barriers only.
+    ///
+    /// The TARGET's own cell is excluded. A closed door blocks sight THROUGH it, and writes a
+    /// missile barrier on its own cell to do so — you still have to be able to click it to open it.
+    /// The same goes for anything else whose footprint IS the thing being looked at.
     pub fn hasLineOfSight(self: *const LevelState, x0: i32, y0: i32, x1: i32, y1: i32) bool {
         const lv = self.level orelse return true;
-        return lv.hasLineOfSight(
-            lv.fromWorld(.{ .x = x0, .y = y0 }),
-            lv.fromWorld(.{ .x = x1, .y = y1 }),
-            pf.Colmask.missile_flight,
-        );
+        const to = lv.fromWorld(.{ .x = x1, .y = y1 });
+        const t = lv.trace(lv.fromWorld(.{ .x = x0, .y = y0 }), to, pf.Colmask.missile_flight);
+        return !t.blocked or (t.at.x == to.x and t.at.y == to.y);
     }
 
     /// `GetFreeCoordinates` (0x64dea0): the cell nearest (x,y) a unit colliding with `mask` can

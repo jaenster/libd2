@@ -539,6 +539,28 @@ pub const World = struct {
         return self.levelAct(level_id);
     }
 
+    /// What a monster of `class_id` writes into the collision grid and what stops it: MonStats2
+    /// SizeX for the footprint, MonStats flying/opendoors for the path mask. `pet` promotes its
+    /// ground claim from `nopath` to `pet`, which is how a summon stops blocking its own summoner.
+    pub fn monCollision(self: *World, class_id: i32, pet: bool) wd.UnitCollision {
+        const ms = self.montbl.stat(class_id) orelse return wd.UnitCollision.monster(1, pet, .{});
+        return wd.UnitCollision.monster(ms.size_x, pet, .{ .flying = ms.flying, .opendoors = ms.opendoors });
+    }
+
+    /// What an object of `class_id` writes into the collision grid, and over which rectangle:
+    /// `GetCollisionType` (0x6209d0) reading Objects.txt IsDoor/BlocksVis/BlockMissile/SubClass,
+    /// stamped over SizeX x SizeY. Null when the object has no collision in its neutral state.
+    pub fn objCollision(self: *World, class_id: i32) ?wd.UnitCollision {
+        const c = self.objtbl.collision(class_id) orelse return null;
+        if (!c.has) return null;
+        return wd.UnitCollision.object(c.sx, c.sy, .{
+            .is_door = c.is_door,
+            .blocks_vis = c.blocks_vis,
+            .block_missile = c.block_missile,
+            .is_corpse = c.is_corpse,
+        });
+    }
+
     /// MonStats.txt DamageRegen for a monster class id (0 if unknown) — drives the
     /// faithful hp-regen stat: hpregen = maxhp * DamageRegen / 16 (engine <<8 space).
     pub fn monDamageRegen(self: *World, class_id: i32) i32 {

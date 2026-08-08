@@ -12,7 +12,19 @@ const txt = @import("txt.zig");
 /// One object row's collision footprint: HasCollision0 (mode 0 = the room-init /
 /// neutral state) plus SizeX/SizeY (collision extent in SUBTILES). Objects with
 /// HasCollision0==0 (shrines that only block on interact, décor, etc.) never block.
-pub const Coll = struct { has: bool, sx: i32, sy: i32 };
+pub const Coll = struct {
+    has: bool,
+    sx: i32,
+    sy: i32,
+    /// The Objects.txt columns that decide WHICH bit the object writes — see
+    /// `d2-core`'s `unit.objectFlag`. A door writes `door`, an ordinary object writes
+    /// `object`, and a corpse-like one writes `dead`.
+    is_door: bool = false,
+    blocks_vis: bool = false,
+    block_missile: bool = false,
+    /// SubClass bit 2 (value 4): corpse-like.
+    is_corpse: bool = false,
+};
 
 /// One object row's dynamic-light emitter. Faithful to 1.14d
 /// OBJECT_SetLightRGB (@0x4bc580) -> AllocLightMap (@0x474160): the light
@@ -90,7 +102,15 @@ pub fn load(gpa: std.mem.Allocator) !Table {
     var i: usize = 0;
     while (i < n) : (i += 1) {
         cel[i] = @intCast(t.int(i, "AutoMap"));
-        coll[i] = .{ .has = t.int(i, "HasCollision0") != 0, .sx = @intCast(t.int(i, "SizeX")), .sy = @intCast(t.int(i, "SizeY")) };
+        coll[i] = .{
+            .has = t.int(i, "HasCollision0") != 0,
+            .sx = @intCast(t.int(i, "SizeX")),
+            .sy = @intCast(t.int(i, "SizeY")),
+            .is_door = t.int(i, "IsDoor") != 0,
+            .blocks_vis = t.int(i, "BlocksVis") != 0,
+            .block_missile = t.int(i, "BlockMissile") != 0,
+            .is_corpse = t.int(i, "SubClass") & 4 != 0,
+        };
         operate[i] = @intCast(t.int(i, "OperateFn"));
         // Brightest lit mode -> emit diameter; engine radius = (Lit>>1) clamped
         // to 18 subtiles. Color is Red/Green/Blue verbatim.

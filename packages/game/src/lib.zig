@@ -56,6 +56,7 @@ pub const Seed = rng.Seed;
 pub const Stat = stat.Stat;
 pub const StatList = stat.StatList;
 pub const Unit = unit.Unit;
+pub const collision = @import("d2-core").collision;
 pub const UnitType = unit.UnitType;
 pub const Weapon = unit.Weapon;
 pub const applyItemStats = unit.applyItemStats;

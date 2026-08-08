@@ -90,6 +90,11 @@ pub const MonStat = struct {
     /// MonStats.noRatio — when set the monster's HP/AC/etc. are the raw MonStats values with
     /// NO MonLvl.txt multiplier (set on summons: golems, valkyrie, druid pets, sentries).
     no_ratio: bool,
+    /// MonStats.flying / MonStats.opendoors — the two columns that change what stops the monster
+    /// when it walks (`unit.monsterPathMask`): a flier ignores the ground entirely, and a monster
+    /// that opens doors is not blocked by one.
+    flying: bool,
+    opendoors: bool,
     /// Resistances per difficulty [Normal, NM, Hell]: physical(ResDm), magic(ResMa),
     /// fire(ResFi), lightning(ResLi), cold(ResCo), poison(ResPo). Percent; 100 = immune,
     /// can be negative. Read straight from MonStats and set as the unit's *resist stats
@@ -225,6 +230,8 @@ pub const Tables = struct {
                     .max_hp = .{ @intCast(mt.int(r, "maxHP")), @intCast(mt.int(r, "MaxHP(N)")), @intCast(mt.int(r, "MaxHP(H)")) },
                     .level = .{ @intCast(mt.int(r, "Level")), @intCast(mt.int(r, "Level(N)")), @intCast(mt.int(r, "Level(H)")) },
                     .no_ratio = mt.int(r, "noRatio") != 0,
+                    .flying = mt.int(r, "flying") != 0,
+                    .opendoors = mt.int(r, "opendoors") != 0,
                     .resist = .{
                         .{
                             .phys = @intCast(mt.int(r, "ResDm")),   .magic = @intCast(mt.int(r, "ResMa")),

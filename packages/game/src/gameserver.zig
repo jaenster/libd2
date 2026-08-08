@@ -563,7 +563,9 @@ pub const GameInstance = struct {
         }
         u.x = start.entry_x;
         u.y = start.entry_y;
+        u.collision = sim.unit.Collision.player(PLAYER_SIZE_X);
         try start.units.put(self.gpa, guid, u);
+        start.settle(guid, start.units.getPtr(guid).?);
         errdefer _ = start.units.remove(guid);
 
         const c = try self.gpa.create(Client);
@@ -694,7 +696,13 @@ pub const GameInstance = struct {
         // Each engine step is ONE game-wide pass over pGame's unit lists (which span all hosted
         // acts/levels). We loop our per-level worlds once PER step — never interleaved — so the
         // whole-game ordering matches the decompile: all InitNewRooms, THEN all EVENT_DispatchAllTimers.
+        // Before anything reads the map: bring the occupancy layer in line with the unit tables, so
+        // every collision test this tick sees where everyone actually is. The engine keeps this true
+        // continuously via the room unit lists; we reconcile once and then keep it true within the
+        // tick by settling each unit as it moves.
         var lit = self.levels.valueIterator();
+        while (lit.next()) |lp| lp.*.syncOccupancy(self.gpa);
+        lit = self.levels.valueIterator();
         while (lit.next()) |lp| self.initNewRooms(lp.*); //        InitNewRooms            @0x52d160
         lit = self.levels.valueIterator();
         while (lit.next()) |lp| self.dispatchAllTimers(lp.*); //   EVENT_DispatchAllTimers @0x5414d0 (AITHINK + timers)
@@ -1313,6 +1321,7 @@ pub const GameInstance = struct {
         const removed = src.units.fetchRemove(c.player_guid) orelse return;
         _ = src.targets.remove(c.player_guid);
         _ = src.moved.remove(c.player_guid);
+        src.unsettle(c.player_guid);
 
         var u = removed.value;
         u.x = dst.entry_x;
@@ -1321,8 +1330,10 @@ pub const GameInstance = struct {
         dst.units.put(self.gpa, c.player_guid, u) catch {
             // Put it back on failure so the player isn't lost.
             src.units.put(self.gpa, c.player_guid, u) catch {};
+            src.settle(c.player_guid, src.units.getPtr(c.player_guid).?);
             return;
         };
+        dst.settle(c.player_guid, dst.units.getPtr(c.player_guid).?);
 
         c.level_id = dest_level;
         c.x = dst.entry_x;
@@ -1417,12 +1428,38 @@ pub const GameInstance = struct {
     /// which was never a real question: a bolt flies over the object a player has to walk around,
     /// and a monster is stopped by pets a player passes through.
     const PLAYER_MASK: u16 = pf.Colmask.player_path;
+    /// GetUnitSizeX for a player — PlayerType SizeX is 2 for every class.
+    const PLAYER_SIZE_X: i32 = 2;
     const MONSTER_MASK: u16 = pf.Colmask.monster_path;
     const MISSILE_MASK: u16 = pf.Colmask.missile_flight;
 
     /// Interact range for objects — SERVER_InteractOrPick @0x548b00 gates the OBJECT
     /// branch at distance < 0x33 subtiles (then LOS via IsObjectInInteractRange — TODO).
     const OBJECT_INTERACT_RANGE: i32 = 0x33;
+
+    /// Stamp or clear an object's collision on the terrain grid. A door that opens stops blocking
+    /// the way through it, which no amount of occupancy bookkeeping covers: the object's bits are
+    /// baked into the generated grid by `AddPresetUnitToDrlgMap`, and the engine's own
+    /// `TileLibrary_UpdateCollision` (0x64c860) rewrites them in place when the tile swaps. So does
+    /// this. Terrain can become MORE passable, so the edit bumps the level's generation and every
+    /// search cache built on it rebuilds — see `Level.editTerrain`.
+    fn setObjectCollision(self: *GameInstance, ls: *LevelState, o: WorldObject, present: bool) void {
+        const lv = ls.level orelse return;
+        const world = if (self.world) |*w| w else return;
+        const prof = world.objCollision(o.class_id) orelse return;
+        const box = switch (prof.stamp) {
+            .box => |b| b,
+            else => return,
+        };
+        const at = lv.fromWorld(.{ .x = o.x, .y = o.y });
+        const rect = drlg.Level.Rect{
+            .x0 = at.x - @divTrunc(box.w, 2),
+            .y0 = at.y - @divTrunc(box.h, 2),
+            .x1 = at.x + @divTrunc(box.w - 1, 2),
+            .y1 = at.y + @divTrunc(box.h - 1, 2),
+        };
+        _ = lv.editTerrain(rect, if (present) .{ .add = prof.flag } else .{ .remove = prof.flag });
+    }
 
     /// Door re-operate debounce in game frames — the engine gates OBJOP_ToggleDoor on GetTickCount +
     /// 500ms; at the 25fps server tick that is 12.5 frames, rounded to 13.
@@ -1501,6 +1538,7 @@ pub const GameInstance = struct {
                     if (o.last_op_frame != 0 and self.tick_count < o.last_op_frame + DOOR_DEBOUNCE_FRAMES) return;
                     o.last_op_frame = self.tick_count;
                     o.anim_mode = if (o.anim_mode == 0) 5 else 0;
+                    self.setObjectCollision(ls, o.*, o.anim_mode == 0);
                     self.broadcastObjectState(ls, o);
                 }
             },
@@ -2357,6 +2395,7 @@ pub const GameInstance = struct {
         // Instant reposition — ignore intervening walls/monsters, snap straight to the landing.
         caster.x = landing.x;
         caster.y = landing.y;
+        ls.settle(guid, caster);
         ls.moved.put(self.gpa, guid, {}) catch {};
         return .moved;
     }
@@ -2527,6 +2566,7 @@ pub const GameInstance = struct {
         caster.y = land.y;
         c.x = land.x;
         c.y = land.y;
+        ls.settle(c.player_guid, caster);
         ls.moved.put(self.gpa, c.player_guid, {}) catch {};
         var scratch: [16]u8 = undefined;
         self.queueToClient(c, (sc.ReassignPlayer{
@@ -2550,6 +2590,7 @@ pub const GameInstance = struct {
         u.y = y;
         u.set(.dexterity, 20);
         const world = &self.world.?;
+        u.collision = world.monCollision(class_id, false);
         // MonLvl-scaled HP (MONSTER_CalculateLevelScaledStats 0x6538a0): faithful HP for this
         // difficulty at the AREA monster level; fall back to the class' default when the area has none.
         const mon_level: i32 = @intCast(world.monLvl(level_id, self.difficulty));
@@ -2598,6 +2639,9 @@ pub const GameInstance = struct {
         const guid = self.allocGuid();
         var u = self.buildMonsterUnit(guid, class_id, x, y, level_id, false);
         u.owner_id = owner_guid;
+        // A summon claims ground with `pet` rather than `nopath`, which is what keeps it from
+        // blocking the summoner it follows around.
+        u.collision = self.world.?.monCollision(class_id, true);
         try ls.units.put(self.gpa, guid, u);
         try ls.ai.put(self.gpa, guid, .{});
         ls.timers.trigger(self.gpa, guid, @intFromEnum(sim.UnitType.monster), .aithink) catch {};
@@ -3236,6 +3280,7 @@ pub const GameInstance = struct {
         }
         u.x = lx;
         u.y = ly;
+        ls.settle(guid, u);
         ls.moved.put(self.gpa, guid, {}) catch {};
     }
 
@@ -3456,10 +3501,16 @@ pub const GameInstance = struct {
         return mc;
     }
 
-    /// The next waypoint on the route from `u` to (tx,ty), in WORLD subtiles — A* over the level's
-    /// live map, so the route bends around whoever is standing in the way and not just around walls.
-    /// Null when there is no map, no route, or the target is out of a monster's reach.
-    fn nextWaypoint(self: *GameInstance, ls: *LevelState, u: *sim.Unit, tx: i32, ty: i32, is_player: bool) ?pf.Point {
+    /// Where `u` should stand after moving `step` subtiles along the route to (tx,ty), in WORLD
+    /// subtiles — A* over the level's live map, so the route bends around whoever is standing in the
+    /// way and not just around walls. Null when there is no map, no route, or the target is out of a
+    /// monster's reach.
+    ///
+    /// The route is returned uncompressed and the unit is put on the cell `step` positions along it,
+    /// rather than stepped in a straight line toward a distant waypoint: every cell of the path was
+    /// checked, the straight line between two of them was not, and a unit that cuts the corner ends
+    /// up inside the wall the search just went around.
+    fn pathStep(self: *GameInstance, ls: *LevelState, u: *sim.Unit, guid: u32, tx: i32, ty: i32, is_player: bool, step: i32) ?pf.Point {
         const lv = ls.level orelse return null;
         const nv = ls.navigator(self.gpa) orelse return null;
 
@@ -3479,7 +3530,14 @@ pub const GameInstance = struct {
             gy = u.y + @divTrunc(dy * (PATH_GATE - 1), denom);
         }
 
-        const mask = if (is_player) PLAYER_MASK else MONSTER_MASK;
+        // Off the map for the duration of the search. A unit must not collide with the cells it is
+        // itself standing on — the same reason `RemoveGetCollision_Width` lifts before it looks —
+        // and here it would otherwise fail the search outright on a blocked start.
+        const lifted = lv.units.get(guid) != null;
+        if (lifted) lv.units.lift(guid);
+        defer if (lifted) ls.settle(guid, u);
+
+        const mask = u.collision.path_mask;
         const pm = nv.passMapFor(mask, .point) catch return null;
         const from = lv.fromWorld(.{ .x = u.x, .y = u.y });
         const to = lv.fromWorld(.{ .x = gx, .y = gy });
@@ -3489,11 +3547,14 @@ pub const GameInstance = struct {
             // back to straight-line stepping, which at least keeps the unit moving, instead of
             // walking it confidently into the closest reachable dead end.
             .max_nodes = if (is_player) PLAYER_PATH_NODES else MONSTER_PATH_NODES,
+            .compress = false,
+            .max_step = null,
         }, &self.path_buf) catch return null;
-        if (self.path_buf.items.len == 0) return null;
-        // find() always emits the (possibly snapped) start first; the step target is what follows.
-        const next = self.path_buf.items[@min(1, self.path_buf.items.len - 1)];
-        return lv.toWorld(next);
+        // find() always emits the (possibly snapped) start first, so index `step` is `step` cells
+        // along, clamped to the end of the route.
+        if (self.path_buf.items.len < 2) return null;
+        const ahead: usize = @intCast(@max(1, step));
+        return lv.toWorld(self.path_buf.items[@min(ahead, self.path_buf.items.len - 1)]);
     }
 
     /// A* expansion budget per query. A player is one unit and gets a real search; a monster is one
@@ -3511,16 +3572,17 @@ pub const GameInstance = struct {
             if (self.tick_count < end) step = @max(1, @divTrunc(step_in, 2)) else _ = ls.chilled.remove(guid);
         }
         var used_path = false;
-        if (self.nextWaypoint(ls, u, tx, ty, is_player)) |wp| {
-            if (wp.x != u.x or wp.y != u.y) {
-                _ = u.stepToward(wp.x, wp.y, step);
+        if (self.pathStep(ls, u, guid, tx, ty, is_player, step)) |dest| {
+            if (dest.x != u.x or dest.y != u.y) {
+                u.x = dest.x;
+                u.y = dest.y;
                 used_path = true;
             }
         }
         var reached = false;
         if (used_path) {
-            // A* steps toward the next waypoint; snap to the final target when within
-            // one step of it so the caller can retire the move.
+            // The path advanced the unit; snap to the final target when within one step of it so
+            // the caller can retire the move.
             const dx = tx - u.x;
             const dy = ty - u.y;
             if (dx * dx + dy * dy <= step * step) {
@@ -3531,6 +3593,7 @@ pub const GameInstance = struct {
         } else {
             reached = u.stepToward(tx, ty, step);
         }
+        ls.settle(guid, u);
         ls.moved.put(self.gpa, guid, {}) catch {};
         return reached;
     }
@@ -3553,7 +3616,13 @@ pub const GameInstance = struct {
             }
         }
         for (newly.items) |guid| {
-            if (ls.units.getPtr(guid)) |u| self.rollMonsterDrops(ls, u.*);
+            if (ls.units.getPtr(guid)) |u| {
+                self.rollMonsterDrops(ls, u.*);
+                // A corpse still marks where it lies so Corpse Explosion / Revive can find it, but
+                // it stops claiming the ground — the living walk over the dead.
+                u.collision = u.collision.dead();
+                ls.settle(guid, u);
+            }
             ls.corpses.put(self.gpa, guid, CORPSE_TTL) catch {
                 // out of memory for the corpse table: fall back to the old reap-immediately behaviour
                 _ = ls.units.remove(guid);
@@ -4715,24 +4784,191 @@ test "player routes around a wall instead of walking through it" {
     const target_y: i32 = 20;
 
     var reached = false;
+    var max_y: i32 = 0;
     var ticks: usize = 0;
     while (ticks < 500) : (ticks += 1) {
         const up = ls.units.getPtr(guid).?;
+        max_y = @max(max_y, up.y);
         if (gi.moveUnitToward(&ls, up, guid, target_x, target_y, MOVE_STEP, true)) {
             reached = true;
             break;
         }
-        // The player must never occupy a blocked subtile.
-        if (ls.toLocal(up.x, up.y) == null) return error.PlayerLeftGrid;
-        try std.testing.expect(ls.passable(up.x, up.y, GameInstance.PLAYER_MASK));
+        // The player must never occupy a blocked subtile. Against the TERRAIN, not the live world:
+        // the player is itself an occupant of the cell it is standing on.
+        const lp = ls.toLocal(up.x, up.y) orelse return error.PlayerLeftGrid;
+        try std.testing.expectEqual(@as(u16, 0), lv.at(lp.x, lp.y) & GameInstance.PLAYER_MASK);
     }
 
     try std.testing.expect(reached);
     const fin = ls.units.getPtr(guid).?;
     try std.testing.expectEqual(target_x, fin.x);
     try std.testing.expectEqual(target_y, fin.y);
+    // The gap is below y=31. Getting there at all means it went round; a stepper that ignored the
+    // wall would have crossed at y=20 and never left the row.
+    try std.testing.expect(max_y > 31);
     // Reaching the far side means it went around the bottom gap, not through the wall.
     try std.testing.expect(fin.x > 21);
+}
+
+test "a unit blocks the cell it stands on and releases it when it moves" {
+    const gpa = std.testing.allocator;
+    var gi = GameInstance.init(gpa, 1, 0, 0, .normal);
+    defer gi.deinit();
+
+    var lv = try bareLevel(gpa, 20, 20);
+    defer lv.deinit();
+    var ls = LevelState{
+        .level_id = 0,
+        .summary = .{ .level_id = 0, .seed = 0, .difficulty = .normal, .room_count = 0, .tile_count = 0, .collision_cells = 0 },
+        .entry_x = 0,
+        .entry_y = 0,
+        .level = &lv,
+    };
+    defer ls.deinit(gpa);
+
+    const guid: u32 = 7;
+    var m = sim.Unit.init(.monster);
+    m.unit_id = guid;
+    m.x = 5;
+    m.y = 5;
+    m.setLife(10);
+    m.collision = sim.unit.Collision.monster(2, false, .{});
+    try ls.units.put(gpa, guid, m);
+
+    // Terrain alone says the cell is open; the live world says it is not, once the unit is on it.
+    try std.testing.expect(ls.passable(5, 5, GameInstance.PLAYER_MASK));
+    ls.syncOccupancy(gpa);
+    try std.testing.expect(!ls.passable(5, 5, GameInstance.PLAYER_MASK));
+    try std.testing.expectEqual(sim.collision.Colbit.wall, lv.at(5, 5) | sim.collision.Colbit.wall); // terrain untouched
+
+    // Walk it off. The cell it left goes back to what the terrain says, and the one it arrived on
+    // takes over — the layer is restored, not accumulated.
+    const mp = ls.units.getPtr(guid).?;
+    mp.x = 9;
+    mp.y = 5;
+    ls.settle(guid, mp);
+    try std.testing.expect(ls.passable(5, 5, GameInstance.PLAYER_MASK));
+    try std.testing.expect(!ls.passable(9, 5, GameInstance.PLAYER_MASK));
+
+    // And off the level entirely.
+    _ = ls.units.remove(guid);
+    ls.syncOccupancy(gpa);
+    try std.testing.expect(ls.passable(9, 5, GameInstance.PLAYER_MASK));
+    try std.testing.expect(lv.units.isEmpty());
+}
+
+test "a player routes through the free gap when a monster is standing in the near one" {
+    const gpa = std.testing.allocator;
+    var gi = GameInstance.init(gpa, 1, 0, 0, .normal);
+    defer gi.deinit();
+
+    // A full-height wall at x=20 with exactly two ways through it: y=10 (level with the player and
+    // the target) and y=30 (a long way round).
+    const w: i32 = 40;
+    var lv = try bareLevel(gpa, w, 40);
+    defer lv.deinit();
+    var y: i32 = 0;
+    while (y < 40) : (y += 1) {
+        if (y == 10 or y == 30) continue;
+        lv.cells[@intCast(20 + y * w)] = sim.collision.Colbit.wall;
+    }
+
+    var ls = LevelState{
+        .level_id = 0,
+        .summary = .{ .level_id = 0, .seed = 0, .difficulty = .normal, .room_count = 0, .tile_count = 0, .collision_cells = 0 },
+        .entry_x = 5,
+        .entry_y = 10,
+        .level = &lv,
+    };
+    defer ls.deinit(gpa);
+
+    const pguid: u32 = 1;
+    var p = sim.Unit.init(.player);
+    p.unit_id = pguid;
+    p.x = 5;
+    p.y = 10;
+    p.collision = sim.unit.Collision.player(2);
+    try ls.units.put(gpa, pguid, p);
+
+    const mguid: u32 = 2;
+    var m = sim.Unit.init(.monster);
+    m.unit_id = mguid;
+    m.x = 20;
+    m.y = 10;
+    m.setLife(10);
+    m.collision = sim.unit.Collision.monster(2, false, .{});
+    try ls.units.put(gpa, mguid, m);
+    ls.syncOccupancy(gpa);
+
+    var max_y: i32 = 0;
+    var reached = false;
+    var ticks: usize = 0;
+    while (ticks < 400) : (ticks += 1) {
+        const up = ls.units.getPtr(pguid).?;
+        max_y = @max(max_y, up.y);
+        // Never on the monster, never in the wall.
+        try std.testing.expect(!(up.x == 20 and up.y == 10));
+        if (gi.moveUnitToward(&ls, up, pguid, 35, 10, MOVE_STEP, true)) {
+            reached = true;
+            break;
+        }
+    }
+    try std.testing.expect(reached);
+    // The near gap is the straight line; taking the far one means it detoured around the monster.
+    try std.testing.expect(max_y > 20);
+
+    // And the detour was because of the monster, not because of the wall: take it off the level,
+    // put the player back, and the same route now goes straight through the near gap.
+    _ = ls.units.remove(mguid);
+    ls.syncOccupancy(gpa);
+    const back = ls.units.getPtr(pguid).?;
+    back.x = 5;
+    back.y = 10;
+    ls.settle(pguid, back);
+    max_y = 0;
+    ticks = 0;
+    while (ticks < 400) : (ticks += 1) {
+        const up = ls.units.getPtr(pguid).?;
+        max_y = @max(max_y, up.y);
+        if (gi.moveUnitToward(&ls, up, pguid, 35, 10, MOVE_STEP, true)) break;
+    }
+    try std.testing.expectEqual(@as(i32, 10), max_y);
+}
+
+test "a corpse claims no ground" {
+    const gpa = std.testing.allocator;
+    var gi = GameInstance.init(gpa, 1, 0, 0, .normal);
+    defer gi.deinit();
+
+    var lv = try bareLevel(gpa, 20, 20);
+    defer lv.deinit();
+    var ls = LevelState{
+        .level_id = 0,
+        .summary = .{ .level_id = 0, .seed = 0, .difficulty = .normal, .room_count = 0, .tile_count = 0, .collision_cells = 0 },
+        .entry_x = 0,
+        .entry_y = 0,
+        .level = &lv,
+    };
+    defer ls.deinit(gpa);
+
+    const guid: u32 = 3;
+    var m = sim.Unit.init(.monster);
+    m.unit_id = guid;
+    m.x = 6;
+    m.y = 6;
+    m.setLife(10);
+    m.collision = sim.unit.Collision.monster(2, false, .{});
+    try ls.units.put(gpa, guid, m);
+    ls.syncOccupancy(gpa);
+    try std.testing.expect(!ls.passable(6, 6, GameInstance.PLAYER_MASK));
+
+    const mp = ls.units.getPtr(guid).?;
+    mp.collision = mp.collision.dead();
+    ls.settle(guid, mp);
+    // The body is still there — it is still an occupant, so Corpse Explosion can find it — but it
+    // no longer stops anyone walking over it.
+    try std.testing.expect(ls.passable(6, 6, GameInstance.PLAYER_MASK));
+    try std.testing.expect(lv.units.get(guid) != null);
 }
 
 test "Teleport moves the player to a passable in-range cell, rejects blocked/out-of-range/no-mana" {
@@ -5537,6 +5773,52 @@ test "line of sight is broken by a wall between the endpoints, clear otherwise" 
     try std.testing.expect(!ls.hasLineOfSight(0, 2, 4, 2)); // row 2 passes through the wall
     try std.testing.expect(ls.hasLineOfSight(0, 0, 4, 0)); // row 0 is clear
     try std.testing.expect(ls.hasLineOfSight(0, 0, 1, 0)); // adjacent endpoints — always clear
+}
+
+test "a closed door blocks the way through it and an open one does not" {
+    const gpa = std.testing.allocator;
+    var gi = GameInstance.init(gpa, 1, 0x13572468, 0, .normal);
+    gi.setLevel(8);
+    defer gi.deinit();
+    _ = try gi.generateLevel();
+    const c = try gi.addClient(-1, "", "");
+    const ls = gi.levels.get(gi.level_id).?;
+    const p = ls.units.getPtr(c.player_guid).?;
+
+    // The first Objects.txt row that is a door with collision — no hardcoded class id, so a data
+    // change cannot leave this testing something that is not a door any more.
+    var door_class: i32 = -1;
+    var id: i32 = 0;
+    while (id < 600) : (id += 1) {
+        const prof = gi.world.?.objCollision(id) orelse continue;
+        if (prof.flag & sim.collision.Colbit.door != 0) {
+            door_class = id;
+            break;
+        }
+    }
+    if (door_class < 0) return error.NoDoorInObjectsTxt;
+
+    const at = try visibleSpotNear(ls, p.x, p.y, 0);
+    try ls.objects.append(gpa, .{
+        .guid = gi.allocGuid(),
+        .class_id = door_class,
+        .x = at.x,
+        .y = at.y,
+        .operate_fn = OPFN_DOOR,
+        .anim_mode = 5, // starts open
+    });
+    const guid = ls.objects.items[ls.objects.items.len - 1].guid;
+    try std.testing.expect(ls.passable(at.x, at.y, GameInstance.PLAYER_MASK));
+
+    var buf: [12]u8 = undefined;
+    _ = gi.handleCommand(c, (cs.InteractWithEntity{ .unit_type = 2, .guid = guid }).encode(&buf));
+    try std.testing.expectEqual(@as(u8, 0), GameInstance.objectByGuid(ls, guid).?.anim_mode); // closed
+    try std.testing.expect(!ls.passable(at.x, at.y, GameInstance.PLAYER_MASK));
+
+    gi.tick_count += GameInstance.DOOR_DEBOUNCE_FRAMES;
+    _ = gi.handleCommand(c, (cs.InteractWithEntity{ .unit_type = 2, .guid = guid }).encode(&buf));
+    try std.testing.expectEqual(@as(u8, 5), GameInstance.objectByGuid(ls, guid).?.anim_mode); // open again
+    try std.testing.expect(ls.passable(at.x, at.y, GameInstance.PLAYER_MASK));
 }
 
 test "a door toggles, then ignores re-operate until the debounce window passes" {
