@@ -243,12 +243,18 @@ export class Area {
       const {ptr, view} = scratch.take(CAP * SIZES.ADJACENT);
       const written = exports.d2drlg_act_level_adjacents(act, this.#index, ptr, CAP);
       const exits: Exit[] = [];
+      const seen = new Set<string>();
       for (let i = 0; i < Math.min(written, CAP); i++) {
         const at = i * SIZES.ADJACENT;
         const toId = view.getInt32(at, true) as AreaId;
         const x = view.getInt32(at + 4, true);
         const y = view.getInt32(at + 8, true);
         const to = this.game.area(toId);
+        // The adjacency list names a crossing once per room that touches it, so the same way out
+        // arrives several times. A run wants the ways out, not the rooms that produced them.
+        const key = `${toId}:${x}:${y}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
         exits.push({from: this, to, location: x < 0 || y < 0 ? null : new Location(this, x, y)});
       }
       this.#exits = exits;
@@ -312,9 +318,22 @@ export class Area {
     return this.#collision;
   }
 
-  /** A Location in this area, from level-local subtiles. The only way to make one. */
+  /** A Location in this area, from level-local subtiles. */
   at(x: number, y: number): Location {
     return new Location(this, x, y);
+  }
+
+  /**
+   * A Location in this area, from WORLD subtiles — the frame in-game positions arrive in.
+   *
+   * The inverse of {@link Location.world}, and the one a live client needs: the server states
+   * every position in world subtiles, while an area's own map data is level-local. Getting this
+   * backwards puts you thousands of cells outside the level, where routing correctly finds
+   * nothing.
+   */
+  fromWorld(x: number, y: number): Location {
+    const origin = this.origin;
+    return new Location(this, x - origin.x * SUBTILE, y - origin.y * SUBTILE);
   }
 
   /** The geometric middle. Often inside a wall — `snap` it before routing to it. */
