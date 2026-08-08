@@ -27,5 +27,13 @@
   ],
   "license": "MIT",
   "repository": "github:jaenster/libd2",
-  "homepage": "https://github.com/jaenster/libd2"
+  "homepage": "https://github.com/jaenster/libd2",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3"
+  }
 }

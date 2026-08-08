@@ -110,6 +110,9 @@ int32_t d2drlg_act_level_size(D2DrlgAct *act, int32_t level_index, int32_t *w, i
  * if it fits. Returns the byte length (>=0; may exceed `cap` => truncated), or negative on
  * error. Length 0 for an unknown id.
  */
+/* The 0-based act a level belongs to, or -1 if unknown. A table lookup; generates nothing. */
+int32_t d2drlg_level_act(D2DrlgCtx *ctx, int32_t level_id);
+
 int32_t d2drlg_level_name(D2DrlgCtx *ctx, int32_t level_id, char *buf, int32_t cap);
 
 /*
