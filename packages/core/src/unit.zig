@@ -61,6 +61,13 @@ pub const Collision = struct {
         return .{ .stamp = .{ .shape = .small_none }, .flag = collision.Colbit.player, .path_mask = 0 };
     }
 
+    /// The same profile after the unit dies: it keeps its class bit so a corpse can still be found
+    /// by a search, marks only the ground it lies on, and collides with nothing. `corpse()` is this
+    /// applied to a player.
+    pub fn dead(self: Collision) Collision {
+        return .{ .stamp = .{ .shape = .small_none }, .flag = self.flag, .path_mask = 0 };
+    }
+
     /// `AllocDynamicPath` for a monster: `nCollisionFlag = 0x100`, and the path mask comes from
     /// MonStats via `monsterPathMask`.
     ///
@@ -103,6 +110,18 @@ pub const Collision = struct {
         return .{ .stamp = .{ .width = sizeOf(size_x) }, .flag = collision.Colbit.wall, .path_mask = 0 };
     }
 };
+
+/// The collision profile a unit of `unit_type` gets before anything looks up its real size.
+pub fn defaultCollision(unit_type: UnitType) Collision {
+    return switch (unit_type) {
+        .player => Collision.player(1),
+        .monster => Collision.monster(1, false, .{}),
+        .object => Collision.object(1, 1, .{}),
+        .item => Collision.item(1),
+        .missile => Collision.missile(collision.Colmask.missile_flight),
+        else => .{},
+    };
+}
 
 /// `GetUnitSizeX`'s 0..3 result as the enum. Out of range is the engine's own fallback in
 /// `AddCollision_Width`, which does nothing for a size it does not recognise.
@@ -213,11 +232,20 @@ pub const Unit = struct {
     /// True while a burrowing monster (SandRaider / SandMaggot) is UNDERGROUND: it cannot be targeted
     /// or hit until it surfaces (the server-side stand-in for its invulnerable submerged phase).
     submerged: bool = false,
+    /// What this unit writes into the collision grid and what stops it when it moves. The engine
+    /// assigns it once, when the unit's path is allocated, and reads it for the rest of the unit's
+    /// life — so it belongs on the unit, not recomputed at every collision test.
+    collision: Collision = .{},
     stats: stat.StatList = .{},
     weapon: Weapon = .{},
 
+    /// A unit of `unit_type` with the collision profile its type implies. The footprint is the
+    /// smallest one, because the real `GetUnitSizeX` comes from a table the caller has and this
+    /// does not — a host that knows the row assigns the exact profile straight after. What matters
+    /// is that no unit starts out colliding with NOTHING: a zero path mask means walls are
+    /// passable, and that is never what a caller who forgot to fill this in meant.
     pub fn init(unit_type: UnitType) Unit {
-        return .{ .unit_type = unit_type };
+        return .{ .unit_type = unit_type, .collision = defaultCollision(unit_type) };
     }
 
     /// A summoned minion (skeleton / golem / valkyrie / …): a monster carrying a summoner's owner_id.

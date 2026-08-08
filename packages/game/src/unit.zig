@@ -4,6 +4,8 @@
 const unit = @import("d2-core").unit;
 
 pub const Unit = unit.Unit;
+pub const Collision = unit.Collision;
+pub const MonsterOpts = unit.MonsterOpts;
 pub const UnitType = unit.UnitType;
 pub const Weapon = unit.Weapon;
 pub const applyItemStats = unit.applyItemStats;
