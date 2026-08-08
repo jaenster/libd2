@@ -106,6 +106,100 @@ pub inline fn walkable(v: u16) bool {
     return (v & (Colbit.wall | Colbit.noplayer | Colbit.object)) == 0 and v != VOID;
 }
 
+/// `eD2CollisionUnitSize` — how much of the grid a unit's shape covers. Values are the engine's,
+/// so a host that already carries `D2DynamicPathStrc.nUnitSize` casts it straight across.
+pub const Size = enum(u8) {
+    none = 0,
+    /// The cell alone.
+    point = 1,
+    /// The cell plus its four cardinal neighbours — `CheckCollision_Cross` (0x64d100).
+    small = 2,
+    /// `[x-1, x+1] x [y-1, y+1]` — `CheckCollision_BoundingBox1` (0x64d4a0).
+    big = 3,
+};
+
+/// `eD2CollisionShapeType` — the whole stamp a unit writes into the grid: a footprint painted with
+/// the unit's class flag, and one rank inside it a PRESENCE bit. Read off the jump table of
+/// `AddCollision_Type` (0x64ea90); `RemoveCollision_Type` (0x64ec10) undoes exactly the same.
+///
+/// The presence bit is what makes units block each other, and it is the reason `Colmask.player_path`
+/// (0x1c09) contains neither `player` nor `monster`. Units collide through `nopath` (0x1000) — or
+/// `pet` (0x2000), which only `Colmask.monster_path` tests, so a player walks through his own
+/// minions and a monster does not. The class bits exist so that ASKING what is on a cell is one
+/// array read, not so that movement can test them.
+pub const Shape = enum(u8) {
+    /// `COLLISION_PATTERN_NONE`: writes nothing. What a unit with `SizeX` 0 gets.
+    none = 0,
+    small_unit = 1,
+    big_unit = 2,
+    small_pet = 3,
+    big_pet = 4,
+    /// A small unit that claims no ground: the cross gets the class flag and no presence bit, so
+    /// nothing paths around it. Items, and a player's corpse (`SetUnitWidth(pUnit, 5)` in
+    /// `Player.cpp` when the death animation starts).
+    small_none = 5,
+
+    /// The footprint the class flag is painted over.
+    pub fn footprint(self: Shape) Size {
+        return switch (self) {
+            .none => .none,
+            .small_unit, .small_pet, .small_none => .small,
+            .big_unit, .big_pet => .big,
+        };
+    }
+
+    /// The presence bit and the footprint it is painted over — always one rank smaller than the
+    /// class footprint. Null where the shape claims no ground.
+    pub fn presence(self: Shape) ?struct { bit: u16, over: Size } {
+        return switch (self) {
+            .none, .small_none => null,
+            .small_unit => .{ .bit = Colbit.nopath, .over = .point },
+            .big_unit => .{ .bit = Colbit.nopath, .over = .small },
+            .small_pet => .{ .bit = Colbit.pet, .over = .point },
+            .big_pet => .{ .bit = Colbit.pet, .over = .small },
+        };
+    }
+};
+
+/// The bits every ground-claiming shape writes. Drop them from a path mask to get that mask's
+/// TERRAIN-only answer, which is how a caller asks for a route that ignores who is standing where.
+pub const PRESENCE_BITS: u16 = Colbit.nopath | Colbit.pet;
+
+/// What a unit paints into the grid, and how. `PATH_AddUnitCollision` (0x649390) picks one of
+/// exactly three, on unit type alone — everything else about the stamp is the flag it carries.
+pub const Stamp = union(enum) {
+    /// `AddCollision_Type` (0x64ea90). Players and monsters: a footprint plus a presence bit.
+    shape: Shape,
+    /// `AddCollision_Width` (0x64ea00). Missiles, items and warps: a bare footprint, no presence
+    /// bit, so nothing paths around them.
+    width: Size,
+    /// `AddCollision_Vector` (0x64de30). Objects, whose extent is a `w x h` rectangle out of
+    /// Objects.txt rather than one of the three unit footprints:
+    ///
+    ///     left = x - w/2   right = left + w - 1
+    ///     bottom = y - h/2 top   = bottom + h - 1
+    ///
+    /// which is biased toward -x/-y on an even size, and degenerates to the single cell at 1x1.
+    box: struct { w: i32, h: i32 },
+};
+
+/// The cells a `Size` covers, relative to its centre.
+pub fn cellsOf(size: Size) []const [2]i32 {
+    const point = [_][2]i32{.{ 0, 0 }};
+    const small = [_][2]i32{ .{ 0, 0 }, .{ -1, 0 }, .{ 1, 0 }, .{ 0, -1 }, .{ 0, 1 } };
+    const big = [_][2]i32{
+        .{ -1, -1 }, .{ 0, -1 }, .{ 1, -1 },
+        .{ -1, 0 },  .{ 0, 0 },  .{ 1, 0 },
+        .{ -1, 1 },  .{ 0, 1 },  .{ 1, 1 },
+    };
+    return switch (size) {
+        .none => &.{},
+        .point => &point,
+        .small => &small,
+        .big => &big,
+    };
+}
+
 const std = @import("std");
 const testing = std.testing;
 

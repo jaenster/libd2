@@ -42,13 +42,20 @@
 const std = @import("std");
 
 pub const grid = @import("grid.zig");
-pub const rooms = @import("rooms.zig");
+pub const nav = @import("nav.zig");
 pub const astar = @import("astar.zig");
 pub const teleport = @import("teleport.zig");
-pub const portals = @import("portals.zig");
 pub const cast = @import("cast.zig");
-pub const level = @import("level.zig");
-pub const world = @import("world.zig");
+pub const router = @import("router.zig");
+
+/// The map itself — levels, rooms, exits, and the units standing on them — re-exported from
+/// d2-world so a consumer that only routes needs one import. Everything here searches OVER that;
+/// nothing here owns it.
+pub const world = @import("d2-world");
+pub const rooms = world.rooms;
+pub const portals = world.portals;
+pub const level = world.level;
+pub const occupancy = world.occupancy;
 
 /// The collision bit/mask vocabulary, re-exported from d2-core so a consumer needs one import.
 pub const collision = @import("d2-core").collision;
@@ -56,16 +63,23 @@ pub const Colbit = collision.Colbit;
 pub const Colmask = collision.Colmask;
 
 pub const World = world.World;
-pub const Route = world.Route;
-pub const Leg = world.Leg;
-pub const Move = world.Move;
-pub const Pos = world.Pos;
-pub const Options = world.Options;
-pub const Level = level.Level;
-pub const Exit = level.Exit;
-pub const Door = level.Door;
-pub const RouteDoor = world.RouteDoor;
-pub const TeleportRule = level.TeleportRule;
+pub const Router = router.Router;
+pub const Nav = nav.Nav;
+pub const Route = router.Route;
+pub const Leg = router.Leg;
+pub const Move = router.Move;
+pub const Pos = router.Pos;
+pub const Options = router.Options;
+pub const Level = world.Level;
+pub const Exit = world.Exit;
+pub const Door = world.Door;
+pub const RouteDoor = router.RouteDoor;
+pub const TeleportRule = world.TeleportRule;
+pub const Occupancy = world.Occupancy;
+pub const Occupant = world.Occupant;
+pub const UnitCollision = world.UnitCollision;
+pub const TerrainEdit = world.TerrainEdit;
+pub const Rect = world.Rect;
 pub const Point = grid.Point;
 pub const Pather = astar.Pather;
 pub const LineOfSight = cast.LineOfSight;
@@ -85,11 +99,9 @@ pub const SAFE_COMMAND_STEP = grid.SAFE_COMMAND_STEP;
 test {
     _ = @import("tests.zig");
     _ = grid;
-    _ = rooms;
+    _ = nav;
     _ = astar;
     _ = teleport;
-    _ = portals;
     _ = cast;
-    _ = level;
-    _ = world;
+    _ = router;
 }

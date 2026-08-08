@@ -14,6 +14,7 @@
 const std = @import("std");
 const pf = @import("lib.zig");
 const drlg = @import("d2-drlg");
+const core = @import("d2-core");
 
 const pa = std.heap.page_allocator;
 
@@ -30,10 +31,16 @@ pub const D2PfOptions = extern struct {
     snap_radius: i32,
 };
 
-/// Opaque routing world. Holds the generation context it was handed, because `loadAct` needs it
-/// on every call and a caller should not have to pass it twice.
+/// Opaque routing world. Owns both halves the ABI presents as one handle: the MAP (d2-world —
+/// levels, collision, the units on them) and the ROUTER over it (d2-pathfinding — the caches and
+/// the searches). They are separate packages because a running game needs the first without the
+/// second; a C caller asking for a route wants both, so this hands out one pointer.
+///
+/// Also holds the generation context it was handed, because `loadAct` needs it on every call and a
+/// caller should not have to pass it twice.
 pub const World = struct {
     inner: pf.World,
+    router: pf.Router,
     ctx: *drlg.Ctx,
 };
 
@@ -84,12 +91,14 @@ export fn d2pf_world_create(ctx: ?*anyopaque, seed: u32, difficulty: i32) ?*Worl
     const diff = diffFromInt(difficulty) orelse return null;
     const c: *drlg.Ctx = @ptrCast(@alignCast(raw));
     const w = pa.create(World) catch return null;
-    w.* = .{ .inner = pf.World.init(pa, seed, diff), .ctx = c };
+    w.* = .{ .inner = pf.World.init(pa, seed, diff), .router = undefined, .ctx = c };
+    w.router = pf.Router.init(pa, &w.inner);
     return w;
 }
 
 export fn d2pf_world_destroy(world: ?*World) void {
     const w = world orelse return;
+    w.router.deinit();
     w.inner.deinit();
     pa.destroy(w);
 }
@@ -115,7 +124,7 @@ export fn d2pf_route(
     opts: ?*const D2PfOptions,
 ) ?*Route {
     const w = world orelse return null;
-    const r = w.inner.route(
+    const r = w.router.route(
         .{ .level = from_level, .x = from_x, .y = from_y },
         .{ .level = to_level, .x = to_x, .y = to_y },
         optsFrom(opts),
@@ -176,7 +185,7 @@ export fn d2pf_level_route(world: ?*World, from: i32, to: i32, out: [*]i32, cap:
     if (cap < 0) return -2;
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(pa);
-    w.inner.levelRoute(from, to, &ids) catch return -3;
+    w.router.levelRoute(from, to, &ids) catch return -3;
     const n = @min(ids.items.len, @as(usize, @intCast(cap)));
     var i: usize = 0;
     while (i < n) : (i += 1) out[i] = ids.items[i];
@@ -185,9 +194,9 @@ export fn d2pf_level_route(world: ?*World, from: i32, to: i32, out: [*]i32, cap:
 
 /// The pass map a walking player uses, or the caller's own mask when non-zero.
 fn passMapOf(w: *World, level_id: i32, mask: u16) ?*pf.grid.PassMap {
-    const lv = w.inner.level(level_id) orelse return null;
+    const nv = w.router.nav(level_id) catch return null;
     const m = if (mask == 0) pf.Colmask.player_path else mask;
-    return lv.passMap(m) catch null;
+    return nv.passMap(m) catch null;
 }
 
 export fn d2pf_walkable(world: ?*World, level_id: i32, x: i32, y: i32) i32 {
@@ -199,8 +208,9 @@ export fn d2pf_walkable(world: ?*World, level_id: i32, x: i32, y: i32) i32 {
 
 export fn d2pf_line_of_sight(world: ?*World, level_id: i32, from_x: i32, from_y: i32, to_x: i32, to_y: i32, mask: u16) i32 {
     const w = world orelse return -1;
-    const pm = passMapOf(w, level_id, mask) orelse return -2;
-    return if (pf.grid.hasLineOfSight(pm, .{ .x = from_x, .y = from_y }, .{ .x = to_x, .y = to_y })) 1 else 0;
+    const lv = w.inner.level(level_id) orelse return -2;
+    const m = if (mask == 0) pf.Colmask.player_path else mask;
+    return if (lv.hasLineOfSight(.{ .x = from_x, .y = from_y }, .{ .x = to_x, .y = to_y }, m)) 1 else 0;
 }
 
 export fn d2pf_nearest_passable(world: ?*World, level_id: i32, x: i32, y: i32, radius: i32, out_x: ?*i32, out_y: ?*i32) i32 {
@@ -212,6 +222,54 @@ export fn d2pf_nearest_passable(world: ?*World, level_id: i32, x: i32, y: i32, r
     return 1;
 }
 
+/// Put a unit on a level, or move one already there. `unit_type` is `eD2UnitType`
+/// (0 player, 1 monster, 2 object, 4 item, 5 room tile) and `size_x` its `GetUnitSizeX`; between
+/// them they decide the stamp and the collision bit, exactly as the engine does when it allocates
+/// the unit's path. Every query on that level — walkability, routing, line of sight, teleport
+/// landings — sees it from the next call on.
+export fn d2pf_unit_place(world: ?*World, level_id: i32, unit_id: u32, unit_type: u8, size_x: i32, x: i32, y: i32) i32 {
+    const w = world orelse return -1;
+    const lv = w.inner.level(level_id) orelse return -2;
+    const uc: pf.UnitCollision = switch (@as(core.unit.UnitType, @enumFromInt(unit_type))) {
+        .player => .player(size_x),
+        .monster => .monster(size_x, false, .{}),
+        .item => .item(size_x),
+        .roomtile => .roomtile(size_x),
+        // An object's flags come out of Objects.txt, which this ABI does not carry; the plain
+        // blocking object is the useful default and the only one a caller can mean here.
+        .object => .object(size_x, size_x, .{}),
+        else => return -4,
+    };
+    lv.addUnit(unit_id, .{ .x = x, .y = y }, uc) catch return -3;
+    return 0;
+}
+
+/// Take a unit off a level, restoring every cell it covered.
+export fn d2pf_unit_lift(world: ?*World, level_id: i32, unit_id: u32) i32 {
+    const w = world orelse return -1;
+    const lv = w.inner.level(level_id) orelse return -2;
+    lv.removeUnit(unit_id);
+    return 0;
+}
+
+/// Empty a level's live world — leaving the game, or resyncing from scratch.
+export fn d2pf_units_clear(world: ?*World, level_id: i32) i32 {
+    const w = world orelse return -1;
+    const lv = w.inner.level(level_id) orelse return -2;
+    lv.clearUnits();
+    return 0;
+}
+
+/// Terrain itself changed over an inclusive subtile rectangle — a door opened, a barrier dropped.
+/// `add`/`remove` are raw COLBIT masks. Rare and expensive next to `d2pf_unit_place`: it rewrites
+/// the level's grid and drops the caches derived from it.
+export fn d2pf_terrain_edit(world: ?*World, level_id: i32, x0: i32, y0: i32, x1: i32, y1: i32, add: u16, remove: u16) i32 {
+    const w = world orelse return -1;
+    const lv = w.inner.level(level_id) orelse return -2;
+    _ = lv.editTerrain(.{ .x0 = x0, .y0 = y0, .x1 = x1, .y1 = y1 }, .{ .add = add, .remove = remove });
+    return 0;
+}
+
 export fn d2pf_abi_version() u32 {
-    return 1;
+    return 2;
 }

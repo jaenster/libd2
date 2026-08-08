@@ -1,7 +1,7 @@
 #pragma once
 /*
  * d2drlg — C ABI for the faithful D2 1.14d map-generation (DRLG) engine.
- * ABI version 3. See d2drlg_abi_version().
+ * ABI version 5. See d2drlg_abi_version().
  *
  * Generates an entire act's room layout (byte-exact seeds/placement where ported)
  * and, optionally, a composited subtile-collision grid per level.
@@ -58,6 +58,22 @@ void d2drlg_ctx_destroy(D2DrlgCtx *ctx);
  */
 D2DrlgAct *d2drlg_gen_act(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty, int32_t act_no);
 
+/*
+ * Generate ONE level: the act's cheap placement pass (every level's world coords + preset picks
+ * + inter-level orths) and then room generation for level_id alone, instead of all 39 levels of
+ * Act I. difficulty: 0=normal 1=nightmare 2=hell. Returns an act handle holding exactly that one
+ * level (free with d2drlg_act_free) or NULL on error, so every d2drlg_act_* accessor reads it at
+ * level_index 0 — a single-level generation is just an act of one, not a second kind of handle.
+ *
+ * Rooms, presets and the RAW CollMap are byte-identical to the level's entry in a whole-act
+ * d2drlg_gen_act, with two measured exceptions, both needing a level this cannot see: adjacents
+ * carry only the per-room WARP doors, never the cross-level SEAM bridges (geometry against a
+ * NEIGHBOUR level's placed rooms), and Act III's Great Marsh (77) / Flayer Jungle (78) — whose
+ * collision is stitched across their shared border — differ in cell content. Use d2drlg_gen_act
+ * when either matters.
+ */
+D2DrlgAct *d2drlg_gen_level(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty, int32_t level_id);
+
 /* Frees a generated-act handle (NULL-safe). */
 void d2drlg_act_free(D2DrlgAct *act);
 
@@ -102,7 +118,10 @@ int32_t d2drlg_level_name(D2DrlgCtx *ctx, int32_t level_id, char *buf, int32_t c
  * bytes into `out` and always sets *out_w / *out_h to the FULL grid dims. Returns
  * the FULL cell count (w*h, may exceed `cap` => truncated), 0 if the level has no
  * collision grid, or a negative error code. NOTE: regenerates the whole act
- * internally, so it is not cheap.
+ * internally, so it is not cheap — and stays act-wide on purpose: a level's collision is
+ * stitched across its border with its neighbours, so generating alone changes the cells of
+ * Act III's Great Marsh (77) and Flayer Jungle (78). For the cheap single-level grid, use
+ * d2drlg_gen_level + d2drlg_act_level_collision.
  */
 int32_t d2drlg_level_collision(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
                                int32_t level_id, uint8_t *out, int32_t cap,
@@ -189,8 +208,11 @@ typedef struct D2DrlgAdjacent {
  * Generate an act and write up to `cap` of a level's WARP/ADJACENCY BRIDGE TILES (one
  * per set warp slot of every warp-flagged room whose destination resolves) into `out`.
  * Bridge coords are level-LOCAL subtiles (the DBM frame). Returns the FULL count (>=0,
- * may exceed `cap` => truncated), or a negative error code. NOTE: regenerates the whole
- * act internally, so it is not cheap.
+ * may exceed `cap` => truncated), or a negative error code. NOTE: regenerates the whole act
+ * internally, and cannot do otherwise — an adjacency is a relation between TWO levels, and the
+ * cross-level SEAM bridges are geometry against a neighbour level's placed rooms. Generating the
+ * level alone drops them: measured, that changes the list for 38 of the 136 levels, including all
+ * 6 of Act IV. d2drlg_gen_level + d2drlg_act_level_adjacents is the warp-doors-only view.
  */
 int32_t d2drlg_level_adjacents(D2DrlgCtx *ctx, uint32_t seed, int32_t difficulty,
                                int32_t level_id, D2DrlgAdjacent *out, int32_t cap);
@@ -248,7 +270,23 @@ int32_t d2drlg_deflate_zlib(const uint8_t *in, int32_t in_len, uint8_t *out, int
 int32_t d2drlg_object_name(int32_t txt_file_no, char *buf, int32_t cap);
 int32_t d2drlg_object_desc(int32_t txt_file_no, char *buf, int32_t cap);
 
-/* Returns the ABI version (currently 3). */
+/*
+ * Writes up to `cap` uint32 heap counters into `out` and returns how many exist (5), so a caller
+ * can size the buffer by calling with cap 0. `out` may be NULL when cap is 0. In order:
+ *
+ *   [0] obtained     bytes the heap has ever taken from the system. On wasm this NEVER falls
+ *                    (memory.grow is one-way), so it IS the module's footprint.
+ *   [1] live         bytes currently handed out.
+ *   [2] free_bytes   bytes held but not in use (obtained - live).
+ *   [3] spans        number of distinct free regions; many small ones means fragmentation.
+ *   [4] largest_free the biggest single free region.
+ *
+ * Only the wasm build tracks its heap. Native builds use the platform allocator, which reports
+ * nothing, so every counter is 0 there rather than a number that looks real.
+ */
+int32_t d2drlg_heap_usage(uint32_t *out, int32_t cap);
+
+/* Returns the ABI version (currently 5). */
 uint32_t d2drlg_abi_version(void);
 
 #ifdef __cplusplus

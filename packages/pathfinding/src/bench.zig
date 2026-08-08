@@ -70,10 +70,10 @@ const Spans = struct {
 
     /// Mean clearance of the cells a route's waypoints sit on, plus how many touch a wall. This is
     /// what wall aversion is supposed to move.
-    fn addClearance(self: *Spans, world: *pf.World, r: *const pf.Route, mask: u16) !void {
+    fn addClearance(self: *Spans, world: *pf.World, rt: *pf.Router, r: *const pf.Route, mask: u16) !void {
         for (r.legs) |leg| {
             const lv = world.level(leg.level) orelse continue;
-            const pm = try lv.passMap(mask);
+            const pm = try (try rt.navFor(lv)).passMap(mask);
             const cl = pm.clearance();
             for (leg.moves) |m| {
                 if (!pm.inBounds(m.x, m.y)) continue;
@@ -161,16 +161,16 @@ fn isWaypoint(id: i32) bool {
 }
 
 /// The passable cell nearest a level's centre — a stable endpoint that exists on every level.
-fn centreOf(alloc: std.mem.Allocator, lv: *pf.Level) !pf.Point {
+fn centreOf(alloc: std.mem.Allocator, rt: *pf.Router, lv: *pf.Level) !pf.Point {
     _ = alloc;
-    const pm = try lv.passMap(pf.Colmask.player_path);
+    const pm = try (try rt.navFor(lv)).passMap(pf.Colmask.player_path);
     return pf.grid.nearestPassable(pm, @divTrunc(lv.w, 2), @divTrunc(lv.h, 2), @max(lv.w, lv.h)) orelse
         error.NoPassableCell;
 }
 
 /// First and last passable cell of the level's largest connected region, in row-major order.
-fn extremes(alloc: std.mem.Allocator, lv: *pf.Level, mask: u16) !?[2]pf.Point {
-    const pm = try lv.passMap(mask);
+fn extremes(alloc: std.mem.Allocator, rt: *pf.Router, lv: *pf.Level, mask: u16) !?[2]pf.Point {
+    const pm = try (try rt.navFor(lv)).passMap(mask);
     const comp = try pm.components(alloc);
     if (pm.comp_count == 0) return null;
 
@@ -253,10 +253,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const s = seed +% i *% 0x9e3779b1;
             var w = pf.World.init(gpa, s, .normal);
             defer w.deinit();
+            var w_rt = pf.Router.init(gpa, &w);
+            defer w_rt.deinit();
             try w.loadAct(&ctx, act);
             chain.clearRetainingCapacity();
             print("0x{x:0>8}", .{s});
-            if (w.levelRoute(chains_from, chains_to, &chain)) |_| {
+            if (w_rt.levelRoute(chains_from, chains_to, &chain)) |_| {
                 for (chain.items) |c| print(" {d}", .{u(c)});
             } else |e| {
                 print(" FAIL {s}", .{@errorName(e)});
@@ -271,12 +273,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (viz_mode) {
         var world = pf.World.init(gpa, seed, .normal);
         defer world.deinit();
+        var world_rt = pf.Router.init(gpa, &world);
+        defer world_rt.deinit();
         try world.loadAct(&ctx, act);
         const lv = world.level(viz_level) orelse {
             print("level {d} not in this act\n", .{u(viz_level)});
             return;
         };
-        const pm = try lv.passMap(pf.Colmask.player_path);
+        const pm = try (try world_rt.navFor(lv)).passMap(pf.Colmask.player_path);
 
         var x0: i32 = lv.w;
         var y0: i32 = lv.h;
@@ -326,7 +330,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
         const from = pf.grid.nearestPassable(pm, start.?.x, start.?.y, 48) orelse return;
         const to = pf.grid.nearestPassable(pm, goal.?.x, goal.?.y, 48) orelse return;
-        var r = try world.route(
+        var r = try world_rt.route(
             .{ .level = lv.id, .x = from.x, .y = from.y },
             .{ .level = lv.id, .x = to.x, .y = to.y },
             .{},
@@ -334,7 +338,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         defer r.deinit();
         // The same route with wall aversion switched off, so the two can be compared directly
         // instead of the aversion being taken on trust.
-        var raw = try world.route(
+        var raw = try world_rt.route(
             .{ .level = lv.id, .x = from.x, .y = from.y },
             .{ .level = lv.id, .x = to.x, .y = to.y },
             .{ .wall_aversion = .{ .weight = 0 } },
@@ -464,6 +468,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var timer = Timer.begin();
     var world = pf.World.init(gpa, seed, .normal);
     defer world.deinit();
+    var world_rt = pf.Router.init(gpa, &world);
+    defer world_rt.deinit();
     if (game_mode) {
         for (0..5) |a| try world.loadAct(&ctx, @intCast(a));
     } else {
@@ -480,11 +486,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     {
         var links: usize = 0;
         var usable: usize = 0;
-        for (world.levels.items) |*lv| {
+        for (world.levels.items) |lv| {
             links += lv.links.len;
-            for (world.levels.items) |*other| {
+            for (world.levels.items) |other| {
                 if (other.id == lv.id) continue;
-                if ((try pf.World.crossLevelCast(lv, other, .{})) != null) usable += 1;
+                if ((try world_rt.crossLevelCast(lv, other, .{})) != null) usable += 1;
             }
         }
         print("cross-level room links: {d}; level pairs a cast can bridge: {d}\n\n", .{ links, usable });
@@ -494,7 +500,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // to. Separates "placed wrong" from "placed right but never stitched".
     if (objs_mode and objs_level == 0) {
         print("  lvl   origin(tiles)   size(tiles)   exits\n", .{});
-        for (world.levels.items) |*lv| {
+        for (world.levels.items) |lv| {
             print("  {d:3}  ({d:5},{d:5})  {d:4}x{d:<4}  ", .{
                 u(lv.id), u(lv.origin_x), u(lv.origin_y), u(lv.tileW()), u(lv.tileH()),
             });
@@ -502,8 +508,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             print("\n", .{});
         }
         print("\n  geometric adjacency (bbox gap < 6 tiles on both axes = the seam rule):\n", .{});
-        for (world.levels.items) |*a| {
-            for (world.levels.items) |*b| {
+        for (world.levels.items) |a| {
+            for (world.levels.items) |b| {
                 if (b.id <= a.id) continue;
                 const ax1 = a.origin_x + a.tileW();
                 const ay1 = a.origin_y + a.tileH();
@@ -536,7 +542,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const text = @import("d2-data").file("Objects");
         // Component of the walkable region each object sits in (or the nearest walkable cell to
         // it): two objects with different labels are not reachable from one another on foot.
-        const opm = try lv.passMap(pf.Colmask.player_path);
+        const opm = try (try world_rt.navFor(lv)).passMap(pf.Colmask.player_path);
         const ocomp = try opm.components(gpa);
         print("level {d} ({d}x{d}) preset objects, {d} walkable regions, {d} pads:\n", .{ u(objs_level), u(lv.w), u(lv.h), opm.comp_count, lv.pads.len });
         for (lv.presets) |unit| {
@@ -596,7 +602,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         var ok = true;
         for (STAGES) |st| {
             chain.clearRetainingCapacity();
-            world.levelRoute(stage_from, st.to, &chain) catch |e| {
+            world_rt.levelRoute(stage_from, st.to, &chain) catch |e| {
                 print("  {s:<30} UNREACHABLE ({s})\n", .{ st.name, @errorName(e) });
                 ok = false;
                 stage_from = st.to;
@@ -618,8 +624,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             var tele_moves: usize = 0;
             var stage_start: i32 = 1;
             for (STAGES) |st| {
-                const a = centreOf(gpa, world.level(stage_start) orelse continue) catch continue;
-                const b = centreOf(gpa, world.level(st.to) orelse continue) catch continue;
+                const a = centreOf(gpa, &world_rt, world.level(stage_start) orelse continue) catch continue;
+                const b = centreOf(gpa, &world_rt, world.level(st.to) orelse continue) catch continue;
 
                 var wns: u64 = 0;
                 var tns: u64 = 0;
@@ -628,7 +634,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 var walk_ok = false;
                 var tele_ok = false;
                 timer.reset();
-                if (world.route(.{ .level = stage_start, .x = a.x, .y = a.y }, .{ .level = st.to, .x = b.x, .y = b.y }, .{})) |r| {
+                if (world_rt.route(.{ .level = stage_start, .x = a.x, .y = a.y }, .{ .level = st.to, .x = b.x, .y = b.y }, .{})) |r| {
                     wns = timer.read();
                     var rr = r;
                     wm = rr.moveCount() - rr.legs.len;
@@ -636,7 +642,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     walk_ok = true;
                 } else |_| {}
                 timer.reset();
-                if (world.route(.{ .level = stage_start, .x = a.x, .y = a.y }, .{ .level = st.to, .x = b.x, .y = b.y }, .{ .teleport = true })) |r| {
+                if (world_rt.route(.{ .level = stage_start, .x = a.x, .y = a.y }, .{ .level = st.to, .x = b.x, .y = b.y }, .{ .teleport = true })) |r| {
                     tns = timer.read();
                     var rr = r;
                     tm = rr.moveCount() - rr.legs.len;
@@ -671,7 +677,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
         // And the single end-to-end question.
         chain.clearRetainingCapacity();
-        if (world.levelRoute(1, 132, &chain)) {
+        if (world_rt.levelRoute(1, 132, &chain)) {
             var acts_seen: [6]bool = @splat(false);
             for (chain.items) |id| {
                 const a: usize = if (id <= 39) 1 else if (id <= 74) 2 else if (id <= 102) 3 else if (id <= 108) 4 else 5;
@@ -754,7 +760,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             print("\n  link probe:\n", .{});
             for (PROBES) |pr| {
                 chain.clearRetainingCapacity();
-                if (world.levelRoute(pr[0], pr[1], &chain)) {
+                if (world_rt.levelRoute(pr[0], pr[1], &chain)) {
                     print("    {d:3} -> {d:3}  ok ({d} levels)\n", .{ u(pr[0]), u(pr[1]), chain.items.len });
                 } else |_| {
                     print("    {d:3} -> {d:3}  BROKEN\n", .{ u(pr[0]), u(pr[1]) });
@@ -810,7 +816,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             sx += p.x;
             sy += p.y;
         }
-        const cpm = try chaos.passMap(pf.Colmask.player_path);
+        const cpm = try (try world_rt.navFor(chaos)).passMap(pf.Colmask.player_path);
         const star = pf.grid.nearestPassable(
             cpm,
             @intCast(@divTrunc(sx, @as(i64, @intCast(seals.items.len)))),
@@ -842,7 +848,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             // Leg 1: waypoint -> Chaos Sanctuary (crosses the level boundary).
             timer.reset();
-            var r0 = try world.route(
+            var r0 = try world_rt.route(
                 .{ .level = RIVER_OF_FLAME, .x = wp.?.x, .y = wp.?.y },
                 .{ .level = CHAOS_SANCTUM, .x = star.x, .y = star.y },
                 v.opts,
@@ -852,7 +858,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             moves += r0.moveCount();
             print("    wp -> chaos star   {d:4} moves  {d:8.1} us\n", .{ r0.moveCount(), @as(f64, @floatFromInt(ns)) / 1e3 });
             spans.add(&r0, gate);
-            try spans.addClearance(&world, &r0, v.opts.mask);
+            try spans.addClearance(&world, &world_rt, &r0, v.opts.mask);
             legs += r0.legs.len;
             if (show_spans) Spans.dump(&r0, "wp->star");
             r0.deinit();
@@ -862,7 +868,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             for (seals.items, 0..) |seal, i| {
                 const target = pf.grid.nearestPassable(cpm, seal.x, seal.y, 40) orelse continue;
                 timer.reset();
-                var r = world.route(
+                var r = world_rt.route(
                     .{ .level = CHAOS_SANCTUM, .x = prev.x, .y = prev.y },
                     .{ .level = CHAOS_SANCTUM, .x = target.x, .y = target.y },
                     v.opts,
@@ -872,7 +878,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 moves += r.moveCount();
                 print("    -> seal {d}          {d:4} moves  {d:8.1} us\n", .{ i + 1, r.moveCount(), @as(f64, @floatFromInt(ns)) / 1e3 });
                 spans.add(&r, gate);
-                try spans.addClearance(&world, &r, v.opts.mask);
+                try spans.addClearance(&world, &world_rt, &r, v.opts.mask);
                 legs += r.legs.len;
                 if (show_spans) Spans.dump(&r, "->seal");
                 r.deinit();
@@ -880,7 +886,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
 
             timer.reset();
-            var rb = try world.route(
+            var rb = try world_rt.route(
                 .{ .level = CHAOS_SANCTUM, .x = prev.x, .y = prev.y },
                 .{ .level = CHAOS_SANCTUM, .x = star.x, .y = star.y },
                 v.opts,
@@ -890,7 +896,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             moves += rb.moveCount();
             print("    -> star (Diablo)   {d:4} moves  {d:8.1} us\n", .{ rb.moveCount(), @as(f64, @floatFromInt(ns)) / 1e3 });
             spans.add(&rb, gate);
-            try spans.addClearance(&world, &rb, v.opts.mask);
+            try spans.addClearance(&world, &world_rt, &rb, v.opts.mask);
             legs += rb.legs.len;
             if (show_spans) Spans.dump(&rb, "->star");
             rb.deinit();
@@ -918,11 +924,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         var prng = std.Random.DefaultPrng.init(0xB07);
         const rnd = prng.random();
 
-        const start = try centreOf(gpa, world.level(run_from) orelse {
+        const start = try centreOf(gpa, &world_rt, world.level(run_from) orelse {
             print("level {d} not in this act\n", .{u(run_from)});
             return;
         });
-        const goal = try centreOf(gpa, world.level(run_to) orelse {
+        const goal = try centreOf(gpa, &world_rt, world.level(run_to) orelse {
             print("level {d} not in this act\n", .{u(run_to)});
             return;
         });
@@ -938,7 +944,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             var steps: usize = 0;
 
             timer.reset();
-            var full = try world.route(
+            var full = try world_rt.route(
                 .{ .level = run_from, .x = start.x, .y = start.y },
                 .{ .level = run_to, .x = goal.x, .y = goal.y },
                 v.opts,
@@ -950,7 +956,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             for (full.legs) |leg| {
                 const lv = world.level(leg.level) orelse continue;
-                const pm = try lv.passMap(v.opts.mask);
+                const pm = try (try world_rt.navFor(lv)).passMap(v.opts.mask);
                 const leg_end = if (leg.moves.len != 0) leg.moves[leg.moves.len - 1] else continue;
 
                 for (leg.moves, 0..) |m, mi| {
@@ -963,7 +969,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     const ty = m.y + @as(i32, @intFromFloat(@sin(ang) * 120.0));
                     if (pm.inBounds(tx, ty) and pm.passable(tx, ty)) {
                         timer.reset();
-                        if (world.route(
+                        if (world_rt.route(
                             .{ .level = leg.level, .x = m.x, .y = m.y },
                             .{ .level = leg.level, .x = tx, .y = ty },
                             v.opts,
@@ -980,7 +986,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     // Re-path to the end of this leg every few waypoints: the bot has drifted.
                     if (mi % 3 != 0) continue;
                     timer.reset();
-                    if (world.route(
+                    if (world_rt.route(
                         .{ .level = leg.level, .x = m.x, .y = m.y },
                         .{ .level = leg.level, .x = leg_end.x, .y = leg_end.y },
                         v.opts,
@@ -1014,7 +1020,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             print("level {d} not in this act\n", .{u(near_level)});
             return;
         };
-        const pm = try lv.passMap(pf.Colmask.player_path);
+        const pm = try (try world_rt.navFor(lv)).passMap(pf.Colmask.player_path);
         const comp = try pm.components(gpa);
 
         // Deterministic pairs: walk the grid with a fixed-seed PRNG, keep pairs that are roughly
@@ -1079,7 +1085,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             var ok: usize = 0;
             for (pairs.items) |pr| {
                 timer.reset();
-                var r = world.route(
+                var r = world_rt.route(
                     .{ .level = near_level, .x = pr[0].x, .y = pr[0].y },
                     .{ .level = near_level, .x = pr[1].x, .y = pr[1].y },
                     v.opts,
@@ -1109,19 +1115,19 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 print("level {d} not in this act\n", .{u(fl)});
                 return;
             };
-            break :f try centreOf(gpa, lv);
+            break :f try centreOf(gpa, &world_rt, lv);
         };
         const dst = f: {
             const lv = world.level(tl) orelse {
                 print("level {d} not in this act\n", .{u(tl)});
                 return;
             };
-            break :f try centreOf(gpa, lv);
+            break :f try centreOf(gpa, &world_rt, lv);
         };
 
         var chain: std.ArrayListUnmanaged(i32) = .empty;
         defer chain.deinit(gpa);
-        try world.levelRoute(fl, tl, &chain);
+        try world_rt.levelRoute(fl, tl, &chain);
         print("route {d} -> {d} via {d} levels: ", .{ u(fl), u(tl), chain.items.len });
         for (chain.items) |id| print("{d} ", .{u(id)});
         print("\n\n", .{});
@@ -1136,7 +1142,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         for (variants) |v| {
             // One warm run first: the first query per level pays for its passability bitset and
             // component labels, and that is a load cost, not a query cost.
-            var warm = try world.route(
+            var warm = try world_rt.route(
                 .{ .level = fl, .x = src.x, .y = src.y },
                 .{ .level = tl, .x = dst.x, .y = dst.y },
                 v.opts,
@@ -1146,7 +1152,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             timer.reset();
             for (0..reps) |_| {
-                var r = try world.route(
+                var r = try world_rt.route(
                     .{ .level = fl, .x = src.x, .y = src.y },
                     .{ .level = tl, .x = dst.x, .y = dst.y },
                     v.opts,
@@ -1167,15 +1173,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var tele_total: u64 = 0;
     var tele_n: usize = 0;
 
-    for (world.levels.items) |*lv| {
-        const ends = (try extremes(gpa, lv, pf.Colmask.player_path)) orelse continue;
+    for (world.levels.items) |lv| {
+        const ends = (try extremes(gpa, &world_rt, lv, pf.Colmask.player_path)) orelse continue;
         const from = pf.Pos{ .level = lv.id, .x = ends[0].x, .y = ends[0].y };
         const to = pf.Pos{ .level = lv.id, .x = ends[1].x, .y = ends[1].y };
 
         print("  {d:3}  {d:4}x{d:<4}  ", .{ u(lv.id), u(lv.w), u(lv.h) });
 
         timer.reset();
-        if (world.route(from, to, .{})) |r| {
+        if (world_rt.route(from, to, .{})) |r| {
             const ns = timer.read();
             var rr = r;
             defer rr.deinit();
@@ -1188,7 +1194,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
 
         timer.reset();
-        if (world.route(from, to, .{ .teleport = true })) |r| {
+        if (world_rt.route(from, to, .{ .teleport = true })) |r| {
             const ns = timer.read();
             var rr = r;
             defer rr.deinit();

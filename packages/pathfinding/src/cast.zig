@@ -10,7 +10,9 @@ const std = @import("std");
 const grid = @import("grid.zig");
 const collision = @import("d2-core").collision;
 const teleport = @import("teleport.zig");
-const Level = @import("level.zig").Level;
+const wd = @import("d2-world");
+const Level = wd.Level;
+const Nav = @import("nav.zig").Nav;
 const Point = grid.Point;
 
 /// The Skills.txt `lineofsight` column (`D2SkillsTxt` +0x18f), which selects WHICH collision mask
@@ -70,29 +72,29 @@ pub const Verdict = enum {
 ///
 /// Teleport has a third gate this does not cover — the destination must be in the caster's room or
 /// one adjacent to it. See `rooms.zig` and `canTeleportTo` below.
-pub fn canCastAt(lv: *Level, from: Point, to: Point, los: LineOfSight, max_cast: i32) !Verdict {
+pub fn canCastAt(nv: *Nav, from: Point, to: Point, los: LineOfSight, max_cast: i32) !Verdict {
     if (@abs(to.x - from.x) > max_cast or @abs(to.y - from.y) > max_cast) return .out_of_range;
     const mask = los.mask() orelse return .no_line_of_sight_rule;
-    const pm = try lv.passMapFor(mask, .point);
-    if (!grid.hasLineOfSight(pm, to, from)) return .no_line_of_sight;
+    if (!nv.lv.hasLineOfSight(to, from, mask)) return .no_line_of_sight;
     return .ok;
 }
 
 /// The ordinary case: a skill with `lineofsight = 5` at the engine's own cast range.
-pub fn canCast(lv: *Level, from: Point, to: Point) !Verdict {
-    return canCastAt(lv, from, to, .barrier, teleport.ENGINE_MAX_CAST);
+pub fn canCast(nv: *Nav, from: Point, to: Point) !Verdict {
+    return canCastAt(nv, from, to, .barrier, teleport.ENGINE_MAX_CAST);
 }
 
 /// Teleport's own three gates: the range check, the room rule (`DRLGROOM_FindBetterNearbyRoom`
 /// resolves the destination room from the caster's adjacency list, so landing outside it fails),
 /// and a landing cell a player may stand on.
-pub fn canTeleportTo(lv: *Level, from: Point, to: Point, max_cast: i32) !bool {
+pub fn canTeleportTo(nv: *Nav, from: Point, to: Point, max_cast: i32) !bool {
+    const lv = nv.lv;
     if (lv.teleport == .forbidden) return false;
     if (@abs(to.x - from.x) > max_cast or @abs(to.y - from.y) > max_cast) return false;
     const from_room = lv.rooms.atSubtile(from.x, from.y) orelse return false;
     const to_room = lv.rooms.atSubtile(to.x, to.y) orelse return false;
     if (!lv.rooms.canTeleportBetween(from_room, to_room)) return false;
-    const pm = try lv.passMapFor(lv.teleport.destinationMask(collision.Colmask.player_path), .point);
+    const pm = try nv.passMapFor(lv.teleport.destinationMask(collision.Colmask.player_path), .point);
     return pm.passable(to.x, to.y);
 }
 
@@ -109,7 +111,7 @@ pub const MAX_UNIT_RADIUS: i32 = 2;
 /// distance is under their sum the units are already close enough that the engine reports no
 /// collision at all; otherwise each endpoint is pulled in by its own radius along the dominant
 /// axis before the segment is traced — you aim at a monster's edge, not its centre.
-pub fn unitsCanReach(pm: *const grid.PassMap, a: Point, a_size: i32, b: Point, b_size: i32) bool {
+pub fn unitsCanReach(lv: *const Level, mask: u16, a: Point, a_size: i32, b: Point, b_size: i32) bool {
     const ra = @min(a_size, MAX_UNIT_RADIUS);
     const rb = @min(b_size, MAX_UNIT_RADIUS);
     const dx: i32 = @intCast(@abs(b.x - a.x));
@@ -143,7 +145,7 @@ pub fn unitsCanReach(pm: *const grid.PassMap, a: Point, a_size: i32, b: Point, b
             }
         }
     }
-    return !grid.trace(pm, .{ .x = ax, .y = ay }, .{ .x = bx, .y = by }).blocked;
+    return !lv.trace(.{ .x = ax, .y = ay }, .{ .x = bx, .y = by }, mask).blocked;
 }
 
 /// A cell you could stand in and attack from.
@@ -181,7 +183,7 @@ pub const AttackOptions = struct {
 /// client and server disagree about where you ended up), then closer. Caller owns the result.
 pub fn attackPositions(
     alloc: std.mem.Allocator,
-    lv: *Level,
+    nv: *Nav,
     target: Point,
     opts: AttackOptions,
 ) ![]Spot {
@@ -189,8 +191,7 @@ pub fn attackPositions(
     errdefer out.deinit(alloc);
 
     const mask = opts.los.mask() orelse return out.toOwnedSlice(alloc);
-    const sight = try lv.passMapFor(mask, .point);
-    const stand = try lv.passMapFor(collision.Colmask.player_path, opts.footprint);
+    const stand = try nv.passMapFor(collision.Colmask.player_path, opts.footprint);
     const clear = stand.clearance();
 
     var y = target.y - opts.max_range;
@@ -201,7 +202,7 @@ pub fn attackPositions(
             if (d < opts.min_range or d > opts.max_range) continue;
             if (!stand.passable(x, y)) continue;
             const at = Point{ .x = x, .y = y };
-            if (!unitsCanReach(sight, target, opts.target_size, at, opts.self_size)) continue;
+            if (!unitsCanReach(nv.lv, mask, target, opts.target_size, at, opts.self_size)) continue;
             try out.append(alloc, .{
                 .at = at,
                 .dist = d,

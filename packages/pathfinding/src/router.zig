@@ -1,35 +1,31 @@
-//! The loaded world: whole acts of levels, their collision, their rooms, and the graph that
-//! connects them — built once, queried many times.
+//! Routing: from anywhere to anywhere across a loaded `d2-world`.
 //!
-//! "Already loaded" is the point. Generating an act is the expensive part of D2 map work (roughly
-//! a second); searching it afterwards is microseconds. So `loadAct` pays that cost once, keeps
-//! every level's grid and room index resident, and every later query is pure search. Loading act 1
-//! and act 2 into the same `World` also means a route from the Rogue Encampment to the Arcane
-//! Sanctuary is a single call — the level graph spans whatever is loaded.
+//! The world says what the map IS; this says how to get across it. A `Router` borrows a
+//! `world.World`, keeps the search caches for the levels it touches (see nav.zig), and answers one
+//! question: give me the moves.
 //!
-//! One act generation supplies everything: `generateActFull` returns each level's rooms, its warp
-//! and seam adjacents, and its composited collision in one pass, so nothing here regenerates.
+//! Three things it gets right that a generic grid A* does not — see lib.zig.
 
 const std = @import("std");
+const wd = @import("d2-world");
 const drlg = @import("d2-drlg");
-const d2data = @import("d2-data");
 const collision = @import("d2-core").collision;
 
 const grid = @import("grid.zig");
-const rooms_mod = @import("rooms.zig");
-const level_mod = @import("level.zig");
+const nav_mod = @import("nav.zig");
 const astar = @import("astar.zig");
 const teleport = @import("teleport.zig");
-const portals = @import("portals.zig");
 
-pub const Level = level_mod.Level;
-pub const Exit = level_mod.Exit;
-pub const Door = level_mod.Door;
-pub const Point = grid.Point;
+pub const World = wd.World;
+pub const Level = wd.Level;
+pub const Exit = wd.Exit;
+pub const Door = wd.Door;
+pub const Point = wd.Point;
+pub const Nav = nav_mod.Nav;
+const rooms_mod = wd.rooms;
+const level_mod = wd.level;
+const portals = wd.portals;
 
-/// A position: a level plus LEVEL-LOCAL subtile coordinates. Level-local rather than world coords
-/// because only levels of the same act share a world frame — this pair is unambiguous everywhere.
-/// `Level.toWorld` converts when a caller needs what a game client would report.
 pub const Pos = struct {
     level: i32,
     x: i32,
@@ -149,190 +145,63 @@ pub const Error = error{
     NoLevelRoute,
 } || astar.Error || teleport.Error;
 
-pub const World = struct {
-    alloc: std.mem.Allocator,
-    seed: u32,
-    difficulty: drlg.Difficulty,
-    levels: std.ArrayListUnmanaged(Level) = .empty,
-    /// Level id -> index into `levels`.
-    by_id: std.AutoHashMapUnmanaged(i32, u32) = .empty,
-    /// Reused A* scratch, sized to the largest level loaded.
-    pather: astar.Pather,
-    /// Levels.txt `Teleport` by level id, parsed once at first load.
-    teleport_rule: []level_mod.TeleportRule = &.{},
-    /// Objects.txt `OperateFn` for every row NAMED "door", by class id; -1 for everything else.
-    /// Parsed once at first load rather than transcribed, so a data change cannot leave a stale
-    /// hardcoded list behind.
-    door_fn: []i16 = &.{},
-    /// Objects.txt ids whose `OperateFn` is 27 — the teleport pads. Indexed by class id.
-    pad_class: []bool = &.{},
 
-    pub fn init(alloc: std.mem.Allocator, seed: u32, difficulty: drlg.Difficulty) World {
-        return .{
-            .alloc = alloc,
-            .seed = seed,
-            .difficulty = difficulty,
-            .pather = astar.Pather.init(alloc),
-        };
+/// Routing over a world, plus the caches that make it fast. Borrows the world; does not own it,
+/// because a running game owns its world and merely asks this for directions.
+pub const Router = struct {
+    alloc: std.mem.Allocator,
+    world: *World,
+    /// Per-level search caches, created on first use. By pointer: a `PassMap` handed out of one
+    /// stays valid while other levels are loaded.
+    navs: std.AutoHashMapUnmanaged(i32, *Nav) = .empty,
+    /// Reused A* scratch, sized to the largest level searched.
+    pather: astar.Pather,
+
+    pub fn init(alloc: std.mem.Allocator, world: *World) Router {
+        return .{ .alloc = alloc, .world = world, .pather = astar.Pather.init(alloc) };
     }
 
-    pub fn deinit(self: *World) void {
-        for (self.levels.items) |*l| l.deinit();
-        self.levels.deinit(self.alloc);
-        self.by_id.deinit(self.alloc);
+    pub fn deinit(self: *Router) void {
+        var it = self.navs.valueIterator();
+        while (it.next()) |n| {
+            n.*.deinit();
+            self.alloc.destroy(n.*);
+        }
+        self.navs.deinit(self.alloc);
         self.pather.deinit();
-        if (self.teleport_rule.len != 0) self.alloc.free(self.teleport_rule);
-        if (self.door_fn.len != 0) self.alloc.free(self.door_fn);
-        if (self.pad_class.len != 0) self.alloc.free(self.pad_class);
         self.* = undefined;
     }
 
-    pub fn level(self: *World, id: i32) ?*Level {
-        const idx = self.by_id.get(id) orelse return null;
-        return &self.levels.items[idx];
+    /// The search caches for a level, created on first use.
+    pub fn nav(self: *Router, id: i32) !*Nav {
+        if (self.navs.get(id)) |n| return n;
+        const lv = self.world.level(id) orelse return error.UnknownLevel;
+        return self.navFor(lv);
     }
 
-    /// Generate and keep one act (0-based). Safe to call for several acts on the same `World`;
-    /// the level graph then spans all of them, so cross-act portals route in one call.
-    pub fn loadAct(self: *World, ctx: *drlg.Ctx, act_no: i32) !void {
-        if (self.teleport_rule.len == 0) self.teleport_rule = try parseTeleportColumn(self.alloc);
-        if (self.door_fn.len == 0) self.door_fn = try parseDoorClasses(self.alloc);
-        if (self.pad_class.len == 0) self.pad_class = try parsePadClasses(self.alloc);
-
-        var full = try drlg.generateActFull(ctx, self.alloc, act_no, self.seed, self.difficulty, .{
-            .room_links = true,
-            .raw_collision = true,
-        });
-        defer full.deinit(self.alloc);
-
-        for (full.levels) |lf| {
-            if (lf.coll_w <= 0 or lf.coll_h <= 0 or lf.raw.len == 0) continue;
-            try self.addLevel(ctx, lf);
-        }
+    pub fn navFor(self: *Router, lv: *Level) !*Nav {
+        if (self.navs.get(lv.id)) |n| return n;
+        const n = try self.alloc.create(Nav);
+        errdefer self.alloc.destroy(n);
+        n.* = Nav.init(self.alloc, lv);
+        try self.navs.put(self.alloc, lv.id, n);
+        return n;
     }
 
-    fn addLevel(self: *World, ctx: *drlg.Ctx, lf: drlg.LevelFull) !void {
-        _ = ctx;
-        const w = lf.coll_w;
-        const h = lf.coll_h;
-        const cell_count: usize = @intCast(w * h);
-
-        // `raw_collision` skips the deflate a pathfinder would only undo again: the grid arrives
-        // as LE u16 bytes, which on a little-endian host is already the cell array.
-        const cells = try self.alloc.alloc(u16, cell_count);
-        errdefer self.alloc.free(cells);
-        if (@import("builtin").cpu.arch.endian() == .little) {
-            @memcpy(std.mem.sliceAsBytes(cells), lf.raw[0 .. cell_count * @sizeOf(u16)]);
-        } else {
-            for (cells, 0..) |*c, i| c.* = std.mem.readInt(u16, lf.raw[i * 2 ..][0..2], .little);
-        }
-
-        // Room boxes come out of drlg in WORLD tiles; rebase them onto this level's own frame so
-        // rooms, collision and positions all agree.
-        var boxes = try self.alloc.alloc(rooms_mod.Room, lf.meta.rooms.len);
-        defer self.alloc.free(boxes);
-        for (lf.meta.rooms, 0..) |r, i| boxes[i] = .{
-            .x = r.x - lf.meta.origin_x,
-            .y = r.y - lf.meta.origin_y,
-            .w = r.w,
-            .h = r.h,
-        };
-        var room_set = try rooms_mod.build(
-            self.alloc,
-            boxes,
-            @divTrunc(w, grid.SUBTILES_PER_TILE),
-            @divTrunc(h, grid.SUBTILES_PER_TILE),
-        );
-        errdefer room_set.deinit(self.alloc);
-
-        const exits = try self.alloc.alloc(Exit, lf.adjacents.len);
-        errdefer self.alloc.free(exits);
-        for (lf.adjacents, 0..) |a, i| exits[i] = .{
-            .to_level = a.dest_level_id,
-            .x = a.x,
-            .y = a.y,
-            .kind = switch (a.kind) {
-                .warp => .warp,
-                .seam => .seam,
-            },
-        };
-
-        const links = try self.alloc.dupe(drlg.RoomLink, lf.room_links);
-        errdefer self.alloc.free(links);
-        const presets = try self.alloc.dupe(drlg.PresetUnit, lf.presets);
-        errdefer self.alloc.free(presets);
-        const pads = try self.buildPads(presets, &room_set);
-        errdefer self.alloc.free(pads);
-
-        const id = lf.meta.level_id;
-        try self.levels.append(self.alloc, .{
-            .id = id,
-            .origin_x = lf.meta.origin_x,
-            .origin_y = lf.meta.origin_y,
-            .w = w,
-            .h = h,
-            .cells = cells,
-            .rooms = room_set,
-            .links = links,
-            .pads = pads,
-            .presets = presets,
-            .exits = exits,
-            .teleport = self.teleportRuleFor(id),
-            .alloc = self.alloc,
-        });
-        try self.by_id.put(self.alloc, id, @intCast(self.levels.items.len - 1));
+    pub fn level(self: *Router, id: i32) ?*Level {
+        return self.world.level(id);
     }
 
-    fn teleportRuleFor(self: *const World, id: i32) level_mod.TeleportRule {
-        if (id < 0 or @as(usize, @intCast(id)) >= self.teleport_rule.len) return .allowed;
-        return self.teleport_rule[@intCast(id)];
+    pub fn levelRoute(self: *Router, from: i32, to: i32, out: *std.ArrayListUnmanaged(i32)) !void {
+        return self.world.levelRoute(from, to, out);
     }
 
-    /// Where a quest portal out of `from_level` toward `to_level` stands, if the map data marks it
-    /// with an object. Lets a character be routed to a portal that is not open yet — the object is
-    /// placed from the start even though the link is not usable until the quest fires.
-    pub fn questPortalSite(self: *World, from_level: i32, to_level: i32) !?Point {
-        const lv = self.level(from_level) orelse return error.UnknownLevel;
-        for (portals.LINKS) |link| {
-            if (link.from != from_level or link.to != to_level) continue;
-            const cls = link.object_id orelse continue;
-            for (lv.presets) |unit| {
-                if (unit.etype == 2 and unit.txt_file_no == cls) return .{ .x = unit.x, .y = unit.y };
-            }
-        }
-        return null;
-    }
-
-    /// Every DOOR on a level, in that level's local subtiles.
-    ///
-    /// Doors matter to a mover but not to the search. The generated collision grid carries no door
-    /// bit at all — `COLBIT_DOOR` is runtime occupancy a host ORs in while a door is shut — so a
-    /// path already runs straight through a doorway, which is correct: a walking character opens
-    /// what it walks into. What the search cannot do is tell you that you will have to. These are
-    /// the positions to check a route against so the mover knows to stop and open one.
-    ///
-    /// (Teleport sidesteps the question: a cast passes through the wall the door sits in. It only
-    /// cannot LAND on the door's own cell, since `COLMASK_PLAYER_PATH` includes 0x800.)
-    pub fn doorsOn(self: *World, level_id: i32, out: *std.ArrayListUnmanaged(Door)) !void {
-        const lv = self.level(level_id) orelse return error.UnknownLevel;
-        for (lv.presets) |unit| {
-            if (unit.etype != 2) continue;
-            const cls = unit.txt_file_no;
-            if (cls < 0 or @as(usize, @intCast(cls)) >= self.door_fn.len) continue;
-            const ofn = self.door_fn[@intCast(cls)];
-            if (ofn < 0) continue;
-            try out.append(self.alloc, .{ .class_id = cls, .x = unit.x, .y = unit.y, .operate_fn = ofn });
-        }
-    }
-
-    /// The doors a route passes within `radius` subtiles of, in the order they are met. This is the
-    /// list a mover needs: "on leg 3, at this waypoint, there is a door to open".
-    pub fn doorsAlong(self: *World, r: *const Route, radius: i32, out: *std.ArrayListUnmanaged(RouteDoor)) !void {
+    pub fn doorsAlong(self: *Router, r: *const Route, radius: i32, out: *std.ArrayListUnmanaged(RouteDoor)) !void {
         var scratch: std.ArrayListUnmanaged(Door) = .empty;
         defer scratch.deinit(self.alloc);
         for (r.legs, 0..) |leg, li| {
             scratch.clearRetainingCapacity();
-            self.doorsOn(leg.level, &scratch) catch continue;
+            self.world.doorsOn(leg.level, &scratch) catch continue;
             for (scratch.items) |d| {
                 var best: ?usize = null;
                 var best_d: i64 = std.math.maxInt(i64);
@@ -356,65 +225,7 @@ pub const World = struct {
     /// cannot see. The portal entries carry no coordinates — quest code decides where the portal
     /// stands — so their `x`/`y` are -1 and a caller that needs the exact tile locates the portal
     /// object itself.
-    pub fn exitsOf(self: *World, id: i32, buf: *std.ArrayListUnmanaged(Exit)) !void {
-        if (self.level(id)) |lv| try buf.appendSlice(self.alloc, lv.exits);
-        for (portals.LINKS) |link| {
-            if (link.from == id) {
-                try buf.append(self.alloc, .{ .to_level = link.to, .x = -1, .y = -1, .kind = .portal });
-            } else if (link.to == id and !link.one_way) {
-                try buf.append(self.alloc, .{ .to_level = link.from, .x = -1, .y = -1, .kind = .portal });
-            }
-        }
-    }
-
-    /// The chain of levels from `from` to `to`, breadth-first over the level graph. Breadth-first
-    /// on level COUNT (rather than weighted by in-level distance) because that is what actually
-    /// costs a player time — every transition is a loading screen and a walk to a staircase, and
-    /// the alternative routes through one extra area are essentially never worth it.
-    pub fn levelRoute(self: *World, from: i32, to: i32, out: *std.ArrayListUnmanaged(i32)) !void {
-        if (from == to) {
-            try out.append(self.alloc, from);
-            return;
-        }
-        var came: std.AutoHashMapUnmanaged(i32, i32) = .empty;
-        defer came.deinit(self.alloc);
-        var queue: std.ArrayListUnmanaged(i32) = .empty;
-        defer queue.deinit(self.alloc);
-        var scratch: std.ArrayListUnmanaged(Exit) = .empty;
-        defer scratch.deinit(self.alloc);
-
-        try came.put(self.alloc, from, from);
-        try queue.append(self.alloc, from);
-        var head: usize = 0;
-        var found = false;
-        while (head < queue.items.len and !found) : (head += 1) {
-            const cur = queue.items[head];
-            scratch.clearRetainingCapacity();
-            try self.exitsOf(cur, &scratch);
-            for (scratch.items) |e| {
-                if (came.contains(e.to_level)) continue;
-                try came.put(self.alloc, e.to_level, cur);
-                if (e.to_level == to) {
-                    found = true;
-                    break;
-                }
-                try queue.append(self.alloc, e.to_level);
-            }
-        }
-        if (!found) return error.NoLevelRoute;
-
-        const first = out.items.len;
-        var cur = to;
-        while (cur != from) {
-            try out.append(self.alloc, cur);
-            cur = came.get(cur).?;
-        }
-        try out.append(self.alloc, from);
-        std.mem.reverse(i32, out.items[first..]);
-    }
-
-    /// The whole thing: a route from `from` to `to`, across as many levels as it takes.
-    pub fn route(self: *World, from: Pos, to: Pos, opts: Options) Error!Route {
+    pub fn route(self: *Router, from: Pos, to: Pos, opts: Options) Error!Route {
         var chain: std.ArrayListUnmanaged(i32) = .empty;
         defer chain.deinit(self.alloc);
         try self.levelRoute(from.level, to.level, &chain);
@@ -452,7 +263,7 @@ pub const World = struct {
                 // the exit is. So build BOTH legs and keep the cheaper, rather than assuming.
                 const walk_out: ?Crossing = try self.chooseExit(lv, next, entry, opts);
                 const cast_out: ?LevelCast = if (opts.teleport and opts.teleport_across_levels)
-                    if (self.level(next)) |nlv| try crossLevelCast(lv, nlv, opts) else null
+                    if (self.level(next)) |nlv| try self.crossLevelCast(lv, nlv, opts) else null
                 else
                     null;
 
@@ -533,7 +344,7 @@ pub const World = struct {
     /// because the two cells live in different level-local frames.
     ///
     /// Picks the pair with the shortest cast among all candidate links.
-    pub fn crossLevelCast(from: *Level, to: *Level, opts: Options) !?LevelCast {
+    pub fn crossLevelCast(self: *Router, from: *Level, to: *Level, opts: Options) !?LevelCast {
         const max_cast = opts.teleport_max_cast orelse return null;
         // The Levels.txt rule that applies is the CASTER'S — `Skills_SrvDoFunc_027_Teleport` reads
         // it from `GetRoom(pUnit)`, the room you are standing in — so `from` decides both whether
@@ -541,8 +352,8 @@ pub const World = struct {
         // destination level's own rule is irrelevant to this cast.
         if (from.teleport == .forbidden) return null;
 
-        const from_pm = try from.passMap(opts.mask);
-        const to_pm = try to.passMap(from.teleport.destinationMask(opts.mask));
+        const from_pm = try (try self.navFor(from)).passMap(opts.mask);
+        const to_pm = try (try self.navFor(to)).passMap(from.teleport.destinationMask(opts.mask));
 
         var best: ?LevelCast = null;
         var best_cost: i32 = std.math.maxInt(i32);
@@ -598,8 +409,8 @@ pub const World = struct {
     /// among the rest prefer one in the same connected region as where we are standing (a crossing
     /// on the far side of a wall is no use), then the closest. Warps still win over seams — a
     /// staircase is a specific doorway, a seam is a wide border.
-    fn chooseExit(self: *World, lv: *Level, dest: i32, from: Point, opts: Options) !?Crossing {
-        const pm = try lv.passMap(opts.mask);
+    fn chooseExit(self: *Router, lv: *Level, dest: i32, from: Point, opts: Options) !?Crossing {
+        const pm = try (try self.navFor(lv)).passMap(opts.mask);
         const comp = try pm.components(self.alloc);
         const from_comp: u32 = if (pm.passable(from.x, from.y)) comp[pm.index(from.x, from.y)] else 0;
 
@@ -640,7 +451,7 @@ pub const World = struct {
     /// Anything else (a quest portal, whose position quest code decides) has no knowable tile;
     /// the level's centre at least gives the next leg somewhere real to start.
     fn arrivalOn(
-        self: *World,
+        self: *Router,
         next: i32,
         from_lv: *const Level,
         leaving_at: Point,
@@ -648,7 +459,7 @@ pub const World = struct {
         opts: Options,
     ) Error!Point {
         const nlv = self.level(next) orelse return error.UnknownLevel;
-        const pm = try nlv.passMap(opts.mask);
+        const pm = try (try self.navFor(nlv)).passMap(opts.mask);
 
         const translated = nlv.fromWorld(from_lv.toWorld(leaving_at));
         if (via != null and via.?.kind == .seam and nlv.inBounds(translated.x, translated.y)) {
@@ -667,7 +478,7 @@ pub const World = struct {
 
     /// A path inside one level, walking or teleporting per `opts`.
     fn pathWithin(
-        self: *World,
+        self: *Router,
         lv: *Level,
         from: Point,
         to: Point,
@@ -679,7 +490,7 @@ pub const World = struct {
         if (opts.teleport and lv.teleport != .forbidden) {
             var hops: std.ArrayListUnmanaged(Point) = .empty;
             defer hops.deinit(self.alloc);
-            teleport.find(self.alloc, lv, from.x, from.y, to.x, to.y, .{
+            teleport.find(self.alloc, try self.navFor(lv), from.x, from.y, to.x, to.y, .{
                 .max_cast = opts.teleport_max_cast,
                 .metric = opts.teleport_metric,
                 .landing_mask = opts.mask,
@@ -710,43 +521,8 @@ pub const World = struct {
     /// Sanctuary holds exactly two pads across every seed tested, so there is never a choice to
     /// make. If that ever stops holding, this picks the first in DS1 order and the route may take
     /// a different pad than the server would.
-    fn buildPads(self: *World, presets: []const drlg.PresetUnit, room_set: *const rooms_mod.RoomSet) ![]level_mod.Pad {
-        var out: std.ArrayListUnmanaged(level_mod.Pad) = .empty;
-        errdefer out.deinit(self.alloc);
-
-        for (presets, 0..) |p, i| {
-            if (p.etype != 2) continue;
-            const cid = p.txt_file_no;
-            if (cid < 0 or @as(usize, @intCast(cid)) >= self.pad_class.len) continue;
-            if (!self.pad_class[@intCast(cid)]) continue;
-            const my_room = room_set.atSubtile(p.x, p.y) orelse continue;
-
-            var same: ?Point = null;
-            var near: ?Point = null;
-            for (presets, 0..) |q, j| {
-                if (i == j or q.etype != 2 or q.txt_file_no != cid) continue;
-                const qr = room_set.atSubtile(q.x, q.y) orelse continue;
-                if (qr == my_room) {
-                    same = .{ .x = q.x, .y = q.y };
-                    break;
-                }
-                if (near == null and room_set.canTeleportBetween(my_room, qr)) near = .{ .x = q.x, .y = q.y };
-            }
-            const to = same orelse near orelse continue;
-            try out.append(self.alloc, .{ .at = .{ .x = p.x, .y = p.y }, .to = to, .class_id = cid });
-        }
-        return out.toOwnedSlice(self.alloc);
-    }
-
-    /// Walk `from` to `to` using this level's pads when plain ground cannot get there.
-    ///
-    /// Returns false when the pads are no help — same walkable region, or no chain of pads joins
-    /// the two — and the caller falls back to a straight A*. The search is over REGIONS rather
-    /// than cells: a pad is only interesting when it leaves the region you are standing in, and
-    /// there are tens of pads against millions of cells, so a breadth-first walk over the region
-    /// graph finds the fewest-pads route immediately and each segment is then one ordinary A*.
     fn padRoute(
-        self: *World,
+        self: *Router,
         lv: *Level,
         pm: *grid.PassMap,
         from: Point,
@@ -830,7 +606,7 @@ pub const World = struct {
     }
 
     fn walkPlain(
-        self: *World,
+        self: *Router,
         lv: *Level,
         pm: *grid.PassMap,
         from: Point,
@@ -855,7 +631,7 @@ pub const World = struct {
     }
 
     fn walkWithin(
-        self: *World,
+        self: *Router,
         lv: *Level,
         from: Point,
         to: Point,
@@ -864,7 +640,7 @@ pub const World = struct {
         snap_to: i32,
         out: *std.ArrayListUnmanaged(Move),
     ) Error!void {
-        const pm = try lv.passMap(opts.mask);
+        const pm = try (try self.navFor(lv)).passMap(opts.mask);
         if (lv.pads.len != 0) {
             const mark = out.items.len;
             if (self.padRoute(lv, pm, from, to, opts, snap_from, snap_to, out)) |used| {
@@ -879,8 +655,6 @@ pub const World = struct {
     }
 };
 
-/// The smallest Chebyshev distance any cell of `a` (on level `la`) can have to any cell of `b` (on
-/// `lb`), in world subtiles. Zero when the boxes overlap.
 fn boxGap(la: *const Level, a: rooms_mod.Room, lb: *const Level, b: rooms_mod.Room) i32 {
     const S = grid.SUBTILES_PER_TILE;
     const ax0 = (la.origin_x + a.x) * S;
@@ -916,172 +690,4 @@ fn pickExit(lv: *const Level, dest: i32) ?Exit {
         if (seam == null) seam = e;
     }
     return seam;
-}
-
-/// Levels.txt `Teleport`, indexed by level id. Read at runtime (one pass over one embedded table)
-/// rather than at comptime — it is a few microseconds once per World, and it keeps the build off
-/// a 200 KB comptime string scan.
-fn parseTeleportColumn(alloc: std.mem.Allocator) ![]level_mod.TeleportRule {
-    const text = d2data.file("Levels");
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    const header = lines.next() orelse return error.InvalidTable;
-
-    var id_col: ?usize = null;
-    var tele_col: ?usize = null;
-    {
-        var cols = std.mem.splitScalar(u8, header, '\t');
-        var i: usize = 0;
-        while (cols.next()) |c| : (i += 1) {
-            const name = std.mem.trim(u8, c, "\r");
-            if (std.mem.eql(u8, name, "Id")) id_col = i;
-            if (std.mem.eql(u8, name, "Teleport")) tele_col = i;
-        }
-    }
-    const idc = id_col orelse return error.InvalidTable;
-    const tc = tele_col orelse return error.InvalidTable;
-
-    var rows: std.ArrayListUnmanaged(level_mod.TeleportRule) = .empty;
-    errdefer rows.deinit(alloc);
-    while (lines.next()) |line| {
-        if (std.mem.trim(u8, line, "\r \t").len == 0) continue;
-        var cols = std.mem.splitScalar(u8, line, '\t');
-        var i: usize = 0;
-        var id: ?i32 = null;
-        var tele: u8 = 1;
-        while (cols.next()) |c| : (i += 1) {
-            const v = std.mem.trim(u8, c, "\r ");
-            if (i == idc) id = std.fmt.parseInt(i32, v, 10) catch null;
-            if (i == tc) tele = std.fmt.parseInt(u8, v, 10) catch 1;
-        }
-        const lid = id orelse continue;
-        if (lid < 0) continue;
-        const want: usize = @intCast(lid + 1);
-        if (rows.items.len < want) try rows.appendNTimes(alloc, .allowed, want - rows.items.len);
-        rows.items[@intCast(lid)] = switch (tele) {
-            0 => .forbidden,
-            2 => .gated,
-            else => .allowed,
-        };
-    }
-    return rows.toOwnedSlice(alloc);
-}
-
-/// Objects.txt rows NAMED "door", mapped id -> OperateFn (-1 where the row is not a door).
-///
-/// Matching on the name rather than on OperateFn deliberately: the ordinary door is OperateFn 8,
-/// but secret doors (18), the Act 3 slime doors (29) and Tyrael's door (0) are doors too, and a
-/// route should mention them. "TrappDoor" is excluded by the exact-name match — it is a level
-/// transition, not something you open.
-/// Objects.txt ids with `OperateFn` 27, indexed by class id. Exactly four rows have it and all
-/// four are teleport pads (192, 304, 305, 306), so the column IS the selector — no name matching
-/// needed and no false positives to filter.
-fn parsePadClasses(alloc: std.mem.Allocator) ![]bool {
-    const text = d2data.file("Objects");
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    const header = lines.next() orelse return error.InvalidTable;
-
-    var id_col: ?usize = null;
-    var fn_col: ?usize = null;
-    {
-        var cols = std.mem.splitScalar(u8, header, '\t');
-        var i: usize = 0;
-        while (cols.next()) |c| : (i += 1) {
-            const name = std.mem.trim(u8, c, "\r");
-            if (std.mem.eql(u8, name, "Id")) id_col = i;
-            if (std.mem.eql(u8, name, "OperateFn")) fn_col = i;
-        }
-    }
-    const idc = id_col orelse return error.InvalidTable;
-    const fc = fn_col orelse return error.InvalidTable;
-
-    var out: std.ArrayListUnmanaged(bool) = .empty;
-    errdefer out.deinit(alloc);
-    while (lines.next()) |line| {
-        if (std.mem.trim(u8, line, "\r \t").len == 0) continue;
-        var cols = std.mem.splitScalar(u8, line, '\t');
-        var i: usize = 0;
-        var id: ?i32 = null;
-        var ofn: i16 = -1;
-        while (cols.next()) |c| : (i += 1) {
-            const v = std.mem.trim(u8, c, "\r ");
-            if (i == idc) id = std.fmt.parseInt(i32, v, 10) catch null;
-            if (i == fc) ofn = std.fmt.parseInt(i16, v, 10) catch -1;
-        }
-        const cid = id orelse continue;
-        if (cid < 0) continue;
-        const want: usize = @intCast(cid + 1);
-        if (out.items.len < want) try out.appendNTimes(alloc, false, want - out.items.len);
-        if (ofn == 27) out.items[@intCast(cid)] = true;
-    }
-    return out.toOwnedSlice(alloc);
-}
-
-fn parseDoorClasses(alloc: std.mem.Allocator) ![]i16 {
-    const text = d2data.file("Objects");
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    const header = lines.next() orelse return error.InvalidTable;
-
-    var id_col: ?usize = null;
-    var fn_col: ?usize = null;
-    var name_col: ?usize = null;
-    {
-        var cols = std.mem.splitScalar(u8, header, '\t');
-        var i: usize = 0;
-        while (cols.next()) |c| : (i += 1) {
-            const name = std.mem.trim(u8, c, "\r");
-            if (std.mem.eql(u8, name, "Id")) id_col = i;
-            if (std.mem.eql(u8, name, "OperateFn")) fn_col = i;
-            if (name_col == null and std.mem.eql(u8, name, "Name")) name_col = i;
-        }
-    }
-    const idc = id_col orelse return error.InvalidTable;
-    const fc = fn_col orelse return error.InvalidTable;
-    const nc = name_col orelse return error.InvalidTable;
-
-    var out: std.ArrayListUnmanaged(i16) = .empty;
-    errdefer out.deinit(alloc);
-    while (lines.next()) |line| {
-        if (std.mem.trim(u8, line, "\r \t").len == 0) continue;
-        var cols = std.mem.splitScalar(u8, line, '\t');
-        var i: usize = 0;
-        var id: ?i32 = null;
-        var is_door = false;
-        var ofn: i16 = 0;
-        while (cols.next()) |c| : (i += 1) {
-            const v = std.mem.trim(u8, c, "\r ");
-            if (i == idc) id = std.fmt.parseInt(i32, v, 10) catch null;
-            if (i == nc) is_door = std.ascii.eqlIgnoreCase(v, "door");
-            if (i == fc) ofn = std.fmt.parseInt(i16, v, 10) catch 0;
-        }
-        const cid = id orelse continue;
-        if (cid < 0) continue;
-        const want: usize = @intCast(cid + 1);
-        if (out.items.len < want) try out.appendNTimes(alloc, -1, want - out.items.len);
-        if (is_door) out.items[@intCast(cid)] = ofn;
-    }
-    return out.toOwnedSlice(alloc);
-}
-
-const testing = std.testing;
-
-test "Levels.txt Teleport parses to the rule the engine applies" {
-    const alloc = testing.allocator;
-    const rules = try parseTeleportColumn(alloc);
-    defer alloc.free(rules);
-
-    // Only the Null level refuses teleport outright, and only Duriel's Lair gates the
-    // destination — that is what Skills_SrvDoFunc_027_Teleport's two branches key on.
-    try testing.expectEqual(level_mod.TeleportRule.forbidden, rules[0]);
-    try testing.expectEqual(level_mod.TeleportRule.gated, rules[portals.DURIELS_LAIR]);
-    try testing.expectEqual(level_mod.TeleportRule.allowed, rules[portals.ARCANE_SANCTUARY]);
-    try testing.expectEqual(level_mod.TeleportRule.allowed, rules[1]);
-
-    var forbidden: usize = 0;
-    var gated: usize = 0;
-    for (rules) |r| {
-        if (r == .forbidden) forbidden += 1;
-        if (r == .gated) gated += 1;
-    }
-    try testing.expectEqual(@as(usize, 1), forbidden);
-    try testing.expectEqual(@as(usize, 1), gated);
 }

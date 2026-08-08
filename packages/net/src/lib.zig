@@ -11,6 +11,11 @@
 pub const bitreader = @import("bitreader.zig");
 pub const sc = @import("sc.zig");
 pub const cs = @import("cs.zig");
+/// Every client->server command the 1.14d server dispatches (91 of them), generated from the
+/// recovered `D2GSPacketClt0xNN_*` structs. `cs` keeps the hand-written ergonomic wrappers.
+pub const clt = @import("clt.zig");
+/// The engine's own 175-entry server->client dispatch table: which handler runs for each opcode.
+pub const sc_table = @import("sc_table.zig");
 
 pub const BitReader = bitreader.BitReader;
 pub const BitWriter = bitreader.BitWriter;
@@ -19,4 +24,6 @@ test {
     _ = bitreader;
     _ = sc;
     _ = cs;
+    _ = clt;
+    _ = sc_table;
 }

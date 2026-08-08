@@ -16,7 +16,10 @@
         .d2_formats = .{ .path = "packages/formats" },
         .d2_save = .{ .path = "packages/save" },
         .d2_util = .{ .path = "packages/util" },
+        .d2_world = .{ .path = "packages/world" },
         .d2_pathfinding = .{ .path = "packages/pathfinding" },
+        .d2_net = .{ .path = "packages/net" },
+        .d2_client = .{ .path = "packages/client" },
     },
 
     .paths = .{

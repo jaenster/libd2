@@ -1,7 +1,7 @@
 #pragma once
 /*
  * d2pf — C ABI for routing over faithful D2 1.14d maps.
- * ABI version 1. See d2pf_abi_version().
+ * ABI version 2. See d2pf_abi_version().
  *
  * Routes from anywhere to anywhere across a generated act: the level graph first, then a path
  * inside each level, returned as one leg per level with the exit taken out of it.
@@ -184,7 +184,46 @@ int32_t d2pf_line_of_sight(D2PfWorld *world, int32_t level_id,
 int32_t d2pf_nearest_passable(D2PfWorld *world, int32_t level_id, int32_t x, int32_t y,
                               int32_t radius, int32_t *out_x, int32_t *out_y);
 
-/* Returns the ABI version (currently 1). */
+/*
+ * THE LIVE WORLD.
+ *
+ * Everything above answers from the map as it was generated. A running game also has units
+ * standing on it, and the engine keeps them in the same collision grid: a unit ORs its bits into
+ * the cells it covers when it arrives and clears them when it leaves. Register them here and every
+ * query above — walkability, routing, line of sight, nearest-passable — sees them.
+ *
+ * `unit_type` is eD2UnitType: 0 player, 1 monster, 2 object, 4 item, 5 room tile. `size_x` is the
+ * unit's GetUnitSizeX (0..3). Between them they decide which cells are claimed and with which bit,
+ * exactly as the engine decides it when it allocates the unit's path — a big monster covers a 3x3
+ * box, an item covers its cell and blocks nobody.
+ *
+ * Calling place() again for an id that is already down MOVES it: the cells it used to cover go
+ * back to what the rest of the world says about them, not to blank.
+ *
+ * Returns 0, or a negative error code.
+ */
+int32_t d2pf_unit_place(D2PfWorld *world, int32_t level_id, uint32_t unit_id, uint8_t unit_type,
+                        int32_t size_x, int32_t x, int32_t y);
+
+/* Take a unit off the level, restoring every cell it covered. */
+int32_t d2pf_unit_lift(D2PfWorld *world, int32_t level_id, uint32_t unit_id);
+
+/* Empty a level's live world — leaving the game, or resyncing from scratch. */
+int32_t d2pf_units_clear(D2PfWorld *world, int32_t level_id);
+
+/*
+ * TERRAIN itself changed over an inclusive subtile rectangle: a door opened, a quest barrier
+ * dropped. `add` and `remove` are raw COLBIT masks (0x01 wall, 0x800 door, ...).
+ *
+ * This is not the same thing as a unit and is far more expensive: it rewrites the generated grid
+ * and throws away the reachability caches built on it, because unlike a unit it can make a cell
+ * MORE passable and so join two regions. Call it for the handful of events per game that really
+ * change the map; call d2pf_unit_place for everything that merely stands on it.
+ */
+int32_t d2pf_terrain_edit(D2PfWorld *world, int32_t level_id, int32_t x0, int32_t y0,
+                          int32_t x1, int32_t y1, uint16_t add, uint16_t remove);
+
+/* Returns the ABI version (currently 2). */
 uint32_t d2pf_abi_version(void);
 
 #ifdef __cplusplus

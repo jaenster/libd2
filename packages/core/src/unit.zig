@@ -7,19 +7,183 @@
 
 const std = @import("std");
 const stat = @import("stat.zig");
+const collision = @import("collision.zig");
 const wire = @import("wire/item.zig");
 
-/// eD2UnitType (1.14d). The combat core distinguishes player vs monster for the
-/// attack-rating path (monsters fold dexterity*5 + tohit differently).
+/// `eD2UnitType` (1.14d), `D2UnitStrc.eUnitType` at offset 0. One record type serves every game
+/// object and this field discriminates it; `nClassId` at offset 4 then indexes the txt that owns
+/// the kind — PlrClass, MonStats, Objects, Missiles, Items or LvlWarps respectively.
+///
+/// The combat core distinguishes player vs monster for the attack-rating path (monsters fold
+/// dexterity*5 + tohit differently); `Collision` below distinguishes all six.
 pub const UnitType = enum(u8) {
     player = 0,
     monster = 1,
     object = 2,
     missile = 3,
     item = 4,
-    tile = 5,
+    /// `UNIT_ROOMTILE` — the level transition: a staircase, a town portal's destination side, an
+    /// act warp. The name is Blizzard's own, read off the D2R debug build's `eUnitType` name table
+    /// at 0x1456ad6e8, which spells all six in order. Third-party headers call this one WARP or
+    /// TILE; neither is what the game calls it.
+    roomtile = 5,
     _,
 };
+
+/// What a unit writes into the collision grid while it is standing somewhere: which cells
+/// (`stamp`), with which bit (`flag`), and what it is itself blocked by when it moves
+/// (`path_mask`). The engine keeps all three on the unit — `D2DynamicPathStrc.nUnitWidth` (0x48),
+/// `.nCollisionFlag` (0x4C) and `.nCollisionPattern` (0x50) — assigned once when the path is
+/// allocated, which is what the constructors below reproduce.
+///
+/// The kind of stamp is decided by unit type and nothing else (`PATH_AddUnitCollision`, 0x649390):
+/// players and monsters get a `Shape` because they claim ground; objects get a rectangle out of
+/// Objects.txt; items, room tiles and missiles get a bare footprint.
+pub const Collision = struct {
+    stamp: collision.Stamp = .{ .shape = .none },
+    flag: u16 = 0,
+    path_mask: u16 = 0,
+
+    /// `AllocDynamicPath` (0x6486a0) for a player: `nCollisionFlag = 0x80`,
+    /// `nCollisionPattern = 0x1c09`. `size_x` is the unit's `GetUnitSizeX`.
+    pub fn player(size_x: i32) Collision {
+        return .{
+            .stamp = .{ .shape = collisionShape(.player, size_x, false) },
+            .flag = collision.Colbit.player,
+            .path_mask = collision.Colmask.player_path,
+        };
+    }
+
+    /// A player who is dead or dying. `Player.cpp` sets `SetUnitWidth(pUnit, 5)` and
+    /// `PATH_SetCollisionPattern(path, 0)` at that point: the corpse still marks the ground it lies
+    /// on so a search can find it, but it claims nothing and blocks nobody.
+    pub fn corpse() Collision {
+        return .{ .stamp = .{ .shape = .small_none }, .flag = collision.Colbit.player, .path_mask = 0 };
+    }
+
+    /// `AllocDynamicPath` for a monster: `nCollisionFlag = 0x100`, and the path mask comes from
+    /// MonStats via `monsterPathMask`.
+    ///
+    /// `pet_like` is the engine's promotion test, which decides whether the monster claims ground
+    /// with `pet` instead of `nopath` — see `collisionShape`.
+    pub fn monster(size_x: i32, pet_like: bool, opts: MonsterOpts) Collision {
+        return .{
+            .stamp = .{ .shape = collisionShape(.monster, size_x, pet_like) },
+            .flag = collision.Colbit.monster,
+            .path_mask = monsterPathMask(opts),
+        };
+    }
+
+    /// `GetCollisionType` (0x6209d0) for an object, which reads Objects.txt rather than the path,
+    /// over the `SizeX x SizeY` rectangle `PATH_AddUnitCollision` hands `AddCollision_Vector`.
+    pub fn object(size_x: i32, size_y: i32, txt: ObjectFlags) Collision {
+        return .{
+            .stamp = .{ .box = .{ .w = size_x, .h = size_y } },
+            .flag = objectFlag(txt),
+            .path_mask = 0,
+        };
+    }
+
+    /// An item on the ground: `COLLIDE_ITEM` over its bare footprint, and nothing paths around it.
+    pub fn item(size_x: i32) Collision {
+        return .{ .stamp = .{ .width = sizeOf(size_x) }, .flag = collision.Colbit.item, .path_mask = 0 };
+    }
+
+    /// A missile in flight carries NO collision flag at all — `AllocDynamicPath` sets both
+    /// `nCollisionFlag` and `nCollisionPattern` to 0 and the caller overwrites the mask from
+    /// `Missiles.txt CollideType` (`PATH_SetCollisionPattern`, Missiles.cpp:348). Missiles are not
+    /// in the grid; they are traced against it.
+    pub fn missile(collide_mask: u16) Collision {
+        return .{ .stamp = .{ .shape = .none }, .flag = 0, .path_mask = collide_mask };
+    }
+
+    /// A level transition. `GetCollisionType` returns `COLLIDE_BLOCK_PLAYER`, which is 0x01 —
+    /// `wall` in the corrected bit vocabulary. A room tile is solid.
+    pub fn roomtile(size_x: i32) Collision {
+        return .{ .stamp = .{ .width = sizeOf(size_x) }, .flag = collision.Colbit.wall, .path_mask = 0 };
+    }
+};
+
+/// `GetUnitSizeX`'s 0..3 result as the enum. Out of range is the engine's own fallback in
+/// `AddCollision_Width`, which does nothing for a size it does not recognise.
+pub fn sizeOf(size_x: i32) collision.Size {
+    return switch (size_x) {
+        1 => .point,
+        2 => .small,
+        3 => .big,
+        else => .none,
+    };
+}
+
+/// The MonStats columns `monsterPathMask` reads. Kept as plain inputs rather than a table lookup so
+/// core stays free of txt parsing — the host already has the row in hand when it spawns the monster.
+pub const MonsterOpts = struct {
+    /// MonStats `flying`: the monster ignores ground entirely.
+    flying: bool = false,
+    /// MonStats `opendoors`: doors do not stop it, so `door` (0x800) leaves its mask.
+    opendoors: bool = false,
+};
+
+/// The Objects.txt columns `objectFlag` reads.
+pub const ObjectFlags = struct {
+    is_door: bool = false,
+    blocks_vis: bool = false,
+    block_missile: bool = false,
+    /// Objects.txt `SubClass` bit 2 (value 4) marks a corpse-like object.
+    is_corpse: bool = false,
+};
+
+/// `PATH_GetCollisionPatternFromMonStats` (0x648450): what a monster is blocked BY.
+///
+///     if (!flying) return 0x3c01 - (opendoors ? 0x800 : 0);
+///     return 0x1804;
+///
+/// So a walking monster gets `monster_path` (pet|nopath|door|object|wall), minus `door` if it can
+/// open them; a flying one gets nopath|door|missile_barrier, which is why it crosses water and
+/// chasms a walker cannot.
+pub fn monsterPathMask(opts: MonsterOpts) u16 {
+    if (opts.flying) return collision.Colbit.nopath | collision.Colbit.door | collision.Colbit.missile_barrier;
+    const base = collision.Colmask.monster_path;
+    return if (opts.opendoors) base & ~collision.Colbit.door else base;
+}
+
+/// `GetCollisionType` (0x6209d0)'s object branch.
+pub fn objectFlag(txt: ObjectFlags) u16 {
+    if (!txt.is_door) {
+        if (txt.is_corpse) return collision.Colbit.dead;
+        return collision.Colbit.object | (if (txt.block_missile) collision.Colbit.missile_barrier else 0);
+    }
+    if (txt.blocks_vis) return collision.Colbit.door | collision.Colbit.missile_barrier | collision.Colbit.visible;
+    return if (txt.block_missile)
+        collision.Colbit.door | collision.Colbit.missile_barrier
+    else
+        collision.Colbit.object;
+}
+
+/// `GetInteractSize` (0x648580): `GetUnitSizeX` -> the stamp shape.
+///
+///     gaUnitTypeInteractSizes[4] @0x6eb3dc = { none, small_unit, small_unit, big_unit }
+///     SizeX > 3                            -> small_unit
+///
+/// and then one promotion, at 0x6485be: a MONSTER that is a boss or champion (0x63e860) and does
+/// NOT carry the MonStats `interact` flag has `small_unit` promoted to `small_pet` and `big_unit`
+/// to `big_pet`. Same shape, different presence bit — so it stops blocking players (whose mask has
+/// no `pet`) while still blocking other monsters. `pet_like` is that test; it is always false for
+/// anything that is not a monster.
+pub fn collisionShape(unit_type: UnitType, size_x: i32, pet_like: bool) collision.Shape {
+    const base: collision.Shape = switch (size_x) {
+        0 => .none,
+        1, 2 => .small_unit,
+        3 => .big_unit,
+        else => .small_unit,
+    };
+    if (unit_type != .monster or !pet_like) return base;
+    return switch (base) {
+        .small_unit => .small_pet,
+        .big_unit => .big_pet,
+        else => base,
+    };
+}
 
 /// Base physical weapon damage source. In the engine these come from the equipped
 /// weapon's Items.txt row (mindam/maxdam, StrBonus, DexBonus); a bare-handed unit
