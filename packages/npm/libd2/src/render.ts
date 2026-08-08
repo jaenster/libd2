@@ -9,8 +9,8 @@
 //
 // It runs anywhere, including plain Node with no browser at all, which is what makes it testable.
 
-import type {Area, CollisionGrid, Location, Point} from './game.ts';
-import {Colbit, Masks} from './game.ts';
+import type {Area, CollisionGrid, Location, Point, WalkGrid} from './game.ts';
+import {Colbit, Masks, Walk} from './game.ts';
 
 /** An RGBA image, one entry per pixel, laid out the way `ImageData` wants it. */
 export interface Raster {
@@ -138,4 +138,167 @@ export class View {
     return local.x >= 0 && local.y >= 0 &&
       local.x < this.area.collision.width && local.y < this.area.collision.height;
   }
+}
+
+// ── the map the game draws ─────────────────────────────────────────────────────────────────────
+//
+// Everything above is a top-down bitmap, which is useful and is not what the game shows you. The
+// automap is isometric line art: walls traced where open ground meets solid, projected through the
+// engine's own minimap transform.
+//
+// The geometry is built in SUBTILE space and handed back as plain numbers. That is deliberate — a
+// caller projects it with a canvas transform, so panning and zooming never rebuild anything, and a
+// route drawn through the same transform lands on the corridor it walks down by construction.
+// Nothing here builds a Path2D, because Path2D is a browser type and this has to run in Node.
+
+/**
+ * The engine's own minimap projection: `sx = (x - y)·k`, `sy = (x + y)·k/2`.
+ *
+ * `Transform.cpp`'s `CoordsMiniMapToScreen`. It is linear, so it is exactly a 2x3 canvas matrix and
+ * inverts exactly — a click maps back to a subtile with no search.
+ */
+export class Minimap {
+  /** Screen pixels per subtile along the diamond's long axis. */
+  readonly k: number;
+  readonly ox: number;
+  readonly oy: number;
+
+  constructor({k = 2, ox = 0, oy = 0} = {}) {
+    this.k = k;
+    this.ox = ox;
+    this.oy = oy;
+  }
+
+  project(x: number, y: number): Point {
+    return {x: (x - y) * this.k + this.ox, y: (x + y) * (this.k / 2) + this.oy};
+  }
+
+  /** Screen pixels back to subtiles. Exact: the transform is a rotation and a scale. */
+  unproject(sx: number, sy: number): Point {
+    const u = (sx - this.ox) / this.k;
+    const w = (sy - this.oy) / (this.k / 2);
+    return {x: (u + w) / 2, y: (w - u) / 2};
+  }
+
+  /** As a canvas transform, for `ctx.setTransform(...)`. */
+  get matrix(): [number, number, number, number, number, number] {
+    return [this.k, this.k / 2, -this.k, this.k / 2, this.ox, this.oy];
+  }
+
+  /** A projection that fits a subtile box into a canvas. */
+  static fit(
+    canvasWidth: number, canvasHeight: number,
+    x0: number, y0: number, x1: number, y1: number,
+    padding = 16,
+  ): Minimap {
+    const span = Math.max(1, x1 - x0) + Math.max(1, y1 - y0);
+    const k = Math.max(1e-4, Math.min(
+      (canvasWidth - padding * 2) / span,
+      (canvasHeight - padding * 2) / (span / 2),
+    ));
+    const centred = new Minimap({k});
+    const middle = centred.project((x0 + x1) / 2, (y0 + y1) / 2);
+    return new Minimap({k, ox: canvasWidth / 2 - middle.x, oy: canvasHeight / 2 - middle.y});
+  }
+
+  /** A projection of the same scale, panned so `at` sits in the middle of a viewport. */
+  centredOn(at: Point, width: number, height: number): Minimap {
+    const centred = new Minimap({k: this.k});
+    const p = centred.project(at.x, at.y);
+    return new Minimap({k: this.k, ox: width / 2 - p.x, oy: height / 2 - p.y});
+  }
+}
+
+/**
+ * Above this many boundary edges, wall LINES stop being the right drawing.
+ *
+ * A dense Act 5 Hell maze is mostly blocked with scattered open pockets, which is hundreds of
+ * thousands of one-cell segments — enough to freeze a main thread stroking them. Past the cap the
+ * caller should fill {@link floorRuns} instead, which is always O(w·h) and never O(segments).
+ */
+export const EDGE_CAP = 120_000;
+
+/**
+ * Wall lines in subtile space, as flat `[x0, y0, x1, y1, …]`.
+ *
+ * A line is drawn only where OPEN meets real BLOCKED, never where open meets VOID. Void is "no room
+ * covers this subtile", so outlining it would trace the room-union silhouette and every gap between
+ * rooms as walls the game does not have.
+ *
+ * Collinear edges merge into one segment, which is what keeps a 400x400 level to a few thousand
+ * lines rather than 160,000. Null when the level is too fragmented to draw this way.
+ */
+export function wallSegments(grid: WalkGrid): Float32Array | null {
+  if (grid.width <= 0 || grid.height <= 0) return null;
+  const out: number[] = [];
+
+  const isEdge = (ax: number, ay: number, bx: number, by: number): boolean => {
+    const a = grid.at(ax, ay);
+    const b = grid.at(bx, by);
+    return (a === Walk.open && b === Walk.blocked) || (b === Walk.open && a === Walk.blocked);
+  };
+
+  for (let vx = 0; vx <= grid.width; vx++) {
+    let run = -1;
+    for (let y = 0; y <= grid.height; y++) {
+      const edge = y < grid.height && isEdge(vx - 1, y, vx, y);
+      if (edge && run < 0) run = y;
+      else if (!edge && run >= 0) {
+        out.push(vx, run, vx, y);
+        run = -1;
+      }
+    }
+    if (out.length / 4 > EDGE_CAP) return null;
+  }
+  for (let vy = 0; vy <= grid.height; vy++) {
+    let run = -1;
+    for (let x = 0; x <= grid.width; x++) {
+      const edge = x < grid.width && isEdge(x, vy - 1, x, vy);
+      if (edge && run < 0) run = x;
+      else if (!edge && run >= 0) {
+        out.push(run, vy, x, vy);
+        run = -1;
+      }
+    }
+    if (out.length / 4 > EDGE_CAP) return null;
+  }
+  return new Float32Array(out);
+}
+
+/**
+ * The walkable interior as rectangles, flat `[x, y, width, 1, …]` — the backdrop the wall lines sit
+ * on. Horizontal runs of open cells merge, and the projection draws each as a parallelogram.
+ */
+export function floorRuns(grid: WalkGrid): Float32Array {
+  const out: number[] = [];
+  for (let y = 0; y < grid.height; y++) {
+    let run = -1;
+    for (let x = 0; x <= grid.width; x++) {
+      const open = x < grid.width && grid.isOpen(x, y);
+      if (open && run < 0) run = x;
+      else if (!open && run >= 0) {
+        out.push(run, y, x - run, 1);
+        run = -1;
+      }
+    }
+  }
+  return new Float32Array(out);
+}
+
+/** The subtile bounding box of everything walkable, for fitting a view to the level's real extent. */
+export function walkableBounds(grid: WalkGrid): {x0: number; y0: number; x1: number; y1: number} {
+  let x0 = grid.width;
+  let y0 = grid.height;
+  let x1 = 0;
+  let y1 = 0;
+  for (let y = 0; y < grid.height; y++) {
+    for (let x = 0; x < grid.width; x++) {
+      if (!grid.isOpen(x, y)) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  return x1 < x0 ? {x0: 0, y0: 0, x1: grid.width, y1: grid.height} : {x0, y0, x1, y1};
 }

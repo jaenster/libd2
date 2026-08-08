@@ -167,6 +167,7 @@ export class Area {
   #exits?: readonly Exit[];
   #objects?: readonly WorldObject[];
   #collision?: CollisionGrid;
+  #walk?: WalkGrid;
 
   constructor(game: Game, id: AreaId, actNumber: ActNumber, index: number) {
     this.game = game;
@@ -318,6 +319,35 @@ export class Area {
     return this.#collision;
   }
 
+  /**
+   * The walk grid for a walking player: one byte per subtile, classified into {@link Walk}.
+   *
+   * Derived from `collision` rather than fetched, because the classification depends on WHO is
+   * walking. Passability is the map: a monster and a missile see different walls in the same level,
+   * so a grid baked for one of them is the wrong map for the others. {@link Area.walkFor} is the
+   * same thing under another movement model.
+   */
+  get walk(): WalkGrid {
+    this.#walk ??= this.walkFor(Masks.playerPath);
+    return this.#walk;
+  }
+
+  /** The walk grid under a given movement model — see {@link Masks}. */
+  walkFor(mask: number): WalkGrid {
+    const grid = this.collision;
+    const cells = new Uint8Array(grid.cells.length);
+    for (let i = 0; i < cells.length; i++) {
+      const cell = grid.cells[i] ?? 0;
+      // Blank is the engine's "no floor tile here", and it is NOT a wall. Collapsing the two is
+      // what draws the room-union silhouette and every gap between rooms as geometry the game
+      // does not have.
+      cells[i] = (cell & Colbit.blank) !== 0
+        ? Walk.void
+        : (cell & mask) === 0 ? Walk.open : Walk.blocked;
+    }
+    return new WalkGrid(grid.width, grid.height, cells);
+  }
+
   /** A Location in this area, from level-local subtiles. */
   at(x: number, y: number): Location {
     return new Location(this, x, y);
@@ -380,6 +410,43 @@ export class CollisionGrid {
   /** Whether a unit with this movement model may stand here. */
   passable(x: number, y: number, mask: number = Masks.playerPath): boolean {
     return (this.at(x, y) & mask) === 0;
+  }
+}
+
+/** What a walk-grid cell is. */
+export const Walk = {
+  /** No room covers this subtile. Outside the level, not a wall. */
+  void: 0,
+  open: 1,
+  blocked: 2,
+} as const;
+
+/**
+ * A level's walk grid: one byte per subtile, each {@link Walk}.
+ *
+ * The distinction that matters is between BLOCKED and VOID. Void is "no room covers this subtile",
+ * so outlining it draws the room-union silhouette and every inter-room gap as spurious walls — a
+ * map full of geometry the game does not have.
+ */
+export class WalkGrid {
+  readonly width: number;
+  readonly height: number;
+  readonly cells: Uint8Array;
+
+  constructor(width: number, height: number, cells: Uint8Array) {
+    this.width = width;
+    this.height = height;
+    this.cells = cells;
+  }
+
+  /** The cell at a point. Outside the grid reads as void. */
+  at(x: number, y: number): number {
+    if (x < 0 || y < 0 || x >= this.width || y >= this.height) return Walk.void;
+    return this.cells[y * this.width + x] ?? Walk.void;
+  }
+
+  isOpen(x: number, y: number): boolean {
+    return this.at(x, y) === Walk.open;
   }
 }
 
