@@ -145,6 +145,15 @@ pub fn info(op: u8) Info {
     };
 }
 
+/// Human label for logging: the symbolic name when the opcode is known, else "0xNN" written into
+/// `buf` (which must hold at least 4 bytes). A trace of a live stream is unreadable as bare
+/// numbers, and the name belongs next to the table it comes from.
+pub fn label(op: u8, buf: []u8) []const u8 {
+    const i = info(op);
+    if (i.cat != .unknown) return i.name;
+    return std.fmt.bufPrint(buf, "0x{x:0>2}", .{op}) catch "?";
+}
+
 const DecodeError = error{ ShortBuffer, WrongOpcode };
 
 /// Concatenates several encoded S->C packets into one contiguous buffer for a single client flush.

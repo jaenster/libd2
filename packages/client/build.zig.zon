@@ -1,0 +1,21 @@
+.{
+    .name = .d2_client,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x8375acaec589d5c0,
+
+    // d2-net decodes the stream this package listens to; d2-core owns the item bit-stream and the
+    // Unit vocabulary the model speaks; d2-data says which object class is a waypoint, a shrine or
+    // a door, so none of that has to be transcribed into a hardcoded list here.
+    .dependencies = .{
+        .d2_net = .{ .path = "../net" },
+        .d2_core = .{ .path = "../core" },
+        .d2_data = .{ .path = "../data" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

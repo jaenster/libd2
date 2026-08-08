@@ -27,7 +27,10 @@ pub fn build(b: *std.Build) void {
         .{ .dep = "d2_formats", .mod = "d2-formats" },
         .{ .dep = "d2_save", .mod = "d2-save" },
         .{ .dep = "d2_util", .mod = "d2-util" },
+        .{ .dep = "d2_world", .mod = "d2-world" },
         .{ .dep = "d2_pathfinding", .mod = "d2-pathfinding" },
+        .{ .dep = "d2_net", .mod = "d2-net" },
+        .{ .dep = "d2_client", .mod = "d2-client" },
     };
     for (exported) |e| {
         const dep = b.dependency(e.dep, .{ .target = target, .optimize = optimize });
@@ -36,7 +39,7 @@ pub fn build(b: *std.Build) void {
         b.modules.put(b.graph.arena, b.dupe(e.mod), dep.module(e.mod)) catch @panic("OOM");
     }
 
-    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "item", "game", "net", "data", "util", "pathfinding", "save" };
+    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "item", "game", "net", "data", "util", "world", "pathfinding", "save", "client" };
 
     const test_step = b.step("test", "Run every package's test suite");
 

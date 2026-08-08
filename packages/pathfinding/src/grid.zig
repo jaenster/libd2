@@ -19,8 +19,9 @@
 
 const std = @import("std");
 const collision = @import("d2-core").collision;
+const wd = @import("d2-world");
 
-pub const SUBTILES_PER_TILE: i32 = 5;
+pub const SUBTILES_PER_TILE: i32 = wd.SUBTILES_PER_TILE;
 
 /// The furthest a single movement COMMAND may target, in subtiles, measured Chebyshev (per axis).
 ///
@@ -50,7 +51,7 @@ pub const ENGINE_MAX_COMMAND_RANGE: i32 = 50;
 /// same margin the established bots settled on, and this is the reason for it.
 pub const SAFE_COMMAND_STEP: i32 = 40;
 
-pub const Point = struct { x: i32, y: i32 };
+pub const Point = wd.Point;
 
 /// The passability bitset packs one subtile per bit. Both helpers divide by a power-of-two
 /// constant, so they compile to the same shift-and-mask the hand-written version was — they just
@@ -66,21 +67,14 @@ inline fn bitOf(cell: usize) Word {
     return @as(Word, 1) << @intCast(cell % bits_per_word);
 }
 
-/// One mask's derived view of a level. Owned by the `Level` that built it.
 /// How much of the grid a unit occupies. The engine never tests a bare cell for a real unit:
 /// `CheckCollision_BlockPlayer_Type` (0x64d910) and `CheckCollision_BlockAll_Width` (0x64d9b0)
 /// dispatch on the unit's size and OR together every cell of its shape, so a big monster is
 /// blocked by a gap a small one walks through.
-pub const Footprint = enum {
-    /// `COLLISION_UNIT_SIZE_POINT` / `COLLISION_PATTERN_NONE` — the cell alone.
-    point,
-    /// `COLLISION_UNIT_SIZE_SMALL` / the `*_SMALL_*` patterns — `CheckCollision_Cross`
-    /// (0x64d100): the cell plus its four cardinal neighbours.
-    cross,
-    /// `COLLISION_UNIT_SIZE_BIG` / the `*_BIG_*` patterns — `CheckCollision_BoundingBox1`
-    /// (0x64d4a0), which builds `[x-1, x+1] x [y-1, y+1]`.
-    box3,
-};
+/// It is `eD2CollisionUnitSize` itself, from d2-core: the size a unit STAMPS with and the size it
+/// is CHECKED with are one field on the unit, and modelling them as two types here would let a
+/// caller pair a small monster's occupancy with a big monster's passability.
+pub const Footprint = collision.Size;
 
 pub const PassMap = struct {
     mask: u16,
@@ -97,6 +91,17 @@ pub const PassMap = struct {
     /// `CLEARANCE_MAX`. 0 on an impassable cell, 1 on one that touches a wall. Lazily built.
     clear: []u8,
     clear_built: bool,
+    /// The level this is a view of. Everything above this line is derived from `level.cells` and
+    /// cached; everything the level knows about UNITS is not cached anywhere, because it changes on
+    /// every monster step, and is consulted per cell by `passableAt`.
+    ///
+    /// That split is what keeps `comp` and `clear` valid — they never see a unit — and it is safe
+    /// because occupancy only ever ADDS blockage, so `comp` remains an exact "these two cells can
+    /// never be connected" test. Terrain edits DO invalidate them, which is what `terrain_gen`
+    /// catches: see `Nav.passMapFor`.
+    level: *const wd.Level,
+    /// The level's `terrain_gen` when `bits` was last built.
+    terrain_gen: u64 = 0,
 
     pub const NO_COMPONENT: u32 = 0;
 
@@ -122,7 +127,7 @@ pub const PassMap = struct {
         const w: usize = @intCast(self.w);
         const h: usize = @intCast(self.h);
 
-        for (self.clear, 0..) |*c, i| c.* = if (self.passableAt(i)) CLEARANCE_MAX else 0;
+        for (self.clear, 0..) |*c, i| c.* = if (self.staticPassableAt(i)) CLEARANCE_MAX else 0;
 
         var y: usize = 0;
         while (y < h) : (y += 1) {
@@ -172,9 +177,85 @@ pub const PassMap = struct {
         return x >= 0 and y >= 0 and x < self.w and y < self.h;
     }
 
-    /// Passable at a raw index — callers that already bounds-checked use this.
-    pub inline fn passableAt(self: *const PassMap, cell: usize) bool {
+    /// Passable as far as TERRAIN is concerned, at a raw index, with the footprint already folded
+    /// in. This is what `comp` and `clear` are built from — they must not see the live world, or a
+    /// monster taking one step would invalidate a cache that costs a full pass to rebuild.
+    pub inline fn staticPassableAt(self: *const PassMap, cell: usize) bool {
         return self.bits[wordOf(cell)] & bitOf(cell) != 0;
+    }
+
+    pub inline fn staticPassable(self: *const PassMap, x: i32, y: i32) bool {
+        return self.inBounds(x, y) and self.staticPassableAt(self.index(x, y));
+    }
+
+    /// Passable at a raw index — callers that already bounds-checked use this.
+    ///
+    /// Terrain first, because it is one bit test and it rejects most of the grid; only then the
+    /// live world, which is itself one bit test in the overwhelmingly common "nobody here" case.
+    pub inline fn passableAt(self: *const PassMap, cell: usize) bool {
+        if (!self.staticPassableAt(cell)) return false;
+        const units = &self.level.units;
+        if (units.isEmpty()) return true;
+        return !self.liveBlocked(units, cell);
+    }
+
+    /// A footprint's worth of live world. The static side pre-eroded the footprint into `bits` once
+    /// at build time; the live side cannot, so the shape is walked here — the engine ORs it too
+    /// (`CheckCollision_BlockAll_Width`, 0x64d9b0). Cells off the grid are skipped rather than
+    /// treated as blocking, because erosion already rejected any cell whose shape leaves the grid.
+    fn liveBlocked(self: *const PassMap, units: *const wd.Occupancy, cell: usize) bool {
+        if (self.footprint == .point) return units.blocks(cell, self.mask);
+        const uw: usize = @intCast(self.w);
+        const x: i32 = @intCast(cell % uw);
+        const y: i32 = @intCast(cell / uw);
+        for (collision.cellsOf(self.footprint)) |d| {
+            const nx = x + d[0];
+            const ny = y + d[1];
+            if (!self.inBounds(nx, ny)) continue;
+            if (units.blocks(self.index(nx, ny), self.mask)) return true;
+        }
+        return false;
+    }
+
+    /// Rebuild the terrain bitset over a rectangle whose raw cells changed, and drop the caches
+    /// derived from it. Terrain edits can make a cell MORE passable, which can join two components,
+    /// so `comp` and `clear` go rather than being patched.
+    ///
+    /// The bounds are inclusive and name the CHANGED cells; footprint erosion means a neighbour's
+    /// bit can change too, so the rebuild covers one extra ring.
+    pub fn repatch(self: *PassMap, x0: i32, y0: i32, x1: i32, y1: i32) void {
+        const pad: i32 = if (self.footprint == .point) 0 else 1;
+        const lo_x = @max(0, x0 - pad);
+        const hi_x = @min(self.w - 1, x1 + pad);
+        const lo_y = @max(0, y0 - pad);
+        const hi_y = @min(self.h - 1, y1 + pad);
+        var y = lo_y;
+        while (y <= hi_y) : (y += 1) {
+            var x = lo_x;
+            while (x <= hi_x) : (x += 1) {
+                const i = self.index(x, y);
+                if (self.footprintFits(x, y)) {
+                    self.bits[wordOf(i)] |= bitOf(i);
+                } else {
+                    self.bits[wordOf(i)] &= ~bitOf(i);
+                }
+            }
+        }
+        self.comp_built = false;
+        self.clear_built = false;
+    }
+
+    /// Does every cell of the footprint centred here pass the mask? The same predicate `erode`
+    /// applies in bulk at build time, spelled once more for the incremental path.
+    fn footprintFits(self: *const PassMap, x: i32, y: i32) bool {
+        const cells = self.level.cells;
+        for (collision.cellsOf(self.footprint)) |d| {
+            const nx = x + d[0];
+            const ny = y + d[1];
+            if (!self.inBounds(nx, ny)) return false;
+            if (!collision.passable(cells[self.index(nx, ny)], self.mask)) return false;
+        }
+        return true;
     }
 
     pub inline fn passable(self: *const PassMap, x: i32, y: i32) bool {
@@ -196,7 +277,7 @@ pub const PassMap = struct {
             var x: i32 = 0;
             while (x < self.w) : (x += 1) {
                 const seed = self.index(x, y);
-                if (!self.passableAt(seed) or self.comp[seed] != NO_COMPONENT) continue;
+                if (!self.staticPassableAt(seed) or self.comp[seed] != NO_COMPONENT) continue;
                 next_label += 1;
                 self.comp[seed] = next_label;
                 try stack.append(alloc, @intCast(seed));
@@ -208,7 +289,7 @@ pub const PassMap = struct {
                         const ny = cy + d[1];
                         if (!self.inBounds(nx, ny)) continue;
                         const ni = self.index(nx, ny);
-                        if (!self.passableAt(ni) or self.comp[ni] != NO_COMPONENT) continue;
+                        if (!self.staticPassableAt(ni) or self.comp[ni] != NO_COMPONENT) continue;
                         self.comp[ni] = next_label;
                         try stack.append(alloc, @intCast(ni));
                     }
@@ -244,14 +325,14 @@ pub inline fn heuristic(ax: i32, ay: i32, bx: i32, by: i32) u32 {
 /// `collision.VOID` fails naturally because it has every bit set.
 pub fn buildPassMap(
     alloc: std.mem.Allocator,
-    cells: []const u16,
-    w: i32,
-    h: i32,
+    level: *const wd.Level,
     mask: u16,
     footprint: Footprint,
 ) !PassMap {
+    const cells = level.cells;
+    const w = level.w;
+    const h = level.h;
     const n: usize = @intCast(w * h);
-    std.debug.assert(cells.len == n);
     const bits = try alloc.alloc(Word, std.math.divCeil(usize, n, bits_per_word) catch unreachable);
     errdefer alloc.free(bits);
     @memset(bits, 0);
@@ -271,6 +352,8 @@ pub fn buildPassMap(
         .footprint = footprint,
         .w = w,
         .h = h,
+        .level = level,
+        .terrain_gen = level.terrain_gen,
         .bits = bits,
         .comp = comp,
         .comp_built = false,
@@ -278,140 +361,6 @@ pub fn buildPassMap(
         .clear = clear,
         .clear_built = false,
     };
-}
-
-pub const FreeCoordOptions = struct {
-    /// `nMaxDistance`. The search does not start at all at 1 or less.
-    max_distance: i32 = 20,
-    /// `nPosIncrementValue`: how far apart the rings are, and the stride within them.
-    step: i32 = 1,
-};
-
-/// Where the server would actually put something asked for at `at` — `GetFreeCoordinates`
-/// (0x64dea0), which decides teleport landings, corpse and item drops, portal placement,
-/// `WarpToAct` and monster spawns.
-///
-/// It is not our `nearestPassable`. The exact cell is tried first with the unit's footprint
-/// (`CheckCollision_BlockAll_Width`, which is why the mask AND footprint live in `pm`). Failing
-/// that it walks expanding square rings, and within the FIRST ring that contains anything free it
-/// takes the candidate with the smallest MANHATTAN distance to the origin — not the first one it
-/// meets. Ring `k` sits at radius `k * step`, and the walk stops once `1 + radius` reaches
-/// `max_distance`.
-///
-/// The `pFieldCoords` variant, which additionally requires a clear path from a second point via
-/// `FIELDTBLS_TracePathCheckCollision`, is NOT modelled here — that function has not been read.
-/// Callers that need it (item and gold drops) will place slightly differently than the server.
-pub fn freeCoordinates(pm: *const PassMap, at: Point, opts: FreeCoordOptions) ?Point {
-    if (pm.passable(at.x, at.y)) return at;
-    if (opts.max_distance <= 1) return null;
-
-    const inc = opts.step;
-    var y_top = at.y + 1;
-    var y_bottom = at.y - 1;
-    var x_left = at.x;
-    var x_right = at.x;
-    var stride: i32 = 2;
-
-    while (true) {
-        var best: ?Point = null;
-        var best_dist: i32 = -1;
-
-        const consider = struct {
-            fn f(p: *const PassMap, o: Point, x: i32, y: i32, b: *?Point, bd: *i32) void {
-                if (!p.passable(x, y)) return;
-                const d: i32 = @intCast(@abs(x - o.x) + @abs(y - o.y));
-                if (bd.* == -1 or d < bd.*) {
-                    b.* = .{ .x = x, .y = y };
-                    bd.* = d;
-                }
-            }
-        }.f;
-
-        // The ring's two vertical edges: every row, but only the leftmost and rightmost columns.
-        var iy = y_bottom;
-        while (iy <= y_top) : (iy += inc) {
-            var ix = x_left - 1;
-            while (ix <= x_right + 1) : (ix += stride) consider(pm, at, ix, iy, &best, &best_dist);
-        }
-        // And its two horizontal edges: every column between them, top row and bottom row only.
-        var ix = x_left;
-        while (ix <= x_right) : (ix += inc) {
-            var iy2 = y_bottom;
-            while (iy2 <= y_top) : (iy2 += stride) consider(pm, at, ix, iy2, &best, &best_dist);
-        }
-
-        if (best) |p| return p;
-
-        y_top += inc;
-        y_bottom -= inc;
-        x_left -= inc;
-        x_right += inc;
-        stride += inc * 2;
-        if (1 + (x_right - at.x) >= opts.max_distance) return null;
-    }
-}
-
-pub const Trace = struct {
-    /// Where the walk stopped: the blocking cell when `blocked`, otherwise the destination.
-    at: Point,
-    blocked: bool,
-};
-
-/// Walk the line from `from` to `to`, stopping at the first cell `pm`'s mask rejects. Both
-/// endpoints are tested, and a cell off the grid blocks — the engine's null-room case.
-///
-/// This is `Collision::TestCollision` (0x64e260) with the room walk collapsed, because a
-/// `PassMap` is already one flat level-wide grid where the engine has to re-resolve the room at
-/// every boundary. Same four cases (degenerate, vertical, horizontal, and Bresenham split on
-/// which axis is major), same order — test the cell, then advance — so the same set of cells is
-/// visited. Note the engine's own return is inverted: `TestCollision` yields TRUE for a HIT, and
-/// `SKILLS_HasLineOfSight` (0x645910) is a one-line negation of it.
-///
-/// The mask lives in the `PassMap`, which is what makes this one function serve every caller the
-/// engine has: line of sight with the caster's mask, a missile with `Colmask.missile_flight`, an
-/// area-of-effect check with whatever the skill passes.
-pub fn trace(pm: *const PassMap, from: Point, to: Point) Trace {
-    var x = from.x;
-    var y = from.y;
-    const span_x = to.x - x;
-    const span_y = to.y - y;
-    const step_x: i32 = if (span_x < 0) -1 else 1;
-    const step_y: i32 = if (span_y < 0) -1 else 1;
-    const dx: i32 = if (span_x < 0) -span_x else span_x;
-    const dy: i32 = if (span_y < 0) -span_y else span_y;
-
-    if (dx < dy) {
-        // Steep: y advances every step, x follows the error term.
-        var err: i32 = 0;
-        while (true) {
-            if (!pm.passable(x, y)) return .{ .at = .{ .x = x, .y = y }, .blocked = true };
-            if (y == to.y) return .{ .at = .{ .x = x, .y = y }, .blocked = false };
-            y += step_y;
-            err += dx;
-            if (err >= dy) {
-                err -= dy;
-                x += step_x;
-            }
-        }
-    }
-    // Shallow, and the degenerate/axis-aligned cases fall out of it: when dy is 0 the error term
-    // never fires and y never moves, and when both are 0 the first cell is also the last.
-    var err: i32 = 0;
-    while (true) {
-        if (!pm.passable(x, y)) return .{ .at = .{ .x = x, .y = y }, .blocked = true };
-        if (x == to.x) return .{ .at = .{ .x = x, .y = y }, .blocked = false };
-        err += dy;
-        x += step_x;
-        if (err >= dx) {
-            err -= dx;
-            y += step_y;
-        }
-    }
-}
-
-/// `SKILLS_HasLineOfSight` (0x645910): is the line clear end to end?
-pub fn hasLineOfSight(pm: *const PassMap, from: Point, to: Point) bool {
-    return !trace(pm, from, to).blocked;
 }
 
 /// Shrink a point-passability bitset to a footprint's: a cell stays set only when every cell of
@@ -423,17 +372,8 @@ fn erode(alloc: std.mem.Allocator, bits: []Word, w: i32, h: i32, footprint: Foot
     defer alloc.free(src);
     @memset(bits, 0);
 
-    const cross = [_][2]i32{ .{ 0, 0 }, .{ -1, 0 }, .{ 1, 0 }, .{ 0, -1 }, .{ 0, 1 } };
-    const box3 = [_][2]i32{
-        .{ -1, -1 }, .{ 0, -1 }, .{ 1, -1 },
-        .{ -1, 0 },  .{ 0, 0 },  .{ 1, 0 },
-        .{ -1, 1 },  .{ 0, 1 },  .{ 1, 1 },
-    };
-    const shape: []const [2]i32 = switch (footprint) {
-        .point => return,
-        .cross => &cross,
-        .box3 => &box3,
-    };
+    if (footprint == .point or footprint == .none) return;
+    const shape = collision.cellsOf(footprint);
 
     var y: i32 = 0;
     while (y < h) : (y += 1) {
@@ -460,23 +400,23 @@ fn erode(alloc: std.mem.Allocator, bits: []Word, w: i32, h: i32, footprint: Foot
 /// requested position — a warp tile, a teleport landing, a caller's goal — that may sit inside a
 /// wall, and the search needs a real cell to start or end on.
 pub fn nearestPassable(pm: *const PassMap, x: i32, y: i32, radius: i32) ?Point {
-    if (pm.passable(x, y)) return .{ .x = x, .y = y };
-    var r: i32 = 1;
-    while (r <= radius) : (r += 1) {
-        var dx: i32 = -r;
-        while (dx <= r) : (dx += 1) {
-            const dys = [_]i32{ -r, r };
-            for (dys) |dy| {
-                if (pm.passable(x + dx, y + dy)) return .{ .x = x + dx, .y = y + dy };
-            }
+    return nearestWhere(pm, x, y, radius, false);
+}
+
+/// `nearestPassable` over terrain alone. Anything CACHED has to use this: a cache that snapped
+/// around a monster would still be pointing there after the monster walked off.
+pub fn nearestStaticPassable(pm: *const PassMap, x: i32, y: i32, radius: i32) ?Point {
+    return nearestWhere(pm, x, y, radius, true);
+}
+
+fn nearestWhere(pm: *const PassMap, x: i32, y: i32, radius: i32, comptime terrain_only: bool) ?Point {
+    const S = struct {
+        pm: *const PassMap,
+        fn ok(ctx: @This(), cx: i32, cy: i32) bool {
+            return if (terrain_only) ctx.pm.staticPassable(cx, cy) else ctx.pm.passable(cx, cy);
         }
-        var dy: i32 = -r + 1;
-        while (dy <= r - 1) : (dy += 1) {
-            const dxs = [_]i32{ -r, r };
-            for (dxs) |ddx| {
-                if (pm.passable(x + ddx, y + dy)) return .{ .x = x + ddx, .y = y + dy };
-            }
-        }
-    }
-    return null;
+    };
+    // Same ring order as `Level.nearestFree`, shared rather than restated: the cached answer and
+    // the direct one must not disagree about which cell is "nearest".
+    return wd.ringSearch(S{ .pm = pm }, x, y, radius, S.ok);
 }

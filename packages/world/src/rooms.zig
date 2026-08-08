@@ -85,15 +85,15 @@ pub const NO_ROOM: u16 = 0xFFFF;
 /// room -> its near set. Both are built once at load and then read-only, so a teleport hop is
 /// two array indexes and a small linear scan, not a geometry test against every room.
 pub const RoomSet = struct {
-    rooms: []Room,
+    rooms: []Room = &.{},
     /// Level-local TILE grid (`tw` x `th`) of room ids; `NO_ROOM` where no room covers the tile.
-    at: []u16,
-    tw: i32,
-    th: i32,
+    at: []u16 = &.{},
+    tw: i32 = 0,
+    th: i32 = 0,
     /// Flattened near lists: room `i` owns `near[near_start[i]..near_start[i + 1]]`. Includes the
     /// room itself, exactly as the engine's list does.
-    near: []u16,
-    near_start: []u32,
+    near: []u16 = &.{},
+    near_start: []u32 = &.{},
 
     pub fn deinit(self: *RoomSet, alloc: std.mem.Allocator) void {
         alloc.free(self.rooms);

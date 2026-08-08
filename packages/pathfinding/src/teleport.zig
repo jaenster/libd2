@@ -45,8 +45,10 @@
 
 const std = @import("std");
 const grid = @import("grid.zig");
-const rooms = @import("rooms.zig");
-const level_mod = @import("level.zig");
+const wd = @import("d2-world");
+const rooms = wd.rooms;
+const level_mod = wd.level;
+const Nav = @import("nav.zig").Nav;
 const collision = @import("d2-core").collision;
 
 const Level = level_mod.Level;
@@ -152,7 +154,7 @@ inline fn dist2(ax: i32, ay: i32, bx: i32, by: i32) i64 {
 /// subtiles.
 pub fn find(
     alloc: std.mem.Allocator,
-    level: *Level,
+    nv: *Nav,
     sx: i32,
     sy: i32,
     gx: i32,
@@ -160,10 +162,11 @@ pub fn find(
     opts: Options,
     out: *std.ArrayListUnmanaged(Point),
 ) Error!void {
+    const level = nv.lv;
     if (level.teleport == .forbidden) return error.Forbidden;
     const mask = level.teleport.destinationMask(opts.landing_mask);
 
-    const pm = try level.passMap(mask);
+    const pm = try nv.passMap(mask);
     const start = grid.nearestPassable(pm, sx, sy, opts.snap_radius) orelse return error.StartBlocked;
     const goal = grid.nearestPassable(pm, gx, gy, opts.goal_snap_radius orelse opts.snap_radius) orelse
         return error.GoalBlocked;
@@ -184,7 +187,7 @@ pub fn find(
         // A non-positive limit means no cast can ever move you, and it would divide by zero in the
         // heuristic. The direct check above already covered "the goal is where you stand".
         if (max_cast <= 0) return error.Unreachable;
-        return findBounded(alloc, level, pm, start, goal, start_room, goal_room, max_cast, opts, out);
+        return findBounded(alloc, nv, pm, start, goal, start_room, goal_room, max_cast, opts, out);
     }
     return findByRoom(alloc, level, pm, goal, start_room, goal_room, out);
 }
@@ -201,7 +204,7 @@ fn canHop(level: *const Level, from: Point, to: Point, from_room: u16, to_room: 
 /// A* over tiles, one unit of cost per cast.
 fn findBounded(
     alloc: std.mem.Allocator,
-    level: *Level,
+    nv: *Nav,
     pm: *grid.PassMap,
     start: Point,
     goal: Point,
@@ -213,7 +216,8 @@ fn findBounded(
 ) Error!void {
     // Both ends have to be in the same walk-or-teleport region for any chain to exist. Teleport
     // crosses walls, so it is the ROOM graph that has to connect, not the collision components.
-    const reps = try level.tileReps(pm.mask);
+    const level = nv.lv;
+    const reps = try nv.tileReps(pm.mask);
     const tw = level.tileW();
     const th = level.tileH();
     const node_count: usize = @intCast(@max(tw * th, 0));
