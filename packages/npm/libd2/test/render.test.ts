@@ -4,7 +4,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
-import {init, open, Areas, rasterize, twoTone, View, Masks} from '../src/index.ts';
+import {
+  init, open, Areas, rasterize, twoTone, View, Masks, Walk,
+  wallSegments, floorRuns, walkableBounds, Minimap,
+} from '../src/index.ts';
 
 await init();
 
@@ -61,4 +64,78 @@ test('the three frames round-trip', () => {
   const centred = view.centredOn(local, 800, 600);
   assert.deepEqual(centred.toScreen(local), {x: 400, y: 300});
   assert.ok(centred.toLocation({x: 400, y: 300}).equals(local));
+});
+
+test('the walk grid separates void from blocked, which the wall tracer depends on', () => {
+  using game = open({seed: 1337});
+  const walk = game.area(Areas.ColdPlains).walk;
+  assert.ok(walk.width > 0 && walk.height > 0);
+
+  const counts = [0, 0, 0];
+  for (const cell of walk.cells) counts[cell] = (counts[cell] ?? 0) + 1;
+  assert.ok(counts[Walk.open]! > 0, 'somewhere is walkable');
+  assert.ok(counts[Walk.blocked]! > 0, 'something is a wall');
+  assert.ok(counts[Walk.void]! > 0, 'an outdoor level is not a full rectangle');
+});
+
+test('wall lines trace open-meets-blocked, and merging keeps them countable', () => {
+  using game = open({seed: 1337});
+  const walk = game.area(Areas.ColdPlains).walk;
+
+  const segments = wallSegments(walk);
+  assert.ok(segments, 'the Cold Plains is not too fragmented for lines');
+  assert.equal(segments.length % 4, 0);
+
+  const lines = segments.length / 4;
+  assert.ok(lines > 0);
+  // Merging collinear edges is the whole reason this is drawable: without it a level this size is
+  // tens of thousands of one-cell segments.
+  assert.ok(lines < walk.cells.length / 10, `${lines} lines for ${walk.cells.length} cells`);
+
+  // Every segment is axis-aligned — they are cell boundaries, not diagonals.
+  for (let i = 0; i < segments.length; i += 4) {
+    assert.ok(segments[i] === segments[i + 2] || segments[i + 1] === segments[i + 3]);
+  }
+});
+
+test('floor runs cover exactly the walkable cells', () => {
+  using game = open({seed: 1337});
+  const walk = game.area(Areas.ColdPlains).walk;
+
+  const runs = floorRuns(walk);
+  let covered = 0;
+  for (let i = 0; i < runs.length; i += 4) covered += runs[i + 2]!;
+
+  let openCells = 0;
+  for (const cell of walk.cells) if (cell === Walk.open) openCells++;
+  assert.equal(covered, openCells);
+});
+
+test('the minimap projection is the engine\'s, and it inverts exactly', () => {
+  const map = new Minimap({k: 4, ox: 100, oy: 50});
+
+  // sx = (x - y)k + ox,  sy = (x + y)k/2 + oy
+  assert.deepEqual(map.project(10, 4), {x: (10 - 4) * 4 + 100, y: (10 + 4) * 2 + 50});
+
+  const back = map.unproject(...Object.values(map.project(37, 19)) as [number, number]);
+  assert.ok(Math.abs(back.x - 37) < 1e-9 && Math.abs(back.y - 19) < 1e-9);
+
+  // The matrix is the same transform, so a canvas applying it agrees with `project`.
+  const [a, b, c, d, e, f] = map.matrix;
+  const viaMatrix = {x: a * 37 + c * 19 + e, y: b * 37 + d * 19 + f};
+  assert.deepEqual(viaMatrix, map.project(37, 19));
+});
+
+test('fitting a level centres it, and centring on a point puts it in the middle', () => {
+  using game = open({seed: 1337});
+  const walk = game.area(Areas.ColdPlains).walk;
+  const box = walkableBounds(walk);
+
+  const fitted = Minimap.fit(800, 600, box.x0, box.y0, box.x1, box.y1);
+  const middle = fitted.project((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2);
+  assert.ok(Math.abs(middle.x - 400) < 1 && Math.abs(middle.y - 300) < 1);
+
+  const centred = fitted.centredOn({x: box.x0, y: box.y0}, 800, 600);
+  const at = centred.project(box.x0, box.y0);
+  assert.ok(Math.abs(at.x - 400) < 1 && Math.abs(at.y - 300) < 1);
 });
