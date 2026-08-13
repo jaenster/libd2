@@ -1,0 +1,18 @@
+.{
+    .name = .d2_bncs,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x45de8874602d8d94,
+
+    // The Battle.net logon protocol: the three hashes (broken-SHA-1 password, version check,
+    // CD-key decode) and the chat/realm message vocabulary. No dependencies on purpose — this
+    // is consumed by a realm server, by clientless harnesses, and by a 32-bit Windows DLL, so
+    // it must stay libc-free and allocator-free.
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
