@@ -19,7 +19,7 @@
         .d2_world = .{ .path = "packages/world" },
         .d2_pathfinding = .{ .path = "packages/pathfinding" },
         .d2_net = .{ .path = "packages/net" },
-        .d2_bncs = .{ .path = "packages/bncs" },
+        .d2_bnet = .{ .path = "packages/bnet" },
         .d2_client = .{ .path = "packages/client" },
     },
 

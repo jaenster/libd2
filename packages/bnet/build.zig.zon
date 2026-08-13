@@ -1,0 +1,18 @@
+.{
+    .name = .d2_bnet,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x8de0ba51bbf7a8d7,
+
+    // Battle.net: BNCS + MCP + BNFTP and the hashes they carry — everything before a game
+    // exists, where d2-net takes over. No dependencies on purpose: this is consumed by a realm
+    // server, by clientless harnesses, and by a 32-bit Windows DLL, so it must stay libc-free
+    // and allocator-free.
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
