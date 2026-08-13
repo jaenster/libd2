@@ -131,3 +131,27 @@ test "malformed tables are rejected, not written past" {
     lengths[0] = 16;
     try std.testing.expectError(error.InvalidCodeLengths, huffman.Table.build(lengths));
 }
+
+// ── evidence: a frame the game actually sent ─────────────────────────────────
+//
+// Everything above is a property of the codec — that it round-trips, that the table is a
+// complete prefix code, that it refuses to run past a buffer. All of it would still pass if
+// the static table were subtly wrong, because both directions would be wrong together.
+//
+// This is the one test that cannot: a real 0x01 GameFlags packet captured off a live 1.14d
+// game server, four compressed bytes and the nine plaintext bytes they stand for. It pins the
+// codec to the wire rather than to itself, in both directions.
+const captured_compressed = [_]u8{ 0x7a, 0x09, 0xa5, 0xf0 };
+const captured_plaintext = [_]u8{ 0x01, 0x00, 0x04, 0x00, 0x10, 0x00, 0x01, 0x00, 0x00 };
+
+test "a frame captured off a live 1.14d server decodes to its known plaintext" {
+    var out: [64]u8 = undefined;
+    const n = huffman.decompress(&out, &captured_compressed) orelse return error.DecodeFailed;
+    try std.testing.expectEqualSlices(u8, &captured_plaintext, out[0..n]);
+}
+
+test "that same plaintext re-encodes to the bytes the server sent" {
+    var out: [64]u8 = undefined;
+    const n = huffman.compress(&out, &captured_plaintext) orelse return error.EncodeFailed;
+    try std.testing.expectEqualSlices(u8, &captured_compressed, out[0..n]);
+}
