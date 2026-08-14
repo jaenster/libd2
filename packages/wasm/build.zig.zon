@@ -10,6 +10,7 @@
     .dependencies = .{
         .d2_drlg = .{ .path = "../drlg" },
         .d2_pathfinding = .{ .path = "../pathfinding" },
+        .d2_item = .{ .path = "../item" },
     },
 
     .paths = .{

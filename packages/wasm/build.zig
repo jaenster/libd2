@@ -2,20 +2,52 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    // Pass -Doptimize=ReleaseSmall for anything you intend to ship: a plain
+    // `zig build -Dtarget=wasm32-freestanding` is a Debug build and emits 6.5 MB where the
+    // released artifact is 2.9 MB. Setting a preferred_optimize_mode here would make that the
+    // default, but it also makes Zig register -Drelease INSTEAD of -Doptimize, which is the flag
+    // release.yml passes — so the default stays Debug and the release pipeline stays explicit.
     const optimize = b.standardOptimizeOption(.{});
+
+    // Which subsystems this bundle carries. One artifact beats one-per-subsystem because a
+    // separate module has its own linear memory and its own copy of whatever it shares — routing
+    // over a generated act costs 61 KB here against roughly a megabyte as a second module. But a
+    // subsystem still brings its OWN content: adding item costs 888 KB combined against 901 KB
+    // standalone, because item's bulk is its excel tables and it shares almost nothing with the
+    // map. So the set is chosen, not fixed, and a consumer who only generates maps does not ship
+    // the item tables to say so.
+    const want = b.option([]const u8, "capi", "Subsystems to bundle: comma list of drlg,pf,item (default all)") orelse "drlg,pf,item";
+    const has = struct {
+        fn f(list: []const u8, name: []const u8) bool {
+            var it = std.mem.splitScalar(u8, list, ',');
+            while (it.next()) |p| if (std.mem.eql(u8, std.mem.trim(u8, p, " "), name)) return true;
+            return false;
+        }
+    }.f;
+    const with_drlg = has(want, "drlg");
+    const with_pf = has(want, "pf");
+    const with_item = has(want, "item");
 
     const drlg = b.dependency("d2_drlg", .{ .target = target, .optimize = optimize });
     const pf = b.dependency("d2_pathfinding", .{ .target = target, .optimize = optimize });
+    const item = b.dependency("d2_item", .{ .target = target, .optimize = optimize });
+
+    const opts = b.addOptions();
+    opts.addOption(bool, "with_drlg", with_drlg);
+    opts.addOption(bool, "with_pf", with_pf);
+    opts.addOption(bool, "with_item", with_item);
 
     const mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{ .name = "d2drlg-capi", .module = drlg.module("d2drlg-capi") },
-            .{ .name = "d2pf-capi", .module = pf.module("d2pf-capi") },
-        },
     });
+    mod.addOptions("build_options", opts);
+    // Every shim is imported; `root.zig` decides at comptime which ones it analyses, and an
+    // import nothing references is never compiled.
+    mod.addImport("d2drlg-capi", drlg.module("d2drlg-capi"));
+    mod.addImport("d2pf-capi", pf.module("d2pf-capi"));
+    mod.addImport("d2item-capi", item.module("d2item-capi"));
 
     if (target.result.cpu.arch.isWasm()) {
         // A reactor, not a command: no entry point, and every export kept.

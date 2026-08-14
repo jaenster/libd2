@@ -83,6 +83,19 @@ pub fn build(b: *std.Build) void {
     // as a freestanding wasm reactor module. This is the reference convention.
     const capi = b.option(bool, "capi", "Build the C-ABI shim (libs / wasm)") orelse true;
     if (capi) {
+        // Exposed so the bundle package can link this shim into ONE module alongside the other
+        // subsystems (see packages/wasm). A separate wasm per subsystem carries its own copy of
+        // the shared base — the excel tables above all — so N modules pay for it N times, while
+        // one combined module pays once and lets the shims address the same linear memory.
+        _ = b.addModule("d2item-capi", .{
+            .root_source_file = b.path("src/capi.zig"),
+            .target = target,
+            .optimize = if (optimize == .Debug) .ReleaseFast else optimize,
+            .imports = &.{
+                .{ .name = "d2-core", .module = core_mod },
+                .{ .name = "d2-data", .module = data_mod },
+            },
+        });
         if (is_wasm) {
             const wasm = b.addExecutable(.{
                 .name = "d2item",
