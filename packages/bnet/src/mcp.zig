@@ -85,8 +85,15 @@ pub const JoinResult = enum(u32) {
     dead_hardcore = 0x6f,
     /// Hardcore and softcore characters may not share a game.
     hardcore_mix = 0x71, // string 0x1426
+    /// The difficulty gates. The realm decides these, so a client never sends them and every
+    /// client-side implementation of this enum was missing them.
+    need_nightmare = 0x73, // string 0x14f4 / 0x5522 "must kill Diablo/Baal to play Nightmare"
+    need_hell = 0x74, // string 0x14f3 / 0x5521 "...in Nightmare to play Hell"
     classic_into_expansion = 0x78, // string 0x2775
     expansion_into_classic = 0x79, // string 0x2776
+    /// A ladder character into a non-ladder game or the reverse; the client picks which of
+    /// string 0x2ab1 / 0x2ab2 to show from its own ladder flag.
+    ladder_mismatch = 0x7d,
     _,
 
     pub fn describe(self: JoinResult) []const u8 {
@@ -100,6 +107,9 @@ pub const JoinResult = enum(u32) {
             .hardcore_mix => "hardcore and softcore may not share a game",
             .classic_into_expansion => "a classic character cannot join an expansion game",
             .expansion_into_classic => "an expansion character cannot join a classic game",
+            .need_nightmare => "Diablo must be beaten on Normal to play Nightmare",
+            .need_hell => "Baal must be beaten on Nightmare to play Hell",
+            .ladder_mismatch => "ladder and non-ladder may not share a game",
             _ => "failed (unknown)",
         };
     }
@@ -167,6 +177,11 @@ test "the join codes, including the three the realm decides" {
     try testing.expectEqual(@as(u32, 0x2a), @intFromEnum(JoinResult.no_such_game));
     try testing.expectEqual(@as(u32, 0x2b), @intFromEnum(JoinResult.game_full));
     try testing.expectEqual(@as(u32, 0x71), @intFromEnum(JoinResult.hardcore_mix));
+    // The gates the REALM decides and a client never sends, so every client-side copy of this
+    // enum lacked them until the server's copy was folded in here.
+    try testing.expectEqual(@as(u32, 0x73), @intFromEnum(JoinResult.need_nightmare));
+    try testing.expectEqual(@as(u32, 0x74), @intFromEnum(JoinResult.need_hell));
+    try testing.expectEqual(@as(u32, 0x7d), @intFromEnum(JoinResult.ladder_mismatch));
     try testing.expect(JoinResult.ok.succeeded());
     try testing.expectEqualStrings("game is full", JoinResult.game_full.describe());
 }
