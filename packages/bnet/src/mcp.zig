@@ -29,6 +29,9 @@ pub const Op = enum(u8) {
     charlogon = 0x07,
     chardelete = 0x0a,
     ladderdata = 0x11,
+    motd = 0x12,
+    cancelcreate = 0x13,
+    charrank = 0x16,
     charupgrade = 0x18,
     charlist2 = 0x19,
     _,
@@ -174,6 +177,10 @@ test "the logon order is startup, charlist2, charlogon" {
     try testing.expectEqual(Op.charlist2, logon_order[1]);
     try testing.expectEqual(Op.charlogon, logon_order[2]);
     try testing.expectEqual(@as(u8, 0x19), @intFromEnum(Op.charlist2));
+    // MOTD has an id of its own and is still not part of the order: sending it between STARTUP
+    // and CHARLIST2 is exactly the mistake this list exists to prevent.
+    try testing.expectEqual(@as(u8, 0x12), @intFromEnum(Op.motd));
+    for (logon_order) |op| try testing.expect(op != .motd);
 }
 
 test "the frame length counts itself" {
