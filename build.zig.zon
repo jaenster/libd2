@@ -1,6 +1,6 @@
 .{
     .name = .libd2,
-    .version = "0.5.0",
+    .version = "0.5.1",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0x5edb35b5ed14bac1,
 
@@ -27,6 +27,10 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        // The umbrella module's source. Without it a fetched libd2 has a `libd2` module whose
+        // root file is not in the package, so every consumer fails with file_hash FileNotFound —
+        // and nothing in this repo notices, because building from a checkout finds src/ anyway.
+        "src",
         "packages",
         "README.md",
         "LICENSE",
