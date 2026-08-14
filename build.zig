@@ -32,17 +32,35 @@ pub fn build(b: *std.Build) void {
         .{ .dep = "d2_net", .mod = "d2-net" },
         .{ .dep = "d2_bnet", .mod = "d2-bnet" },
         .{ .dep = "d2_client", .mod = "d2-client" },
+        .{ .dep = "d2_render", .mod = "d2-render" },
     };
+    // The umbrella: one module named `libd2` with every package hanging off it by name, so a
+    // consumer takes one dependency and one import instead of learning fourteen module names.
+    // Naming a package here costs nothing until it is used — Zig analyses a declaration only when
+    // something references it, so `libd2.bnet` does not drag in the DRLG or the excel tables.
+    const umbrella = b.addModule("libd2", .{
+        .root_source_file = b.path("src/libd2.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     for (exported) |e| {
         const dep = b.dependency(e.dep, .{ .target = target, .optimize = optimize });
-        // Alias the sub-package's already-public module into this package's module
-        // table under the same name, so `libd2.module("d2-sim")` resolves for a dependent.
-        b.modules.put(b.graph.arena, b.dupe(e.mod), dep.module(e.mod)) catch @panic("OOM");
+        // Alias the sub-package's already-public module into this package's module table under
+        // the same name, so `libd2.module("d2-drlg")` keeps resolving for a dependent that wants
+        // exactly one layer — the umbrella is the new front door, not a replacement.
+        const mod = dep.module(e.mod);
+        b.modules.put(b.graph.arena, b.dupe(e.mod), mod) catch @panic("OOM");
+        umbrella.addImport(e.mod, mod);
     }
+
+    // `zig build test-umbrella` — proves the umbrella resolves every name it advertises.
+    const umbrella_tests = b.addTest(.{ .root_module = umbrella });
 
     const packages = [_][]const u8{ "formats", "drlg", "render", "core", "item", "game", "net", "bnet", "data", "util", "world", "pathfinding", "save", "client" };
 
     const test_step = b.step("test", "Run every package's test suite");
+    test_step.dependOn(&b.addRunArtifact(umbrella_tests).step);
+    b.step("test-umbrella", "Check the umbrella module resolves every package").dependOn(&b.addRunArtifact(umbrella_tests).step);
 
     for (packages) |name| {
         const sub = b.addSystemCommand(&.{ "zig", "build", "test" });
