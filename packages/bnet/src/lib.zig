@@ -26,7 +26,9 @@
 //!   * `cdkey`    — the CD-key decode, whose hash is standard SHA-1 as well.
 //!
 //! `protocol` is the message-level vocabulary those hashes are carried in: chat flags, event
-//! ids, the D2GS accept sequence.
+//! ids, the D2GS accept sequence. `bnftp` is the file transfer that delivers the version-check
+//! MPQ — encode and decode only, both directions, so a client, a server and a probe share one
+//! definition of the wire instead of three.
 //!
 //! Reverse-engineered from 1.14d `Game.exe` and verified against a real client login; the
 //! vectors in each file are captures, not invented. No real CD keys are committed. Pure Zig,
@@ -39,10 +41,12 @@ pub const xsha1 = @import("xsha1.zig");
 pub const checkrev = @import("checkrev.zig");
 pub const cdkey = @import("cdkey.zig");
 pub const protocol = @import("protocol.zig");
+pub const bnftp = @import("bnftp.zig");
 
 test {
     _ = xsha1;
     _ = checkrev;
     _ = cdkey;
     _ = protocol;
+    _ = bnftp;
 }
