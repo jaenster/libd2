@@ -56,8 +56,10 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then
             v="${GITHUB_REF_NAME#v}"
           else
+            # Off a branch, an unspecified version means the one the library currently claims —
+            # the same fallback release.yml uses, so a dry run of either needs no arguments.
             v='${{ inputs.version }}'
-            [ -n "$v" ] || { echo "no version: pass one, or run this from a tag"; exit 1; }
+            [ -n "$v" ] || v="$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon | head -1)"
           fi
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "not a semver: $v"; exit 1; }
           # And it must be the version the library itself claims, or the npm package and the
