@@ -1,6 +1,6 @@
 .{
     .name = .d2_game,
-    .version = "0.1.0",
+    .version = "0.5.0",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0x130ba7a43418f48b,
 
