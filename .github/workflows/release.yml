@@ -1,56 +1,70 @@
 name: release
 
-# MANUAL trigger only. Figures out which packages to release, cross-compiles each
-# to all native targets + wasm, cuts a per-package GitHub Release (tag
-# <pkg>-vX.Y.Z), and publishes the wasm build to npm.
+# One release for the whole library, cut from a vX.Y.Z tag.
+#
+# This used to release each package separately (tag <pkg>-vX.Y.Z, one GitHub Release per
+# package, a change detector to decide which). In seven releases only `drlg` ever went out,
+# fourteen of fifteen manifests sat at 0.1.0 having never shipped, and the bindings downstream
+# were already called libd2 rather than libd2-drlg. The granularity was real in the source tree
+# and imaginary at the boundary, so the boundary is now one artifact per target, named for the
+# library and versioned with it.
+#
+# Push a tag to release; run it by hand with dry_run to build and package without publishing.
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
-      packages:
-        description: 'Which packages: "changed" (since last tag) or a space-separated list (e.g. "drlg items")'
-        default: 'changed'
-        type: string
-      force_all:
-        description: 'Release every C-ABI package regardless of changes'
-        type: boolean
-        default: false
       dry_run:
-        description: 'Build + package only — no tags, no GitHub Release, no npm publish'
+        description: 'Build + package only — no GitHub Release, no npm publish'
         type: boolean
-        default: false
+        default: true
+      capi:
+        description: 'Subsystems in the native/wasm bundle (comma list: drlg,pf,item)'
+        default: 'drlg,pf,item'
+        type: string
 
 permissions:
-  contents: write   # create tags + releases
+  contents: write   # create the release
   id-token: write   # OIDC trusted publishing to npm (provenance, no NPM_TOKEN secret)
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false   # a half-published release is worse than a queued one
+
 jobs:
-  detect:
+  version:
     runs-on: ubuntu-latest
     outputs:
-      packages: ${{ steps.d.outputs.packages }}
-      any: ${{ steps.d.outputs.any }}
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      capi: ${{ steps.v.outputs.capi }}
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }   # need all tags for change detection
-      - id: d
-        env:
-          FORCE_ALL: ${{ inputs.force_all }}
+      - id: v
         run: |
-          if [ "${{ inputs.force_all }}" = "true" ]; then
-            pkgs="$(FORCE_ALL=1 scripts/detect-changes.sh)"
-          elif [ -n "${{ inputs.packages }}" ] && [ "${{ inputs.packages }}" != "changed" ]; then
-            pkgs="$(scripts/detect-changes.sh ${{ inputs.packages }})"
+          set -euo pipefail
+          # The tag is the source of truth when there is one; otherwise the manifest, so a
+          # dry run off a branch still produces correctly-named archives.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${{ github.ref_name }}"; version="${tag#v}"
           else
-            pkgs="$(scripts/detect-changes.sh)"
+            version="$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon | head -1)"
+            tag="v$version"
           fi
-          echo "packages=$pkgs" >> "$GITHUB_OUTPUT"
-          if [ "$pkgs" = "[]" ]; then echo "any=false" >> "$GITHUB_OUTPUT";
-          else echo "any=true" >> "$GITHUB_OUTPUT"; fi
-          echo "selected: $pkgs"
+          # A manifest that disagrees with its own tag is how a release ends up describing
+          # something other than what it contains.
+          manifest="$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon | head -1)"
+          if [ "${{ github.ref_type }}" = "tag" ] && [ "$manifest" != "$version" ]; then
+            echo "::error::tag $tag does not match build.zig.zon version $manifest"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "capi=${{ inputs.capi || 'drlg,pf,item' }}" >> "$GITHUB_OUTPUT"
+          echo "releasing $tag (version $version)"
 
   build:
-    needs: detect
-    if: needs.detect.outputs.any == 'true'
+    needs: version
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -81,27 +95,33 @@ jobs:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
-      - name: Build changed packages for ${{ matrix.target }}
+      - name: Build the bundle for ${{ matrix.target }}
         run: |
-          echo '${{ needs.detect.outputs.packages }}' > /tmp/pkgs.json
+          set -euo pipefail
+          # Size is what matters for the module a browser downloads; speed for everything else.
+          # Passing this explicitly is not optional: the default is Debug, which is 6.5 MB of
+          # wasm against 2.9 MB released, and nothing in the output tells you which you got.
           opt=ReleaseFast
           [ "${{ matrix.target }}" = "wasm32-freestanding" ] && opt=ReleaseSmall
-          for row in $(jq -r '.[] | @base64' /tmp/pkgs.json); do
-            _j() { echo "$row" | base64 -d | jq -r "$1"; }
-            name="$(_j .name)"; dir="$(_j .dir)"
-            echo "== $name -> ${{ matrix.target }}"
-            ( cd "$dir" && zig build -Dtarget=${{ matrix.target }} -Doptimize=$opt -Dcli=false \
-                --prefix "$GITHUB_WORKSPACE/dist/$name/${{ matrix.target }}" )
-          done
+          cd packages/wasm
+          zig build -Dtarget=${{ matrix.target }} -Doptimize=$opt \
+                    -Dcapi='${{ needs.version.outputs.capi }}' \
+                    --prefix "$GITHUB_WORKSPACE/dist/${{ matrix.target }}"
+      - name: Archive
+        run: |
+          set -euo pipefail
+          v='${{ needs.version.outputs.version }}'
+          mkdir -p out
+          ( cd "dist/${{ matrix.target }}" && tar czf "$GITHUB_WORKSPACE/out/libd2-$v-${{ matrix.target }}.tar.gz" . )
+          ls -l out/
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.target }}
-          path: dist/
-          if-no-files-found: ignore
+          path: out/
+          if-no-files-found: error   # a target that produced nothing is a failed release
 
   release:
-    needs: [detect, build]
-    if: needs.detect.outputs.any == 'true'
+    needs: [version, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,54 +132,41 @@ jobs:
         with: { node-version: 22, registry-url: 'https://registry.npmjs.org' }
       - name: Upgrade npm for OIDC trusted publishing
         run: npm install -g npm@latest   # trusted publishing needs npm >= 11.5.1
-      - name: Package, tag, release, publish
+      - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
-          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
         run: |
           set -euo pipefail
-          echo '${{ needs.detect.outputs.packages }}' > /tmp/pkgs.json
-          for row in $(jq -r '.[] | @base64' /tmp/pkgs.json); do
-            _j() { echo "$row" | base64 -d | jq -r "$1"; }
-            name="$(_j .name)"; version="$(_j .version)"; tag="$(_j .tag)"
-            echo "::group::release $tag"
+          v='${{ needs.version.outputs.version }}'
+          tag='${{ needs.version.outputs.tag }}'
+          echo "archives:"; ls -1 artifacts/
 
-            # one archive per target. The download merges every dist-<target>
-            # artifact into artifacts/, so the package tree lands at some depth as
-            # .../<name>/<target>/… — find the <name> dir(s) and archive each
-            # immediate <target> subdir. Robust to the merge layout.
-            mkdir -p out
-            while IFS= read -r ndir; do
-              for tdir in "$ndir"/*/; do
-                [ -d "$tdir" ] || continue
-                target="$(basename "$tdir")"
-                ( cd "$tdir" && tar czf "$GITHUB_WORKSPACE/out/d2${name}-${version}-${target}.tar.gz" . )
-              done
-            done < <(find artifacts -type d -name "$name")
-            echo "archived:"; ls -1 out/ || true
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "dry run: would create release $tag with the above"; exit 0
+          fi
 
-            if [ "$DRY_RUN_INPUT" = "true" ]; then
-              echo "dry run: would release $tag with:"; ls -1 out/
-              rm -rf out; echo "::endgroup::"; continue
-            fi
+          # The tag already exists when this runs from a tag push; create it only when a
+          # human dispatched a real (non-dry) run off a branch.
+          git rev-parse "$tag" >/dev/null 2>&1 || { git tag "$tag" && git push origin "$tag"; }
 
-            git tag "$tag" && git push origin "$tag"
-            gh release create "$tag" out/d2${name}-${version}-*.tar.gz \
-              --title "$name v$version" \
-              --notes "Release of the \`$name\` package (v$version). Native libs + headers per target, plus wasm."
+          gh release create "$tag" artifacts/libd2-$v-*.tar.gz \
+            --title "libd2 $tag" \
+            --notes "libd2 $tag — the whole library, one version. Native static lib + headers per target, plus wasm. Zig consumers: \`git+https://github.com/jaenster/libd2#$tag\`."
 
-            # npm: publish the wasm build behind the typed shim via OIDC trusted
-            # publishing (build provenance, no NPM_TOKEN). Requires the package to be
-            # configured with this repo/workflow as a trusted publisher on npmjs.com,
-            # and a first release published by hand (OIDC can't bootstrap the name).
-            wasm="$(find artifacts -path "*/$name/wasm32-freestanding/*" -name '*.wasm' | head -1 || true)"
-            if [ -n "$wasm" ]; then
-              scripts/npm-pack.sh "$name" "$version" "$wasm"
-            else
-              echo "skip npm ($name): no wasm artifact"
-            fi
-
-            rm -rf out
-            echo "::endgroup::"
-          done
-
+          # npm: packages/npm/libd2 is the published package — one `libd2` carrying the combined
+          # wasm, not one package per subsystem. It ships its own TypeScript, so there is nothing
+          # to compile here; the wasm is the only thing CI has to put in place, at the name
+          # src/wasm.ts loads it by. Published via OIDC trusted publishing (build provenance, no
+          # NPM_TOKEN), which needs this repo/workflow registered as a trusted publisher on
+          # npmjs.com and the first version published by hand — OIDC cannot bootstrap a name.
+          wasm="$(find artifacts -name 'libd2-*-wasm32-freestanding.tar.gz' | head -1)"
+          if [ -z "$wasm" ]; then
+            echo "::error::no wasm artifact — refusing to publish an npm package without it"; exit 1
+          fi
+          mkdir -p /tmp/w && tar xzf "$wasm" -C /tmp/w
+          cp "$(find /tmp/w -name '*.wasm' | head -1)" packages/npm/libd2/src/libd2.wasm
+          cd packages/npm/libd2
+          # The tag is the one version. --no-git-tag-version because the repo tag already exists.
+          npm version "$v" --no-git-tag-version --allow-same-version
+          npm publish --provenance --access public

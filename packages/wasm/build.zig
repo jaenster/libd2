@@ -58,9 +58,16 @@ pub fn build(b: *std.Build) void {
     } else {
         // Native too, so the same combination can be linked into a host without a wasm runtime.
         mod.pic = true;
-        const lib = b.addLibrary(.{ .name = "libd2", .linkage = .static, .root_module = mod });
+        // "d2", not "libd2": zig prefixes a static library with lib, so the name that produces
+        // libd2.a — the file a C consumer expects, linked as -ld2 — is d2. Naming it libd2 here
+        // ships liblibd2.a. The wasm above keeps the name libd2, because that is the file name
+        // the npm package's loader asks for.
+        const lib = b.addLibrary(.{ .name = "d2", .linkage = .static, .root_module = mod });
         b.installArtifact(lib);
-        b.getInstallStep().dependOn(&b.addInstallHeaderFile(drlg.path("include/d2drlg.h"), "d2drlg.h").step);
-        b.getInstallStep().dependOn(&b.addInstallHeaderFile(pf.path("include/d2pf.h"), "d2pf.h").step);
+        // Headers follow the same selection as the exports: shipping a declaration for a symbol
+        // the archive does not contain is how a consumer gets a link error instead of an answer.
+        if (with_drlg) b.getInstallStep().dependOn(&b.addInstallHeaderFile(drlg.path("include/d2drlg.h"), "d2drlg.h").step);
+        if (with_pf) b.getInstallStep().dependOn(&b.addInstallHeaderFile(pf.path("include/d2pf.h"), "d2pf.h").step);
+        if (with_item) b.getInstallStep().dependOn(&b.addInstallHeaderFile(item.path("include/d2item.h"), "d2item.h").step);
     }
 }
