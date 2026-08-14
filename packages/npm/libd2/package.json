@@ -1,6 +1,6 @@
 {
   "name": "libd2",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Clean-room Diablo II 1.14d engine core as WebAssembly. Give it a seed and it produces the same world the game does: rooms, objects, monsters, level adjacency and subtile collision. Runs in Node, Bun, Deno and the browser.",
   "type": "module",
   "types": "./src/index.ts",

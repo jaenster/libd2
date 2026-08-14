@@ -1,6 +1,6 @@
 .{
     .name = .d2_util,
-    .version = "0.6.0",
+    .version = "0.6.1",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xee46248b81bdbb6c,
 
