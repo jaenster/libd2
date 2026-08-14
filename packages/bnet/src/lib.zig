@@ -42,6 +42,7 @@ pub const checkrev = @import("checkrev.zig");
 pub const cdkey = @import("cdkey.zig");
 pub const protocol = @import("protocol.zig");
 pub const bnftp = @import("bnftp.zig");
+pub const mcp = @import("mcp.zig");
 
 test {
     _ = xsha1;
@@ -49,4 +50,5 @@ test {
     _ = cdkey;
     _ = protocol;
     _ = bnftp;
+    _ = mcp;
 }
