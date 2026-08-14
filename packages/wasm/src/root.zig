@@ -9,7 +9,10 @@
 //! whole collision grid across the boundary for every query. Here d2pf_world_create simply
 //! takes the pointer d2drlg_ctx_core returns, and both halves address the same bytes.
 
+const opts = @import("build_options");
+
 comptime {
-    _ = @import("d2drlg-capi");
-    _ = @import("d2pf-capi");
+    if (opts.with_drlg) _ = @import("d2drlg-capi");
+    if (opts.with_pf) _ = @import("d2pf-capi");
+    if (opts.with_item) _ = @import("d2item-capi");
 }
