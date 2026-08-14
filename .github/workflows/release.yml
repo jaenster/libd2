@@ -26,7 +26,7 @@ on:
 
 permissions:
   contents: write   # create the release
-  actions: write    # dispatch npm.yml, which owns npm publishing (see the Release step)
+  # No id-token here: npm publishing lives in npm.yml, which the same tag triggers.
 
 concurrency:
   group: release-${{ github.ref }}
@@ -150,14 +150,9 @@ jobs:
             --title "libd2 $tag" \
             --notes "libd2 $tag — the whole library, one version. Native static lib + headers per target, plus wasm. Zig consumers: \`git+https://github.com/jaenster/libd2#$tag\`."
 
-          # npm is NOT published from here. Trusted publishing binds an OIDC token to a repo
-          # AND a workflow FILE, and the publisher registered for `libd2` is npm.yml — so a
-          # publish attempted from this file is refused with a 404 (npm answers 404 rather than
-          # 403 so a probe cannot tell whether a package exists). npm.yml is also the better
-          # publisher: it builds fresh wasm, assembles the package, and smoke-tests the exact
-          # tarball it is about to push before pushing it.
-          #
-          # So dispatch it and let it publish as itself. It runs on its own after this returns;
-          # a failure there does not un-release what has already been released here.
-          gh workflow run npm.yml -f version="$v" -f dry_run=false
-          echo "dispatched npm.yml for $v"
+          # npm is published by npm.yml, which the same tag triggers in parallel. It has to be
+          # that file and not this one: an OIDC trusted-publishing token is bound to a repository
+          # AND a workflow file, and npmjs.com names npm.yml as libd2's publisher — a publish from
+          # here is refused with a 404, because npm will not reveal whether a package exists.
+          # Keeping them independent also means a registry outage cannot fail a GitHub Release
+          # that has already been cut, or the other way round.

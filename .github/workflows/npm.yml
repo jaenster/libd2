@@ -4,20 +4,25 @@ name: npm
 # and `LibD2` on NuGet. Each subsystem is a namespace carrying its own wasm, and also a
 # subpath export so a bundler can take one instead of all.
 #
-# It is versioned and released on its own, separately from the zig packages, because it has
-# no single package's version to inherit. release.yml still builds the native libs, headers
-# and GitHub Releases; npm publishing lives here.
+# It carries the library's version like everything else, so pushing a vX.Y.Z tag publishes it —
+# a release that needs somebody to remember a second command is not a release. release.yml builds
+# the native libs, headers and the GitHub Release from the same tag, in parallel; the two do not
+# depend on each other, and neither can fail the other.
 #
-# Publishing uses npm trusted publishing (OIDC), so there is no NPM_TOKEN secret. The trusted
-# publisher on npmjs.com must name THIS file (npm.yml) as its workflow, and the package has to
-# exist already: OIDC cannot claim a name.
+# Publishing uses npm trusted publishing (OIDC), so there is no NPM_TOKEN secret anywhere. The
+# trusted publisher on npmjs.com names THIS FILE, which is the whole reason npm publishing lives
+# here and not in release.yml: an OIDC token is bound to a repository AND a workflow file, so the
+# same publish attempted from another file is refused — with a 404, because npm will not reveal
+# whether a package exists. The package must also already exist; OIDC cannot claim a name.
 
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Package version, e.g. 0.2.0'
-        required: true
+        description: 'Package version, e.g. 0.2.0 (defaults to the tag when run from one)'
+        required: false
         type: string
       dry_run:
         description: 'Build, pack and smoke-test only — no publish'
@@ -43,10 +48,26 @@ jobs:
       - name: Upgrade npm for OIDC trusted publishing
         run: npm install -g npm@latest   # trusted publishing needs npm >= 11.5.1
 
-      - name: Check the version is a semver
+      - name: Resolve and check the version
         run: |
-          v='${{ inputs.version }}'
+          set -euo pipefail
+          # The tag is the source of truth when there is one, so a release cannot publish a
+          # version other than the one it is named for.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            v="${GITHUB_REF_NAME#v}"
+          else
+            v='${{ inputs.version }}'
+            [ -n "$v" ] || { echo "no version: pass one, or run this from a tag"; exit 1; }
+          fi
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "not a semver: $v"; exit 1; }
+          # And it must be the version the library itself claims, or the npm package and the
+          # zig package with the same name describe different code.
+          manifest="$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon | head -1)"
+          if [ "${{ github.ref_type }}" = "tag" ] && [ "$manifest" != "$v" ]; then
+            echo "::error::tag v$v does not match build.zig.zon version $manifest"; exit 1
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "publishing libd2 $v"
 
       # Fresh wasm rather than anything checked in, into the layout the assembler reads:
       # dist/<name>/wasm32-freestanding/. A package without a wasm build is skipped there.
@@ -64,7 +85,7 @@ jobs:
           find dist -name '*.wasm' -exec ls -la {} +
 
       - name: Assemble and pack
-        run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh '${{ inputs.version }}' dist
+        run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh "$VERSION" dist
 
       # Smoke-tests the exact tarball that gets published, so what ships is what was tested.
       # Both import styles, because the subpath exports are easy to break and silent when they
@@ -72,7 +93,7 @@ jobs:
       - name: Smoke-test the packed tarball
         run: |
           set -euo pipefail
-          tarball="$PWD/libd2-${{ inputs.version }}.tgz"
+          tarball="$PWD/libd2-$VERSION.tgz"
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           npm init -y >/dev/null
           npm install --silent "$tarball"
@@ -93,5 +114,7 @@ jobs:
           node smoke.mjs
 
       - name: Publish
-        if: ${{ !inputs.dry_run }}
-        run: npm publish "libd2-${{ inputs.version }}.tgz" --access public --provenance
+        # A tag publishes. A manual run only publishes if it was asked to, which is why
+        # dry_run defaults to true above.
+        if: ${{ github.ref_type == 'tag' || !inputs.dry_run }}
+        run: npm publish "libd2-$VERSION.tgz" --access public --provenance
