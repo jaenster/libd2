@@ -5,9 +5,12 @@ name: npm
 # subpath export so a bundler can take one instead of all.
 #
 # It carries the library's version like everything else, so pushing a vX.Y.Z tag publishes it —
-# a release that needs somebody to remember a second command is not a release. release.yml builds
-# the native libs, headers and the GitHub Release from the same tag, in parallel; the two do not
-# depend on each other, and neither can fail the other.
+# a release that needs somebody to remember a second command is not a release. This is the ONLY
+# thing a tag does now. There used to be a release workflow cross-compiling sixteen targets into
+# a GitHub Release next to it; nothing downloaded them. nuget builds its own natives and reads
+# its own workflow artifacts, the Go module is served from the git tag itself with its natives
+# committed, and crates has nothing per-target at all. Sixteen runner jobs a tag, for files no
+# consumer ever asked for.
 #
 # Publishing uses npm trusted publishing (OIDC), so there is no NPM_TOKEN secret anywhere. The
 # trusted publisher on npmjs.com names THIS FILE, which is the whole reason npm publishing lives
