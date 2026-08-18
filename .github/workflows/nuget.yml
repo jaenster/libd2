@@ -56,8 +56,15 @@ jobs:
           for capi in packages/*/src/capi.zig; do
             pkg="$(basename "$(dirname "$(dirname "$capi")")")"
             echo "== $pkg -> ${{ matrix.target }}"
+            # -Dcli suppresses the package's demo executable, and only the packages that HAVE one
+            # declare it. Passing it blindly is a hard error ("invalid option: -Dcli"), which is
+            # how adding a C ABI to d2-net broke this loop: net is a library and nothing else.
+            opts=()
+            if ( cd "packages/$pkg" && zig build -h 2>/dev/null | grep -q -- '-Dcli' ); then
+              opts+=(-Dcli=false)
+            fi
             ( cd "packages/$pkg" && zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast \
-                -Dcli=false --prefix "$GITHUB_WORKSPACE/dist/$pkg/${{ matrix.target }}" )
+                "${opts[@]}" --prefix "$GITHUB_WORKSPACE/dist/$pkg/${{ matrix.target }}" )
           done
       - uses: actions/upload-artifact@v4
         with:
