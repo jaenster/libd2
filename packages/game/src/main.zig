@@ -1,4 +1,4 @@
-//! d2-sim demo CLI: resolve one physical attack (attacker vs defender) for a seed
+//! d2-game demo CLI: resolve one physical attack (attacker vs defender) for a seed
 //! and print the deterministic outcome. Illustrative — the library is the product.
 
 const std = @import("std");
@@ -21,7 +21,7 @@ pub fn main() !void {
     defender.setLife(1200);
 
     const stdout = std.debug;
-    stdout.print("d2-sim attack demo (seed=0xC0FFEE)\n", .{});
+    stdout.print("d2-game attack demo (seed=0xC0FFEE)\n", .{});
     for (0..5) |i| {
         const r = sim.resolveAttack(&attacker, &defender, &seed, .{});
         stdout.print(
