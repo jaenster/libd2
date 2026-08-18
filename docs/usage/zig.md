@@ -1,7 +1,13 @@
 # libd2 from Zig
 
-Native Zig consumers use the packages as source modules — no C ABI needed. Depend
-on the one you want by path and import its module.
+Native Zig consumers use the packages as source modules — no C ABI needed.
+
+The short way is one dependency on the repo root and one import, with every layer
+reachable by name (`libd2.drlg`, `libd2.item`, `libd2.bnet`, …); naming a namespace
+costs nothing until you use it. That is [docs/consuming-libd2.md](../consuming-libd2.md).
+
+The rest of this page is the other way: depend on a single package by path and import
+just its module.
 
 ```zig
 // build.zig.zon
@@ -31,5 +37,6 @@ const drops = try d2item.rollDrop(alloc, &drop_seed, &game_seed, &tables, &set, 
 defer alloc.free(drops);
 ```
 
-Each package's module surface is documented in its own `packages/<pkg>/README.md`.
-The C ABI (see the other language guides) is a thin wrapper over these same APIs.
+Every package's public surface is its `src/lib.zig`, whose module header says what the
+package is for and what it does not cover. The C ABI (see the other language guides) is a
+thin wrapper over these same APIs.
