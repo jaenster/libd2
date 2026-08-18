@@ -2,7 +2,7 @@
 // instantiated module and its scratch region. Kept here rather than exported from `game.ts` so
 // that "what a Game is" stays readable without the plumbing in the middle of it.
 
-import type {Game} from './game.ts';
+import type {Game} from './game/game.ts';
 import {load, Scratch, type Exports} from './wasm.ts';
 
 let runtime: {exports: Exports; scratch: Scratch} | null = null;
@@ -30,4 +30,15 @@ export function engineFor(_game: Game): {exports: Exports; scratch: Scratch} {
 export async function initRuntime(): Promise<void> {
   const exports = await load();
   runtime ??= {exports, scratch: new Scratch(exports)};
+}
+
+/**
+ * The module, for the places that need it before a Game exists.
+ *
+ * `engineFor` is the same thing with a Game to hand; this is what an Area reaches for while it is
+ * still being built.
+ */
+export function engine(): {exports: Exports; scratch: Scratch} {
+  if (!runtime) throw new Error('libd2: call `await init()` before opening a game');
+  return runtime;
 }
