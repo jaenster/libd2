@@ -2,7 +2,8 @@
 //!
 //! Shared by d2-game (runtime simulation), d2-item (drop generation) and d2-drlg
 //! (map generation): the seed-RNG, the Stat enum + StatList, ItemStatCost metadata,
-//! the wire (save-file) item bit-decoder, and the Fog::Memory pool allocator.
+//! the wire (save-file) item bit-decoder, the Fog::Memory pool allocator, and the
+//! process-lifetime heap they all take non-caller-owned memory from.
 //! Owning these here gives every consumer a single source of truth instead of
 //! vendoring the same types twice. Pure Zig, libc-free (wasm32-freestanding
 //! clean): @embedFile for data, no std.fs, no c_allocator.
@@ -22,6 +23,12 @@ pub const itemtypes = @import("wire/itemtypes.zig");
 // The save-file item bit-decoder namespace (parseSave / Item / ...). Named `wire`
 // to match the item-package public API that re-exports it.
 pub const wire = @import("wire/item.zig");
+
+// The process-lifetime general allocator: what a package takes memory from when the memory is
+// not a caller's to own — caches, C-ABI handles, the DRLG pool's backing store. On freestanding
+// wasm it is a coalescing free list rather than std's size-class allocator, which never returns
+// a page and never reuses one across classes.
+pub const heap = @import("heap.zig");
 
 // A faithful replica of the engine's `Fog::Memory` segregated-slab pool allocator
 // (fixed size-classes, bitmap slot reuse, wholesale teardown). Engine-agnostic; the
@@ -51,6 +58,7 @@ test {
     _ = collision;
     _ = stat;
     _ = memory;
+    _ = heap;
     _ = itemstatcost;
     _ = bitreader;
     _ = itemtypes;

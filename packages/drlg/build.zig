@@ -115,8 +115,8 @@ pub fn build(b: *std.Build) void {
     verify_step.dependOn(&b.addRunArtifact(verify_tests).step);
 
     // C-ABI shim: consumable from C/C++/C#/Node as native shared+static libs, or as
-    // a wasm reactor module. The generator is libc-free (smp_allocator + page_allocator),
-    // so nothing links libc and the wasm target is wasm32-freestanding-capable.
+    // a wasm reactor module. The generator is libc-free (smp_allocator + d2-core's heap), so
+    // nothing links libc and the wasm target is wasm32-freestanding-capable.
     const capi = b.option(bool, "capi", "Build the C-ABI shim (libs / wasm)") orelse true;
     if (capi) {
         const capi_optimize: std.builtin.OptimizeMode =

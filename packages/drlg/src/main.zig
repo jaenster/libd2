@@ -9,6 +9,7 @@ const fogmem = @import("d2-core").memory;
 const presettables = @import("drlg/presettables.zig");
 const drlglib = @import("lib.zig");
 const memcheck = @import("memcheck.zig");
+const allocstat = @import("allocstat.zig");
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = std.heap.page_allocator;
@@ -77,6 +78,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
             if (std.mem.eql(u8, a, "--traced")) traced = true else acts = std.fmt.parseInt(usize, a, 10) catch acts;
         }
         std.process.exit(memcheck.run(gpa, acts, traced));
+    }
+
+    if (std.mem.eql(u8, cmd, "allocstat")) {
+        // allocstat [acts] [live_handles] — where an act generation's memory actually goes, and
+        // what a power-of-two size-class allocator would charge for the same request stream.
+        // memcheck answers "does it grow"; this answers "why is it that big". See allocstat.zig.
+        var acts: usize = 5;
+        var live_handles: usize = 1;
+        if (args.next()) |a| acts = std.fmt.parseInt(usize, a, 10) catch acts;
+        if (args.next()) |a| live_handles = std.fmt.parseInt(usize, a, 10) catch live_handles;
+        std.process.exit(allocstat.run(gpa, acts, live_handles));
     }
 
     if (std.mem.eql(u8, cmd, "verify-seeds-recon")) {
@@ -579,6 +591,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         \\  d2-drlg ds1 <file.ds1>      parse + ASCII-render a DS1 map
         \\  d2-drlg verify-seeds-recon <f>  cross-seed scoreboard via the recon->Zig transform closure
         \\  d2-drlg memcheck [acts] [--traced]  act generation must not grow memory (non-zero on failure)
+        \\  d2-drlg allocstat [acts] [live]     where an act generation's memory goes, and what size classes cost
         \\
     , .{});
 }
