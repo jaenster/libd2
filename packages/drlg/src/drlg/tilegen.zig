@@ -689,7 +689,7 @@ test "tile pipeline reproduces collision.zig DS1 collision (preset town room)" {
     for (baseline.cells, cells) |b, m| {
         if (b == m) match += 1 else mismatch += 1;
     }
-    std.debug.print(
+    @import("../testdiag.zig").print(
         "\n[tilegen cross-check] town DS1 {d}x{d} tiles -> {d} floor + {d} wall " ++
             "({d} shadow companions excluded); subtile collision match {d}/{d} ({d} mismatch)\n",
         .{ w, h, grid.nFloors, grid.nWalls, companions, match, baseline.cells.len, mismatch },

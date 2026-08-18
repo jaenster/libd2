@@ -969,7 +969,7 @@ test "derived origins match the engine across all five acts (deep goldens)" {
         }
     }
 
-    for (0..5) |a| std.debug.print(
+    for (0..5) |a| @import("testdiag.zig").print(
         "act {d}: {d}/{d} graph origins match ({d} deferred — see graphDerivable)\n",
         .{ a + 1, match[a], total[a] - deferred[a], deferred[a] },
     );

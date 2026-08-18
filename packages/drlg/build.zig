@@ -12,6 +12,11 @@ pub fn build(b: *std.Build) void {
     const opts = b.addOptions();
     opts.addOption(bool, "ds1_disk", false);
 
+    // Anything a test writes to stderr makes the build runner report the step as
+    // `failed command:` even when every assertion passed, so the fidelity dumps are off
+    // unless asked for: `zig build test -Dverbose`.
+    opts.addOption(bool, "verbose", b.option(bool, "verbose", "Print test fidelity diagnostics") orelse false);
+
     // Sibling packages factored out of drlg: the pure DS1/DT1 parsers, and d2-core which
     // owns the seed-RNG, the Fog::Memory pool allocator and the shared collision bit/mask
     // vocabulary (`core.collision`). drlg's sources reach them via `@import("d2-formats")`

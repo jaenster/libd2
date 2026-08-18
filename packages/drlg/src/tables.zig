@@ -255,7 +255,7 @@ test "act topology: known levels map to the right act, every act has levels" {
     }
     // Every act must have at least a handful of generatable levels.
     for (per_act, 0..) |n, act| {
-        std.debug.print("act {d}: {d} generatable levels\n", .{ act, n });
+        @import("testdiag.zig").print("act {d}: {d} generatable levels\n", .{ act, n });
         try testing.expect(n >= 5);
     }
 }

@@ -415,12 +415,23 @@ pub fn countSeedAdvances(act_id: i32, objects: []const Object) u32 {
 
 const testing = std.testing;
 
+/// Whether a test should dump what it parsed.
+///
+/// Anything a test writes to stderr makes the build runner report the step as `failed command:`,
+/// even when every assertion passed — so an unconditional diagnostic turns a green suite into one
+/// that reads as broken. These stay off; `zig build test -Dverbose` brings them back for the one
+/// run where you want to look at the numbers. Referenced only from tests, so a consumer of the
+/// library module never resolves the import.
+fn verbose() bool {
+    return @import("build_options").verbose;
+}
+
 test "parse TownETrans.ds1 fixture" {
     const bytes = @embedFile("maps/TownETrans.ds1");
     var ds1 = try parse(testing.allocator, bytes);
     defer ds1.deinit();
 
-    std.debug.print(
+    if (verbose()) std.debug.print(
         \\TownETrans.ds1 header:
         \\  version       = {d}
         \\  width         = {d} (tiles)
@@ -522,7 +533,7 @@ test "parse real town DS1s from every act" {
 
         var path_nodes: usize = 0;
         for (ds1.npc_paths) |np| path_nodes += np.points.len;
-        std.debug.print("{s}: v{d} {d}x{d} walls={d} floors={d} objs={d} subst={d} npcPaths={d} pathNodes={d}\n", .{
+        if (verbose()) std.debug.print("{s}: v{d} {d}x{d} walls={d} floors={d} objs={d} subst={d} npcPaths={d} pathNodes={d}\n", .{
             f.name,           ds1.version,         ds1.width,            ds1.height,
             ds1.wall_layers.len, ds1.floor_layers.len, ds1.objects.len, ds1.subst_groups.len,
             ds1.npc_paths.len, path_nodes,
