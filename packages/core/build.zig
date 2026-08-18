@@ -1,7 +1,7 @@
 const std = @import("std");
 
-// The d2-core package: the canonical Stat/Item model foundation shared by d2-sim
-// (runtime simulation) and d2-items (drop generation). It owns the seed-RNG, the
+// The d2-core package: the canonical Stat/Item model foundation shared by d2-game
+// (runtime simulation) and d2-item (drop generation). It owns the seed-RNG, the
 // Stat enum + StatList, ItemStatCost metadata, and the wire item bit-decoder, so
 // those types have a single source of truth instead of being vendored twice.
 pub fn build(b: *std.Build) void {

@@ -8,60 +8,64 @@ game does.
 npm install libd2
 ```
 
-One package for the whole library. Each subsystem is a namespace carrying its own
-WebAssembly build, fetched only when you call into it. No native addon, no build step,
-nothing to initialise.
+One package for the whole library, one WebAssembly module inside it. No native addon, no build
+step, no bundler configuration.
 
 ```ts
-import { drlg } from 'libd2';
+import { init, open, Areas, route } from 'libd2';
 
-// Act I of seed 1337. difficulty 0/1/2, actNo 0-based. Cold Plains = level 3.
-const map = await drlg.render(1337, 0, 0);
-const coldPlains = map.levels.find(l => l.levelNo === 3)!;
+await init();
+using game = open({ seed: 1337 });
 
-console.log(`${map.levels.length} levels`);
-console.log(`${coldPlains.displayName}: ${coldPlains.rooms.length} rooms`);
+// Nothing is generated until an area is asked for; one generation covers its whole act.
+const cold = game.area(Areas.ColdPlains);
+console.log(`${cold.name}: ${cold.rooms.length} rooms, ${cold.exits.length} ways out`);
 
-for (const sh of drlg.levelShrines(coldPlains))
-  console.log(`${sh.isWell ? 'well  ' : 'shrine'} at tile (${sh.tileX}, ${sh.tileY})`);
+// Exits are generated data, so where a level leads is known before you ever stand in it.
+for (const exit of cold.exits) console.log(`  -> ${exit.to.name}`);
+
+// Routing crosses levels, so this is one call, not one per area. null means no way through.
+const trip = route(game.area(Areas.RogueEncampment).middle, cold.middle, { teleport: true });
+for (const leg of trip?.legs ?? []) console.log(`${leg.area.name}: ${leg.moves.length} moves`);
 ```
 
 ```text
-39 levels
-Cold Plains: 97 rooms
-shrine at tile (995, 1124)
-shrine at tile (994, 1114)
-shrine at tile (1050, 1098)
-well   at tile (1010, 1091)
-shrine at tile (1002, 1090)
+Cold Plains: 97 rooms, 4 ways out
+  -> Cave Level 1
+  -> Blood Moor
+  -> Burial Grounds
+  -> Stony Field
+Rogue Encampment: 3 moves
+Blood Moor: 6 moves
+Cold Plains: 5 moves
 ```
 
 The same seed always gives the same world, matching the retail engine cell for cell.
 
+## What you get
+
+An object model over the generated world, not a JSON dump of it:
+
+- **`Game`** — a seed and a difficulty. Generates an act the first time you name an area in it.
+- **`Area`** — one level: `rooms`, `objects`, `exits`, `collision`, `walk`, and `at(x, y)` for a
+  `Location` that knows which area it is in.
+- **`route()`** — walk or teleport between two locations across as many levels as it takes, using
+  the movement rules the server enforces. Also `walkableAt`, `snap`, `lineOfSight`, `areasBetween`.
+- **`rasterize()`, `Minimap`** — turn a level into pixels, or project it the way the game's
+  automap does.
+
+Units can be placed into an area (`place`, `occupy`) so routing goes around what is standing
+there, which is the difference between a path and a path a character can actually walk.
+
 ## Runs everywhere
 
-The wasm is freestanding and libc-free, so its import object is empty and the same package
-runs in **Node, Bun, Deno and the browser** with no bundler configuration and no polyfills.
-The shim resolves its wasm relative to its own module URL and feature-detects how to read it.
+The wasm is freestanding and libc-free, so its import object is empty and the same package runs
+in **Node, Bun, Deno and the browser** with no polyfills. The shim resolves its wasm relative to
+its own module URL and feature-detects how to read it.
 
-ESM only, deliberately: Node has been able to `require()` an ESM graph since 22.12 and these
-shims have no top-level await, so `require('libd2')` works without shipping a second build.
-That is the floor declared in `engines`.
-
-Every namespace is also a subpath export, so a bundler can pull in one subsystem's wasm
-instead of all of them:
-
-```ts
-import * as drlg from 'libd2/drlg';
-```
-
-## Namespaces
-
-| namespace | what it is |
-|-|-|
-| `drlg` | map generation: rooms, objects, monsters, level adjacency, subtile collision |
-
-More land here as they grow a C ABI.
+ESM only, deliberately: Node has been able to `require()` an ESM graph since 22.12 and the shim
+has no top-level await, so `require('libd2')` works without shipping a second build. That is the
+floor declared in `engines`.
 
 ## Is it right?
 
@@ -76,9 +80,8 @@ If libd2 is useful to you, you can [sponsor the work](https://github.com/sponsor
 
 ## Replaces @jaenster/d2drlg
 
-`@jaenster/d2drlg` was the previous shape, one package per subsystem. It is deprecated in
-favour of this package, which carries the same wasm and the same shim under the `drlg`
-namespace.
+`@jaenster/d2drlg` was the previous shape, one package per subsystem wrapping the C ABI
+directly. It is deprecated in favour of this package.
 
 ## Licence
 

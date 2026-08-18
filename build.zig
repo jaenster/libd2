@@ -2,7 +2,7 @@ const std = @import("std");
 
 // libd2 is a monorepo of independent, individually-consumable Zig packages under
 // packages/. Each package has its own build.zig + build.zig.zon and exposes a
-// module (d2-drlg / d2-item / d2-sim). A consumer depends on the one it wants:
+// module (d2-drlg / d2-item / d2-game). A consumer depends on the one it wants:
 //
 //     .d2_drlg = .{ .path = "path/to/libd2/packages/drlg" },
 //
@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     // Re-export each sub-package's public module under its canonical name so an
     // external dependent gets them all from one dependency:
     //     const libd2 = b.dependency("libd2", .{ .target = ..., .optimize = ... });
-    //     exe.root_module.addImport("d2-sim", libd2.module("d2-sim"));
+    //     exe.root_module.addImport("d2-game", libd2.module("d2-game"));
     // (.zon dep name -> exported module name.)
     const exported = [_]struct { dep: []const u8, mod: []const u8 }{
         .{ .dep = "d2_core", .mod = "d2-core" },

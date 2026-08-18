@@ -1,0 +1,176 @@
+name: test
+
+# The only workflow here that does not publish something. Everything else in this directory runs
+# on a tag or on workflow_dispatch, which meant nothing ran on a pull request at all — and `main`
+# accumulated exactly the failures a pull-request job catches: a header declaring an export the
+# shim never defined, a Rust binding hard-failing on an ABI the shim disagreed with, a red Go
+# suite, and a `zig build verify` step pointing at a file that was never committed.
+#
+# Each binding is its own job because each one gets its native a different way. Rust builds one
+# from source in build.rs. Go embeds one: `natives/` is gitignored and assembled at pack time, so
+# the job has to run the same sync script a release does — testing the embed path, not just the
+# code around it. .NET is the one that carries its native IN the repository, and it has no job
+# here yet; its binaries are stale at ABI 3 and refreshing them needs the cross-compile matrix
+# that no longer exists.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zig:
+    name: zig build test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+
+      # Every package's own suite, plus the golden gates: packages/drlg's `test` step depends on
+      # the verify run, so the byte-exactness gate is covered here and needs no job of its own.
+      # It is the long pole (whole acts regenerated in ReleaseFast) and worth every minute.
+      - run: zig build test
+
+      # The C ABI is a separate artifact from the module, and nothing above links it. A consumer
+      # who takes the header + library gets neither unless this builds.
+      - name: Build the C ABIs
+        run: |
+          set -euo pipefail
+          for p in drlg item pathfinding net; do
+            ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
+          done
+
+      # The combined reactor, in the exact configuration the npm package ships.
+      - name: Build the combined wasm
+        working-directory: packages/wasm
+        run: zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall -Dcapi=drlg,pf,net
+
+  rust:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+
+      # build.rs compiles the native from this tree, so an ABI the crate does not expect fails
+      # here rather than at a consumer. That check is the whole reason this job is cheap to have.
+      - name: Test
+        working-directory: packages/rust/libd2
+        run: cargo test --all-features
+
+  go:
+    name: go test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.24' }
+
+      # `packages/go/**/natives/` is gitignored, so a checkout has no library to embed and every
+      # test fails with "no linux/amd64 binary is compiled into this build". go-pack.sh fills it
+      # at release time from the same script used here, which is the point: this exercises the
+      # embed path a published module ships with rather than a LIBD2_PATH shortcut that only CI
+      # would ever take.
+      - name: Build and embed the natives
+        run: |
+          set -euo pipefail
+          for p in drlg item pathfinding; do
+            ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
+          done
+          ./scripts/go-sync-natives.sh --local
+
+      # The bindings assert the native's ABI against their own pin, so a shim that has moved on
+      # without them fails here.
+      - name: Test
+        working-directory: packages/go/libd2
+        run: go test ./...
+
+  npm:
+    name: npm test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 24, not the 22.12 floor `engines` declares, and the difference is the point. The suite runs
+      # the SOURCE through `--experimental-strip-types`, and stripping types is not compiling: a
+      # `using` statement reaches V8 verbatim and is a syntax error before 24. What ships is tsc
+      # output at target es2023, where `using` is downlevelled away — so the floor is about the
+      # emitted package and this number is about the test command. `npm-floor` below proves it.
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+
+      - name: Install
+        working-directory: packages/npm/libd2
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: packages/npm/libd2
+        run: npm run check
+
+      # First against the wasm that is committed, because that is what a local pack ships and what
+      # anyone gets who clones and runs the tests.
+      - name: Test the committed wasm
+        working-directory: packages/npm/libd2
+        run: npm test
+
+      # Then against one built from this tree. The two passing means the committed artifact and
+      # the source still agree — the drift that a checked-in binary hides until it is rebuilt.
+      - name: Test a freshly built wasm
+        run: |
+          set -euo pipefail
+          ( cd packages/wasm && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall \
+              -Dcapi=drlg,pf,net --prefix "$GITHUB_WORKSPACE/dist" )
+          cp dist/bin/libd2.wasm packages/npm/libd2/src/libd2.wasm
+          ( cd packages/npm/libd2 && npm test )
+
+  npm-floor:
+    name: npm on the declared floor
+    needs: npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+
+      # The pack runs the source suite on its way through, so building the tarball still needs 24.
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - name: Pack the tarball
+        run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh 0.0.0-ci
+
+      # Then drop to the version `engines` promises and install what a consumer would install.
+      # Nothing else in this workflow can catch a floor that has quietly stopped being true.
+      - uses: actions/setup-node@v4
+        with: { node-version: '22.12' }
+      - name: Use the tarball on Node 22.12
+        run: |
+          set -euo pipefail
+          node --version
+          mkdir -p /tmp/floor && cd /tmp/floor
+          npm init -y >/dev/null
+          npm install --silent "$GITHUB_WORKSPACE"/libd2-0.0.0-ci.tgz
+          # `close()` rather than `using`: a caller on 22 writing plain JS has no `using` either,
+          # and this is about whether the shipped code runs, not about the sugar around it.
+          cat > floor.mjs <<'JS'
+          import { init, open, Areas } from 'libd2';
+          await init();
+          const game = open({ seed: 1337 });
+          try {
+            const cold = game.area(Areas.ColdPlains);
+            if (cold.name !== 'Cold Plains') throw new Error(`got ${cold.name}`);
+            if (cold.rooms.length !== 97) throw new Error(`got ${cold.rooms.length} rooms`);
+            console.log(`ok on ${process.version}: ${cold.name}, ${cold.rooms.length} rooms`);
+          } finally {
+            game.close();
+          }
+          JS
+          node floor.mjs

@@ -65,6 +65,12 @@ export interface Exports {
     world: number, levelId: number, x: number, y: number, radius: number,
     outX: number, outY: number,
   ): number;
+  d2pf_unit_place(
+    world: number, levelId: number, unitId: number, unitType: number, sizeX: number,
+    x: number, y: number,
+  ): number;
+  d2pf_unit_lift(world: number, levelId: number, unitId: number): number;
+  d2pf_units_clear(world: number, levelId: number): number;
   d2pf_abi_version(): number;
 }
 
@@ -106,6 +112,45 @@ export function load(): Promise<Exports> {
  * where those pointers point. It grows to fit and is reused, because the alternative — asking the
  * module for memory per call — is what makes a wasm boundary slow.
  */
+/**
+ * A window onto scratch memory that cannot go stale.
+ *
+ * Mirrors the slice of DataView the library actually uses. Each call builds a fresh view over the
+ * module's CURRENT buffer, so it stays valid across a memory growth that would have detached a
+ * held one.
+ */
+export class ScratchView {
+  #exports: Exports;
+  #base: number;
+  #bytes: number;
+
+  constructor(exports: Exports, base: number, bytes: number) {
+    this.#exports = exports;
+    this.#base = base;
+    this.#bytes = bytes;
+  }
+
+  #dv(): DataView {
+    return new DataView(this.#exports.memory.buffer, this.#base, this.#bytes);
+  }
+
+  getInt32(offset: number, littleEndian?: boolean): number {
+    return this.#dv().getInt32(offset, littleEndian);
+  }
+
+  getUint16(offset: number, littleEndian?: boolean): number {
+    return this.#dv().getUint16(offset, littleEndian);
+  }
+
+  setInt32(offset: number, value: number, littleEndian?: boolean): void {
+    this.#dv().setInt32(offset, value, littleEndian);
+  }
+
+  setUint16(offset: number, value: number, littleEndian?: boolean): void {
+    this.#dv().setUint16(offset, value, littleEndian);
+  }
+}
+
 export class Scratch {
   #exports: Exports;
   #base = 0;
@@ -115,12 +160,26 @@ export class Scratch {
     this.#exports = exports;
   }
 
-  /** A byte view of `bytes` scratch bytes. Invalidated by the next `take`, and by memory growth. */
-  take(bytes: number): {ptr: number; view: DataView} {
+  /**
+   * A region of `bytes` scratch bytes: a pointer, and a window onto it.
+   *
+   * The window is NOT a DataView. It rebuilds one per access, because any call into the module can
+   * grow linear memory and growth DETACHES the old ArrayBuffer — every DataView made before that
+   * call then throws `Cannot perform DataView.prototype.getInt32 on a detached ArrayBuffer` the
+   * moment it is read. That hides until a level is big enough to trigger a grow, and then takes
+   * down whatever was mid-read.
+   *
+   * A getter on the returned object is not enough, and that is the subtle part: every caller here
+   * writes `const {ptr, view} = scratch.take(n)`, and destructuring EVALUATES a getter once and
+   * keeps the result — reintroducing exactly the stale view it was meant to prevent. So the window
+   * is an object whose own methods each rebuild, which stays correct however it is passed around.
+   */
+  take(bytes: number): {ptr: number; view: ScratchView} {
     if (bytes > this.#capacity) this.#reserve(bytes);
-    return {ptr: this.#base, view: new DataView(this.#exports.memory.buffer, this.#base, bytes)};
+    return {ptr: this.#base, view: new ScratchView(this.#exports, this.#base, bytes)};
   }
 
+  /** Bytes at `ptr`. Read them now: the next call into the module may detach the buffer. */
   bytes(ptr: number, length: number): Uint8Array {
     return new Uint8Array(this.#exports.memory.buffer, ptr, length);
   }

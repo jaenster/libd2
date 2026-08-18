@@ -5,6 +5,15 @@ zig-out/
 **/zig-cache
 **/zig-out
 
+# Fetched package cache (zig fetch --global-cache-dir zig-pkg)
+zig-pkg/
+
+# Every JS/TS toolchain in the tree installs into one of these
+node_modules/
+
+# What `npm pack` / the release script drops beside the sources
+*.tgz
+
 # Generated visualisations (large embedded map data)
 packages/pathfinding/viz/
 

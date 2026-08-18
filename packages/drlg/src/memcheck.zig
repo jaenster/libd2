@@ -28,7 +28,7 @@ const lib = @import("lib.zig");
 
 /// Peak resident set size in bytes. `ru_maxrss` is BYTES on Darwin and KIBIBYTES on Linux and the
 /// BSDs — getting that wrong puts the budget out by 1024x, so it is converted here, once.
-fn peakRssBytes() ?u64 {
+pub fn peakRssBytes() ?u64 {
     if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.cpu.arch.isWasm()) return null;
     const ru = std.posix.getrusage(std.posix.rusage.SELF);
     if (ru.maxrss <= 0) return null;

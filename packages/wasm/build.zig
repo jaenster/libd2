@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     // `zig build -Dtarget=wasm32-freestanding` is a Debug build and emits 6.5 MB where the
     // released artifact is 2.9 MB. Setting a preferred_optimize_mode here would make that the
     // default, but it also makes Zig register -Drelease INSTEAD of -Doptimize, which is the flag
-    // release.yml passes — so the default stays Debug and the release pipeline stays explicit.
+    // the release workflows pass — so the default stays Debug and the pipeline stays explicit.
     const optimize = b.standardOptimizeOption(.{});
 
     // Which subsystems this bundle carries. One artifact beats one-per-subsystem because a
@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     // standalone, because item's bulk is its excel tables and it shares almost nothing with the
     // map. So the set is chosen, not fixed, and a consumer who only generates maps does not ship
     // the item tables to say so.
-    const want = b.option([]const u8, "capi", "Subsystems to bundle: comma list of drlg,pf,item (default all)") orelse "drlg,pf,item";
+    const want = b.option([]const u8, "capi", "Subsystems to bundle: comma list of drlg,pf,item,net (default all)") orelse "drlg,pf,item,net";
     const has = struct {
         fn f(list: []const u8, name: []const u8) bool {
             var it = std.mem.splitScalar(u8, list, ',');
@@ -27,15 +27,18 @@ pub fn build(b: *std.Build) void {
     const with_drlg = has(want, "drlg");
     const with_pf = has(want, "pf");
     const with_item = has(want, "item");
+    const with_net = has(want, "net");
 
     const drlg = b.dependency("d2_drlg", .{ .target = target, .optimize = optimize });
     const pf = b.dependency("d2_pathfinding", .{ .target = target, .optimize = optimize });
     const item = b.dependency("d2_item", .{ .target = target, .optimize = optimize });
+    const net = b.dependency("d2_net", .{ .target = target, .optimize = optimize });
 
     const opts = b.addOptions();
     opts.addOption(bool, "with_drlg", with_drlg);
     opts.addOption(bool, "with_pf", with_pf);
     opts.addOption(bool, "with_item", with_item);
+    opts.addOption(bool, "with_net", with_net);
 
     const mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -48,6 +51,7 @@ pub fn build(b: *std.Build) void {
     mod.addImport("d2drlg-capi", drlg.module("d2drlg-capi"));
     mod.addImport("d2pf-capi", pf.module("d2pf-capi"));
     mod.addImport("d2item-capi", item.module("d2item-capi"));
+    mod.addImport("d2net-capi", net.module("d2net-capi"));
 
     if (target.result.cpu.arch.isWasm()) {
         // A reactor, not a command: no entry point, and every export kept.
@@ -69,5 +73,6 @@ pub fn build(b: *std.Build) void {
         if (with_drlg) b.getInstallStep().dependOn(&b.addInstallHeaderFile(drlg.path("include/d2drlg.h"), "d2drlg.h").step);
         if (with_pf) b.getInstallStep().dependOn(&b.addInstallHeaderFile(pf.path("include/d2pf.h"), "d2pf.h").step);
         if (with_item) b.getInstallStep().dependOn(&b.addInstallHeaderFile(item.path("include/d2item.h"), "d2item.h").step);
+        if (with_net) b.getInstallStep().dependOn(&b.addInstallHeaderFile(net.path("include/d2net.h"), "d2net.h").step);
     }
 }

@@ -1165,9 +1165,13 @@ pub const DeadStub2D = struct {
 };
 
 /// 0x2E — SCMD_0x2E_DeadStub2E. `D2GSPacketClt0x2E_DeadStub`.
+///
+/// Three bytes, not one. The struct is empty because the handler is a stub that reads nothing,
+/// which is a fact about the HANDLER; the framer is a separate table and it sizes 0x2E at 3. Those
+/// two disagreeing is how a one-byte packet gets read as three and takes the next two with it.
 pub const DeadStub2E = struct {
     pub const OPCODE: u8 = 0x2e;
-    pub const SIZE: usize = 1;
+    pub const SIZE: usize = 3;
 
     pub fn encode(_: @This(), out: []u8) []u8 {
         std.debug.assert(out.len >= SIZE);
@@ -1474,7 +1478,7 @@ pub const NpcMenuSelect = struct {
 /// 0x39 — SCMD_0x39_DeadStub39. `(no packet struct)`.
 pub const DeadStub39 = struct {
     pub const OPCODE: u8 = 0x39;
-    pub const SIZE: usize = 1;
+    pub const SIZE: usize = 5;
 
     pub fn encode(_: @This(), out: []u8) []u8 {
         std.debug.assert(out.len >= SIZE);
@@ -1758,7 +1762,7 @@ pub const StaffInOrifice = struct {
 /// 0x45 — SCMD_0x45_Unused. `(no packet struct)`.
 pub const Unused = struct {
     pub const OPCODE: u8 = 0x45;
-    pub const SIZE: usize = 1;
+    pub const SIZE: usize = 9;
 
     pub fn encode(_: @This(), out: []u8) []u8 {
         std.debug.assert(out.len >= SIZE);
@@ -1865,38 +1869,36 @@ pub const ConfirmTradeTick = struct {
 };
 
 /// 0x49 — SCMD_0x49_TakeWaypoint. `D2GSPacketClt0x49_TakeWaypoint`.
+///
+/// FIXED at nine bytes, which `NET_D2GS_CLIENT_OUTGOING_SIZE[0x49]` is the authority on. It was
+/// written here as a seven-byte header plus a NUL-terminated tail, which encodes to eight — and a
+/// short C->S packet is not rejected, it is FRAMED AT NINE ANYWAY. The server swallows the first
+/// byte of whatever follows, every command after it is read at an offset, and the connection is
+/// eventually dropped with nothing said. That cost a live game and a join that reported
+/// "game name and password don't match", three layers from the cause.
 pub const TakeWaypoint = struct {
     pub const OPCODE: u8 = 0x49;
-    pub const HEADER: usize = 7;
+    pub const SIZE: usize = 9;
     waypoint_guid: u32 = 0, // +0x01
     waypoint_id: u16 = 0, // +0x05
-    _pad: []const u8 = "", // +0x07, NUL-terminated on the wire
-
-    pub fn wireLen(self: @This()) usize {
-        return HEADER + self._pad.len + 1;
-    }
+    _unknown: u16 = 0, // +0x07 — zero on every capture
 
     pub fn encode(self: @This(), out: []u8) []u8 {
-        const n = self.wireLen();
-        std.debug.assert(out.len >= n);
-        @memset(out[0..HEADER], 0);
+        std.debug.assert(out.len >= SIZE);
         out[0] = OPCODE;
         std.mem.writeInt(u32, out[1..][0..4], self.waypoint_guid, .little);
         std.mem.writeInt(u16, out[5..][0..2], self.waypoint_id, .little);
-        @memcpy(out[HEADER..][0..self._pad.len], self._pad);
-        out[HEADER + self._pad.len] = 0;
-        return out[0..n];
+        std.mem.writeInt(u16, out[7..][0..2], self._unknown, .little);
+        return out[0..SIZE];
     }
 
     pub fn decode(buf: []const u8) DecodeError!@This() {
-        if (buf.len < HEADER) return error.ShortBuffer;
+        if (buf.len < SIZE) return error.ShortBuffer;
         if (buf[0] != OPCODE) return error.WrongOpcode;
-        const rest = buf[HEADER..];
-        const end = std.mem.indexOfScalar(u8, rest, 0) orelse rest.len;
         return .{
             .waypoint_guid = std.mem.readInt(u32, buf[1..][0..4], .little),
             .waypoint_id = std.mem.readInt(u16, buf[5..][0..2], .little),
-            ._pad = rest[0..end],
+            ._unknown = std.mem.readInt(u16, buf[7..][0..2], .little),
         };
     }
 };
@@ -2054,7 +2056,7 @@ pub const SetHotkey = struct {
 /// 0x52 — SCMD_0x52_Unused52. `D2GSPacketClt0x52_Unused`.
 pub const Unused52 = struct {
     pub const OPCODE: u8 = 0x52;
-    pub const SIZE: usize = 1;
+    pub const SIZE: usize = 5;
 
     pub fn encode(_: @This(), out: []u8) []u8 {
         std.debug.assert(out.len >= SIZE);
@@ -2224,7 +2226,7 @@ pub const CubeApply = struct {
 /// 0x5F — SCMD_0x5F_SyncPosition. `(no packet struct)`.
 pub const SyncPosition = struct {
     pub const OPCODE: u8 = 0x5f;
-    pub const SIZE: usize = 1;
+    pub const SIZE: usize = 5;
 
     pub fn encode(_: @This(), out: []u8) []u8 {
         std.debug.assert(out.len >= SIZE);
@@ -3192,4 +3194,43 @@ test "generated commands match the hand-written cs.zig byte-for-byte" {
     try std.testing.expectEqualSlices(u8,
         cs.InteractWithEntity.encode(.{ .unit_type = 1, .guid = 7 }, &a),
         InteractWithEntity.encode(.{ .unit_type = 1, .guid = 7 }, &b));
+}
+
+test "every command is the length the engine's own outgoing table says it is" {
+    // The server frames C->S by NET_D2GS_CLIENT_OUTGOING_SIZE, exactly as the client does. So a
+    // command encoded one byte short is NOT rejected — it is sized at the table's length anyway,
+    // swallowing the start of whatever follows. Every command after it is then read at an offset
+    // and the connection goes quiet: no error, no disconnect, just a server that stops obeying.
+    //
+    // That failure has now cost three separate debugging sessions (the 0x6d keep-alive at 5 bytes
+    // instead of 13, the 0x49 waypoint at 8 instead of 9), and each time it surfaced as something
+    // else entirely — a bot that would not walk, a game destroyed before anyone could join. This
+    // asserts the whole table at once so there is no fourth.
+    const cs = @import("cs.zig");
+    var buf: [512]u8 = undefined;
+
+    inline for (@typeInfo(@This()).@"struct".decls) |decl| {
+        const T = @field(@This(), decl.name);
+        if (@TypeOf(T) != type) continue;
+        if (@typeInfo(T) != .@"struct") continue;
+        if (!@hasDecl(T, "OPCODE") or !@hasDecl(T, "SIZE")) continue;
+
+        const op: u8 = T.OPCODE;
+        const expected = cs.OUTGOING_SIZE[op];
+        if (expected < 0) continue; // variable-length: sized by content, not by the table
+        // A table entry of ZERO is not "empty packet" — it is an opcode the engine refuses to
+        // frame at all, so writing one to a socket is itself the framing error. `DeadStub` (0x2c)
+        // is the only such struct; it exists for completeness and must never be sent.
+        if (expected == 0) continue;
+
+        const wire = (T{}).encode(&buf);
+        if (wire.len != @as(usize, @intCast(expected))) {
+            std.debug.print(
+                "clt.{s} (0x{x:0>2}) encodes {d} bytes, the engine frames it at {d}\n",
+                .{ decl.name, op, wire.len, expected },
+            );
+            return error.CommandLengthDisagreesWithEngine;
+        }
+        try std.testing.expectEqual(op, wire[0]);
+    }
 }

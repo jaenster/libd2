@@ -9,7 +9,7 @@ import (
 
 // abiVersion is the d2drlg C ABI these bindings were written against. A library reporting
 // anything else is refused by New rather than called into.
-const abiVersion = 3
+const abiVersion = 5
 
 // api is the bound C entry points. Buffers cross as unsafe.Pointer and out-parameters as *int32,
 // which is the whole vocabulary this ABI uses: no floats, no by-value structs, no callbacks.

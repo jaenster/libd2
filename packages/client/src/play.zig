@@ -22,8 +22,16 @@ const UnitType = world_mod.UnitType;
 /// and the command is refused with SERVERSTATUS_BAD_TARGET.
 pub const MAX_COMMAND_RANGE: i32 = 0x32;
 
-/// What to actually aim for. Under the gate with room for the server's lagging view of you.
-pub const SAFE_STEP: i32 = 40;
+/// What to actually aim for.
+///
+/// Well under the gate, and the margin is the whole point. We clamp from OUR idea of where we are,
+/// the server checks against ITS idea, and the two drift: a capture of a stalled walk showed us
+/// commanding a point 59 subtiles from the position the server was re-asserting, which the gate
+/// drops in silence. Every one of those commands looked sent and did nothing.
+///
+/// Half the gate leaves 25 subtiles of slack for that drift, which is far more than the observed
+/// divergence, and costs only that a long walk takes a few more hops.
+pub const SAFE_STEP: i32 = 25;
 
 pub const Point = struct { x: u16, y: u16 };
 
@@ -87,6 +95,22 @@ pub const Actor = struct {
             clt.WalkToLocation.encode(.{ .x = aim.x, .y = aim.y }, out);
     }
 
+    /// Aim at a point WITHOUT clamping it into the range gate.
+    ///
+    /// `moveToward` exists because `CheckIfCoordsAreInRange(pUnit, 0x32, …)` rejects a command
+    /// whose target is more than 50 subtiles away on either axis. Whether a walk actually goes
+    /// through that check is a separate question from whether the check exists — and if it does
+    /// not, handing the server the real destination lets IT path, over a map that knows where the
+    /// monsters are standing. Ours does not.
+    pub fn moveDirect(self: *const Actor, target: Point, run: bool, out: []u8, tolerance: i32) Error!?[]u8 {
+        const from = self.position() orelse return error.NoPlayerPosition;
+        if (distance(from, target) <= tolerance) return null;
+        return if (run)
+            clt.RunToLocation.encode(.{ .x = target.x, .y = target.y }, out)
+        else
+            clt.WalkToLocation.encode(.{ .x = target.x, .y = target.y }, out);
+    }
+
     /// Interact with a unit — open a door, take a waypoint, talk to an NPC, enter a portal.
     pub fn interact(_: *const Actor, unit_type: UnitType, guid: u32, out: []u8) []u8 {
         return clt.InteractWithEntity.encode(
@@ -108,6 +132,15 @@ pub const Actor = struct {
         const from = self.position() orelse return error.NoPlayerPosition;
         const aim = clampStep(from, target, self.step);
         return clt.RightSkillOnLocation.encode(.{ .x = aim.x, .y = aim.y }, out);
+    }
+
+    /// Travel by waypoint. `guid` is the waypoint object standing next to us; `area` is where to go.
+    ///
+    /// Interacting with the waypoint only OPENS it — the real client then sends this when a
+    /// destination is picked off the menu, and the server checks the act's activated bitfield
+    /// before it moves anyone. Asking for a level that has not been visited is refused in silence.
+    pub fn takeWaypoint(_: *const Actor, guid: u32, area: u16, out: []u8) []u8 {
+        return (clt.TakeWaypoint{ .waypoint_guid = guid, .waypoint_id = area }).encode(out);
     }
 
     /// Pick an item up off the floor.
@@ -195,6 +228,15 @@ test "every action encodes to its own opcode and names the unit it means" {
     try testing.expectEqual(clt.InteractWithEntityEx.OPCODE, grab[0]);
     try testing.expectEqual(@as(u32, @intFromEnum(UnitType.item)), decoded.unit_type);
     try testing.expectEqual(@as(u32, 0x9abc), decoded.target_guid);
+
+    // A waypoint names two things: which stone we are standing at, and which level to go to.
+    // Swapping them is silent — the server just refuses to move anyone.
+    const wp = actor.takeWaypoint(0xdead, 107, &buf);
+    const trip = try clt.TakeWaypoint.decode(wp);
+    try testing.expectEqual(clt.TakeWaypoint.OPCODE, wp[0]);
+    try testing.expectEqual(@as(u32, 0xdead), trip.waypoint_guid);
+    try testing.expectEqual(@as(u16, 107), trip.waypoint_id);
+    try testing.expect(wp.len <= Actor.MAX_COMMAND);
 }
 
 test "acting with no known player position is an error, not a bad command" {
