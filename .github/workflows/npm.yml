@@ -63,8 +63,8 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then
             v="${GITHUB_REF_NAME#v}"
           else
-            # Off a branch, an unspecified version means the one the library currently claims —
-            # the same fallback release.yml uses, so a dry run of either needs no arguments.
+            # Off a branch, an unspecified version means the one the library currently claims,
+            # so a dry run needs no arguments.
             v='${{ inputs.version }}'
             [ -n "$v" ] || v="$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon | head -1)"
           fi
@@ -78,27 +78,28 @@ jobs:
           echo "VERSION=$v" >> "$GITHUB_ENV"
           echo "publishing libd2 $v"
 
-      # Fresh wasm rather than anything checked in, into the layout the assembler reads:
-      # dist/<name>/wasm32-freestanding/. A package without a wasm build is skipped there.
-      - name: Build the WebAssembly for every namespace
+      # Fresh wasm rather than the copy checked in beside the shim. One module carrying several
+      # subsystems, because the shim passes pointers between them and separate modules would have
+      # separate memories — see packages/wasm/src/root.zig.
+      #
+      # -Dcapi names exactly what the TypeScript calls, which is not the same as "all". `item`
+      # is 888 KB of excel tables and the shim does not reference a single d2item_ export, so
+      # the default set would put a 45% larger wasm in front of every browser consumer to ship
+      # nothing they can use. `net` is 9 KB, and the live layer calls it. When the shim starts
+      # calling a subsystem, add it here — and when it stops, take it out.
+      - name: Build the WebAssembly
         run: |
           set -euo pipefail
-          for name in drlg item; do
-            dir="packages/$name"
-            [ -f "$dir/build.zig" ] || continue
-            grep -q "is_wasm\|wasm32" "$dir/build.zig" || { echo "skip $name: no wasm target"; continue; }
-            echo "== $name"
-            ( cd "$dir" && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall -Dcli=false \
-                --prefix "$GITHUB_WORKSPACE/dist/$name/wasm32-freestanding" )
-          done
-          find dist -name '*.wasm' -exec ls -la {} +
+          ( cd packages/wasm && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall \
+              -Dcapi=drlg,pf,net --prefix "$GITHUB_WORKSPACE/dist" )
+          ls -la dist/bin/libd2.wasm
 
       - name: Assemble and pack
-        run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh "$VERSION" dist
+        run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh "$VERSION" dist/bin/libd2.wasm
 
-      # Smoke-tests the exact tarball that gets published, so what ships is what was tested.
-      # Both import styles, because the subpath exports are easy to break and silent when they
-      # are: a wrong path only fails at the consumer.
+      # Smoke-tests the exact tarball that gets published, so what ships is what was tested. The
+      # package's own suite already ran against the source during the pack; what only the tarball
+      # can prove is that the emitted JS resolves its own imports and finds the wasm beside it.
       - name: Smoke-test the packed tarball
         run: |
           set -euo pipefail
@@ -107,18 +108,21 @@ jobs:
           npm init -y >/dev/null
           npm install --silent "$tarball"
           cat > smoke.mjs <<'JS'
-          import { drlg } from 'libd2';
-          import * as sub from 'libd2/drlg';
-          const map = await drlg.render(1337, 0, 0);
-          const cold = map.levels.find(l => l.levelNo === 3);
-          const shrines = drlg.levelShrines(cold);
-          if (map.levels.length !== 39) throw new Error(`expected 39 levels, got ${map.levels.length}`);
-          if (cold.displayName !== 'Cold Plains') throw new Error(`expected Cold Plains, got ${cold.displayName}`);
+          import { init, open, Areas, route } from 'libd2';
+          await init();
+          using game = open({ seed: 1337 });
+          const town = game.area(Areas.RogueEncampment);
+          const cold = game.area(Areas.ColdPlains);
+          if (cold.name !== 'Cold Plains') throw new Error(`expected Cold Plains, got ${cold.name}`);
           if (cold.rooms.length !== 97) throw new Error(`expected 97 rooms, got ${cold.rooms.length}`);
-          if (shrines.length !== 5) throw new Error(`expected 5 shrines, got ${shrines.length}`);
-          const viaSub = await sub.render(1337, 0, 0);
-          if (viaSub.levels.length !== 39) throw new Error('subpath export libd2/drlg is broken');
-          console.log(`ok: ${map.levels.length} levels, ${cold.displayName} ${cold.rooms.length} rooms, ${shrines.length} shrines, subpath ok`);
+          if (game.generatedActs.length !== 1) throw new Error('one act should cover both areas');
+          const legs = route(
+            { area: town, x: 25130, y: 5140 },
+            { area: cold, x: cold.rooms[0].x, y: cold.rooms[0].y },
+            { teleport: true },
+          );
+          if (!legs) throw new Error('no route across the seam');
+          console.log(`ok: ${cold.name} ${cold.rooms.length} rooms, routed across ${cold.name}`);
           JS
           node smoke.mjs
 

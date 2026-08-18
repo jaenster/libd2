@@ -9,8 +9,12 @@
 //
 // It runs anywhere, including plain Node with no browser at all, which is what makes it testable.
 
-import type {Area, CollisionGrid, Location, Point, WalkGrid} from './game.ts';
-import {Colbit, Masks, Walk} from './game.ts';
+import type {Area} from './drlg/area.ts';
+import type {Location} from './drlg/location.ts';
+import type {Point} from './drlg/point.ts';
+import type {CollisionGrid, WalkGrid} from './drlg/collision.ts';
+import {Walk} from './drlg/collision.ts';
+import {Colbit, Masks} from './drlg/collision.flags.ts';
 
 /** An RGBA image, one entry per pixel, laid out the way `ImageData` wants it. */
 export interface Raster {

@@ -10,74 +10,13 @@
 // All of it is synchronous. Routing is a search over grids already in memory; there is nothing to
 // wait for, so there is no reason to make a caller await.
 
-import {Area, Location, Masks, type Game} from './game.ts';
+import {Area} from './drlg/area.ts';
+import {Route, type Leg, type Move, type RouteOptions} from './route.ts';
+import {Location} from './drlg/location.ts';
+import {Masks} from './drlg/collision.flags.ts';
+import type {Game} from './game/game.ts';
 import {engineFor} from './internal.ts';
 import {MOVE_KINDS, SIZES, type MoveKind} from './wasm.ts';
-
-/** One step of a route. */
-export interface Move {
-  readonly location: Location;
-  readonly kind: MoveKind;
-}
-
-/** The part of a route inside one area. */
-export interface Leg {
-  readonly area: Area;
-  readonly moves: readonly Move[];
-  /** The area this leg leads into, or null on the last one. */
-  readonly exit: Area | null;
-}
-
-/**
- * A way from one Location to another.
- *
- * Iterating a Route walks its moves in order across every area, because that is what a consumer
- * almost always wants. `legs` is there for when the boundaries matter — and a transition always
- * runs from a leg's last move to the next leg's first, whether it is a staircase, an area border or
- * a teleport cast, so the far side never needs a case of its own.
- */
-export class Route implements Iterable<Move> {
-  readonly from: Location;
-  readonly to: Location;
-  readonly legs: readonly Leg[];
-
-  constructor(from: Location, to: Location, legs: readonly Leg[]) {
-    this.from = from;
-    this.to = to;
-    this.legs = legs;
-  }
-
-  get moves(): readonly Move[] {
-    return this.legs.flatMap((leg) => leg.moves);
-  }
-
-  get areas(): readonly Area[] {
-    return this.legs.map((leg) => leg.area);
-  }
-
-  /** Total moves across every leg. A cheap way to compare two routes. */
-  get length(): number {
-    return this.legs.reduce((total, leg) => total + leg.moves.length, 0);
-  }
-
-  [Symbol.iterator](): Iterator<Move> {
-    return this.moves[Symbol.iterator]();
-  }
-}
-
-export interface RouteOptions {
-  /** Teleport where the area permits it. Areas that forbid it fall back to walking. */
-  teleport?: boolean;
-  /** Teleport across level boundaries too, rather than only within one. */
-  teleportAcrossAreas?: boolean;
-  /** Maximum cast distance in subtiles. The engine's own gate is 50. */
-  maxCastDistance?: number;
-  castMetric?: 'chebyshev' | 'euclidean';
-  /** Accept a walkable cell this far from a blocked start or goal. */
-  snapRadius?: number;
-  /** Movement collision model. Defaults to {@link Masks.playerPath}. */
-  collisionMask?: number;
-}
 
 /**
  * Whether something can stand at a point.
@@ -213,7 +152,7 @@ export function exitFrom(from: Area, towards: Area): Area | null {
  * Whether sight runs between two points. False across areas, which is not a question with an
  * answer. `mask` is what blocks sight, defaulting to what the engine uses for a cast.
  */
-export function lineOfSight(from: Location, to: Location, mask = Masks.missileFlight): boolean {
+export function lineOfSight(from: Location, to: Location, mask: number = Masks.missileFlight): boolean {
   if (from.area.id !== to.area.id) return false;
   const {exports} = engineFor(from.area.game);
   const {game, id} = from.area;
