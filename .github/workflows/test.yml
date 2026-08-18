@@ -98,8 +98,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 24, not the 22.12 floor `engines` declares, and the difference is the point. The suite runs
+      # the SOURCE through `--experimental-strip-types`, and stripping types is not compiling: a
+      # `using` statement reaches V8 verbatim and is a syntax error before 24. What ships is tsc
+      # output at target es2023, where `using` is downlevelled away — so the floor is about the
+      # emitted package and this number is about the test command. `npm-floor` below proves it.
       - uses: actions/setup-node@v4
-        with: { node-version: '22' }
+        with: { node-version: '24' }
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
 
@@ -126,3 +131,46 @@ jobs:
               -Dcapi=drlg,pf,net --prefix "$GITHUB_WORKSPACE/dist" )
           cp dist/bin/libd2.wasm packages/npm/libd2/src/libd2.wasm
           ( cd packages/npm/libd2 && npm test )
+
+  npm-floor:
+    name: npm on the declared floor
+    needs: npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+
+      # The pack runs the source suite on its way through, so building the tarball still needs 24.
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - name: Pack the tarball
+        run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh 0.0.0-ci
+
+      # Then drop to the version `engines` promises and install what a consumer would install.
+      # Nothing else in this workflow can catch a floor that has quietly stopped being true.
+      - uses: actions/setup-node@v4
+        with: { node-version: '22.12' }
+      - name: Use the tarball on Node 22.12
+        run: |
+          set -euo pipefail
+          node --version
+          mkdir -p /tmp/floor && cd /tmp/floor
+          npm init -y >/dev/null
+          npm install --silent "$GITHUB_WORKSPACE"/libd2-0.0.0-ci.tgz
+          # `close()` rather than `using`: a caller on 22 writing plain JS has no `using` either,
+          # and this is about whether the shipped code runs, not about the sugar around it.
+          cat > floor.mjs <<'JS'
+          import { init, open, Areas } from 'libd2';
+          await init();
+          const game = open({ seed: 1337 });
+          try {
+            const cold = game.area(Areas.ColdPlains);
+            if (cold.name !== 'Cold Plains') throw new Error(`got ${cold.name}`);
+            if (cold.rooms.length !== 97) throw new Error(`got ${cold.rooms.length} rooms`);
+            console.log(`ok on ${process.version}: ${cold.name}, ${cold.rooms.length} rooms`);
+          } finally {
+            game.close();
+          }
+          JS
+          node floor.mjs
