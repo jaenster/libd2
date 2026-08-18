@@ -1,0 +1,114 @@
+name: test
+
+# The only workflow here that does not publish something. Everything else in this directory runs
+# on a tag or on workflow_dispatch, which meant nothing ran on a pull request at all — and `main`
+# accumulated exactly the failures a pull-request job catches: a header declaring an export the
+# shim never defined, a Rust binding hard-failing on an ABI the shim disagreed with, a red Go
+# suite, and a `zig build verify` step pointing at a file that was never committed.
+#
+# Each binding is its own job because each one fails differently. Rust builds its native from
+# source, so it only ever tests the tree. Go and .NET carry a CHECKED-IN native, which can drift
+# from the tree in either direction — that is what went wrong — so the Go job deliberately runs on
+# macOS with NO LIBD2_PATH, where the embedded darwin_arm64 binary is the one that gets loaded.
+# Pointing it at a freshly built library would test the source and let the shipped artifact rot.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zig:
+    name: zig build test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+
+      # Every package's own suite, plus the golden gates: packages/drlg's `test` step depends on
+      # the verify run, so the byte-exactness gate is covered here and needs no job of its own.
+      # It is the long pole (whole acts regenerated in ReleaseFast) and worth every minute.
+      - run: zig build test
+
+      # The C ABI is a separate artifact from the module, and nothing above links it. A consumer
+      # who takes the header + library gets neither unless this builds.
+      - name: Build the C ABIs
+        run: |
+          set -euo pipefail
+          for p in drlg item pathfinding net; do
+            ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
+          done
+
+      # The combined reactor, in the exact configuration the npm package ships.
+      - name: Build the combined wasm
+        working-directory: packages/wasm
+        run: zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall -Dcapi=drlg,pf,net
+
+  rust:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+
+      # build.rs compiles the native from this tree, so an ABI the crate does not expect fails
+      # here rather than at a consumer. That check is the whole reason this job is cheap to have.
+      - name: Test
+        working-directory: packages/rust/libd2
+        run: cargo test --all-features
+
+  go:
+    name: go test
+    # macOS on purpose: darwin_arm64 is the only platform Go ships a committed native for, so this
+    # is the one runner where `go test` loads the binary a consumer would actually get.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.24' }
+
+      # No LIBD2_PATH and no zig: the embedded library is the subject. Its ABI number is asserted
+      # against the bindings' pin, which is how a drifted checked-in native announces itself.
+      - name: Test
+        working-directory: packages/go/libd2
+        run: go test ./...
+
+  npm:
+    name: npm test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+
+      - name: Install
+        working-directory: packages/npm/libd2
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: packages/npm/libd2
+        run: npm run check
+
+      # First against the wasm that is committed, because that is what a local pack ships and what
+      # anyone gets who clones and runs the tests.
+      - name: Test the committed wasm
+        working-directory: packages/npm/libd2
+        run: npm test
+
+      # Then against one built from this tree. The two passing means the committed artifact and
+      # the source still agree — the drift that a checked-in binary hides until it is rebuilt.
+      - name: Test a freshly built wasm
+        run: |
+          set -euo pipefail
+          ( cd packages/wasm && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall \
+              -Dcapi=drlg,pf,net --prefix "$GITHUB_WORKSPACE/dist" )
+          cp dist/bin/libd2.wasm packages/npm/libd2/src/libd2.wasm
+          ( cd packages/npm/libd2 && npm test )
