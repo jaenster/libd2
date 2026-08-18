@@ -16,7 +16,7 @@ internal static class Native
     private const string Lib = "d2drlg";
 
     /// <summary>ABI this binding was written against. Checked once on first use.</summary>
-    internal const uint ExpectedAbi = 3;
+    internal const uint ExpectedAbi = 5;
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     internal static extern IntPtr d2drlg_ctx_create();
