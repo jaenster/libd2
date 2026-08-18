@@ -42,7 +42,7 @@ const events = sim.events;
 const sc = sim.net.sc;
 const cs = sim.net.cs;
 
-/// Monster-AI tunables (aggro/melee/step/cooldown) — decisions live in d2-sim's ai module.
+/// Monster-AI tunables (aggro/melee/step/cooldown) — decisions live in d2-game's ai module.
 const AI_CONFIG: sim.ai.AiConfig = .{};
 /// Pathfinder per-axis delta gate (PATH_CalculatePath rejects >=100 subtiles).
 const PATH_GATE: i32 = 99;
@@ -140,7 +140,7 @@ pub const Client = struct {
     pending_loadact: bool = false,
     left_skill: u16 = DEFAULT_SKILL,
     right_skill: u16 = DEFAULT_SKILL,
-    /// The caster's cold-tree skill build (d2-sim) — the effective (hard-point) levels the sim
+    /// The caster's cold-tree skill build (d2-game) — the effective (hard-point) levels the sim
     /// elemental damage path reads to build an Ice Bolt Cast (skill + synergies + cold mastery).
     /// Populated at spawn from the standalone's stock Hell-Mephisto cold sorc.
     build: sim.character.SorcColdBuild = .{},
@@ -675,7 +675,7 @@ pub const GameInstance = struct {
     // One `tick()` is one iteration of the real 25-fps per-game server loop. Step
     // order and the periodic cadence below mirror the decompiled ServerGameLoop
     // exactly; every step cites its 1.14d function. Subsystems we already model are
-    // wired to their d2-sim kernel; the rest are honest stubs (the engine runs them,
+    // wired to their d2-game kernel; the rest are honest stubs (the engine runs them,
     // we don't yet). A game hosts several levels at once — the engine's unit lists are
     // game-wide across all active acts/rooms, so the unit-update and cleanup steps loop
     // our per-level worlds while the frame ordering + cadence stay at the game level.
@@ -1302,8 +1302,9 @@ pub const GameInstance = struct {
                 _ = self.unequipItem(c, ls, @intCast(cmd.body_loc & 0xFF));
             },
             .chat_message => {
-                const cmd = cs.ChatMessage.decode(buf) catch return n;
-                std.debug.print("[chat] {s}: {s}\n", .{ "player", cmd.msg });
+                // Decoded so the cursor advances by the real length; there is no chat routing
+                // yet, and a library has no business writing to a host's stderr.
+                _ = cs.ChatMessage.decode(buf) catch return n;
             },
             else => {},
         }
@@ -2245,7 +2246,7 @@ pub const GameInstance = struct {
             }
         }
 
-        // Cold cast: route Ice Bolt through d2-sim's elemental cast path. `sim.skill.cast` spawns the
+        // Cold cast: route Ice Bolt through d2-game's elemental cast path. `sim.skill.cast` spawns the
         // skill's srvmissile with the sorc's Ice Bolt Cast (skill+synergies+cold-mastery pierce, built
         // from the client's SorcColdBuild) snapshotted on `elem_cast`; the missile is caster_derived so
         // stepMissiles resolves its on-hit per victim via missile.applyElementalHitVs (the VICTIM's
@@ -2421,13 +2422,13 @@ pub const GameInstance = struct {
 
     // --- missiles -----------------------------------------------------------
 
-    /// Host-side missile policy for d2-sim's missile.stepAll (which owns the advance/collision/
+    /// Host-side missile policy for d2-game's missile.stepAll (which owns the advance/collision/
     /// retire lifecycle). The host owns unit storage AND the collision grid, so it answers three
     /// duck-typed hooks:
     ///   target(m)      — the first live monster within the missile's collision radius (owner-safe).
     ///   blockedAt(x,y) — wall LoS from the level's path grid; a units+walls bolt dies on a blocked
     ///                    subtile so it can never reach a monster behind a wall (no wall-cheese).
-    ///   applyHit(m,v)  — caster-derived on-hit damage, delegated to d2-sim's
+    ///   applyHit(m,v)  — caster-derived on-hit damage, delegated to d2-game's
     ///                    missile.applyElementalHitVs: it resolves the cast snapshotted on the
     ///                    missile (elem_cast) against the victim's resist (its resist for the cast's
     ///                    element minus the cast's Cold-Mastery pierce). No formula in the host.
@@ -4695,7 +4696,6 @@ test "monster allocation: how many spawn in the level and where (queryable count
         miny = @min(miny, u.y);
         maxy = @max(maxy, u.y);
     }
-    std.debug.print("\nLevel 8: {d} monsters across bbox x[{d}..{d}] y[{d}..{d}] over {d} rooms\n", .{ count, minx, maxx, miny, maxy, ls.summary.room_count });
     try std.testing.expect(count >= 3); // a real roster, not a placeholder
     try std.testing.expect(maxx > minx or maxy > miny); // spread across the area, not one cell
 }

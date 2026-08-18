@@ -32,6 +32,7 @@ pub const level = @import("level.zig");
 pub const rooms = @import("rooms.zig");
 pub const portals = @import("portals.zig");
 pub const occupancy = @import("occupancy.zig");
+pub const motion = @import("motion.zig");
 pub const world = @import("world.zig");
 
 /// The collision bit/mask vocabulary and the per-unit-type collision rules, re-exported from
@@ -53,6 +54,7 @@ pub const TeleportRule = level.TeleportRule;
 pub const TerrainEdit = level.Level.TerrainEdit;
 pub const Rect = level.Level.Rect;
 pub const Occupancy = occupancy.Occupancy;
+pub const Motion = motion.Motion;
 pub const Occupant = occupancy.Occupant;
 pub const FreeCoordOptions = level.FreeCoordOptions;
 pub const ringSearch = level.ringSearch;

@@ -2061,6 +2061,9 @@ pub fn outdoorFloorRoomTiles(
 // ---------------------------------------------------------------------------
 const testing = std.testing;
 
+/// The fidelity numbers below, printed only when asked for — see testdiag.zig.
+const vprint = @import("../testdiag.zig").print;
+
 /// Compare a materialized grid to a collision.zig baseline over the SAME DS1 +
 /// DT1 set, masking the special (artifact-blocked warp/preset) tile positions.
 /// Returns {resolved subtiles, matches}.
@@ -2133,7 +2136,7 @@ test "materialize: InitRoomTiles reproduces collision.zig DS1 collision (town)" 
 
     const r = compareMasked(&base, &mine, @intCast(d.width), umask);
     const pct: f64 = if (r.total == 0) 100.0 else @as(f64, @floatFromInt(r.match)) * 100.0 / @as(f64, @floatFromInt(r.total));
-    std.debug.print(
+    vprint(
         "\n[materialize] town {d}x{d}: floors={d} walls={d} shadows={d} special={d} " ++
             "warp_skip={d} unresolved={d} | resolved subtile match {d}/{d} ({d:.3}%)\n",
         .{ d.width, d.height, mine.n_floors, mine.n_walls, mine.n_shadows, mine.special_count, mine.warp_setup_skipped, nun, r.match, r.total, pct },
@@ -2208,7 +2211,7 @@ test "materialize: InitRoomTiles reproduces collision.zig for several maze/prese
         .{ .id = 38, .name = "Tristram" },
     };
 
-    std.debug.print("\n", .{});
+    vprint("\n", .{});
     for (levels) |L| {
         const tlv = ctx.act.level(L.id) orelse continue;
         var w: i32 = 64;
@@ -2218,7 +2221,7 @@ test "materialize: InitRoomTiles reproduces collision.zig for several maze/prese
             h = @intCast(tlv.size_y);
         }
         const lvl = lib.generate(&ctx, seed, @enumFromInt(L.id), .normal, .{ .x = 0, .y = 0, .w = w, .h = h }) catch |e| {
-            std.debug.print("[materialize] {s}: generate failed ({any})\n", .{ L.name, e });
+            vprint("[materialize] {s}: generate failed ({any})\n", .{ L.name, e });
             continue;
         };
         defer lvl.deinit();
@@ -2285,11 +2288,11 @@ test "materialize: InitRoomTiles reproduces collision.zig for several maze/prese
         }
 
         if (maps == 0) {
-            std.debug.print("[materialize] {s}: no preset DrlgMaps (pure maze/wilderness)\n", .{L.name});
+            vprint("[materialize] {s}: no preset DrlgMaps (pure maze/wilderness)\n", .{L.name});
             continue;
         }
         const pct: f64 = if (total == 0) 100.0 else @as(f64, @floatFromInt(matched)) * 100.0 / @as(f64, @floatFromInt(total));
-        std.debug.print(
+        vprint(
             "[materialize] {s}: {d} map(s) | resolved subtile match {d}/{d} ({d:.3}%) | unresolved tiles {d} | special {d}\n",
             .{ L.name, maps, matched, total, pct, unresolved_total, special_total },
         );
@@ -2423,7 +2426,7 @@ fn checkWildernessLevel(a: std.mem.Allocator, ctx: *lib.Ctx, idx: *const dt1blob
     const total_sub = level_over.cells.len;
     const pct_base: f64 = @as(f64, @floatFromInt(blocked_base)) * 100.0 / @as(f64, @floatFromInt(total_sub));
     const pct_over: f64 = @as(f64, @floatFromInt(blocked_over)) * 100.0 / @as(f64, @floatFromInt(total_sub));
-    std.debug.print(
+    vprint(
         "[materialize] {s} {d}x{d} type={d}: floor_rooms={d} ({d} floor tiles) preset_rooms={d} | blocked baseline {d:.2}% -> overlay {d:.2}% | unresolved(preset) {d}\n",
         .{ name, lw, lh, nLevelType, floor_rooms, floor_tiles, preset_rooms, pct_base, pct_over, unresolved_total },
     );
@@ -2510,7 +2513,7 @@ test "materialize: wilderness floor cells + preset borders → non-empty plausib
         .{ .id = 4, .name = "StonyField" },
     };
 
-    std.debug.print("\n", .{});
+    vprint("\n", .{});
     // Pass 2: generate every level (as generateAct); materialize the targets live.
     for (ids.items) |lid| {
         const pLevel = drlgmod.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));

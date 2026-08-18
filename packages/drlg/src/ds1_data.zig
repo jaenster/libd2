@@ -1,4 +1,5 @@
-//! The one baked DS1-structure blob. In this public mirror it is embedded from
-//! the committed, pre-baked blob under ../blobs/ (baked by tools/sync.sh from the
-//! private source repo's assets/tiles/). No raw Blizzard art ships here.
+//! The one baked DS1-structure blob: only the fields the generator reads, so the
+//! committed file under ../blobs/ carries level structure and no raw Blizzard art.
+//! It is checked in pre-baked; the tool that bakes it needs the game assets and so
+//! lives outside this repository.
 pub const bytes = @embedFile("blobs/ds1_blob.bin");

@@ -1,8 +1,8 @@
 # libd2 from C++
 
-The headers are `extern "C"`-guarded, so they work unchanged from C++. Grab
-`include/d2<pkg>.h` + `lib/libd2<pkg>.*` from the package's GitHub Release. See the
-[API reference](c.md#reference-the-drlg-c-api).
+The headers are `extern "C"`-guarded, so they work unchanged from C++. `zig build` in a
+package with a C ABI writes `zig-out/include/d2<pkg>.h` + `zig-out/lib/libd2<pkg>.*`; see
+[the C guide](c.md) for the build line and the [API reference](c.md#reference-the-drlg-c-api).
 
 ## drlg — generate a map from a seed
 

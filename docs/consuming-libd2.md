@@ -1,22 +1,39 @@
 # Consuming libd2 from an external Zig project
 
 libd2 is a monorepo of independent packages under `packages/` (each with its own
-`build.zig` + `build.zig.zon`). The **root** package re-exports every public
-sub-package module, so an external Zig 0.16 project can add libd2 **once** and
-`@import` any of them.
+`build.zig` + `build.zig.zon`), but a consumer does not have to know that. The root
+package exposes **one module, `libd2`**, with every layer reachable by name:
 
-## Importable module names
+```zig
+const libd2 = @import("libd2");
 
-| module | package | notes |
+const map  = try libd2.drlg.generate(...);
+const hash = libd2.bnet.xsha1.passwordHash("secret");
+```
+
+Naming a namespace costs nothing until you use it — Zig analyses a declaration only
+when something references it, so a binary that touches `libd2.bnet` never compiles the
+map generator and never embeds the excel tables. The per-package modules still resolve
+too (see below); the umbrella is the surface, not the structure.
+
+## What is in it
+
+| namespace | module | what it is |
 |-|-|-|
-| `d2-core` | packages/core | Stat/Item model foundation (seed-RNG, Stat/StatList, ISC, wire decoder, Fog::Memory pool) |
-| `d2-data` | packages/data | the authoritative 1.14d excel tables + TSV reader |
-| `d2-sim` | packages/sim | faithful runtime game-simulation port (combat/skills/monsters) |
-| `d2-item` | packages/item | faithful item-generation (drop) port |
-| `d2-drlg` | packages/drlg | faithful DRLG map generator + collision |
-| `d2-formats` | packages/formats | pure DS1/DT1 parsers + the fixed `.d2s` save header |
-| `d2-save` | packages/save | the `.d2s` character save sections, read and write |
-| `d2-util` | packages/util | D2GS Huffman packet codec + wire framing |
+| `util` | `d2-util` | Domain-free mechanics: bit reader/writer, the D2GS Huffman codec and its framing. |
+| `data` | `d2-data` | The real 1.14d excel tables, embedded, plus the TSV reader. |
+| `formats` | `d2-formats` | On-disk parsers: `ds1`, `dt1`, `dc6`, `dcc`, `cof`, the `.d2s` header, and `mpq` archives. |
+| `core` | `d2-core` | Domain primitives: the seed LCG, `Stat`, `Unit`, the Fog memory pool. |
+| `item` | `d2-item` | Item generation: treasure classes, quality, affixes. |
+| `save` | `d2-save` | The `.d2s` character save sections above the header, read and write. |
+| `drlg` | `d2-drlg` | Map generation, byte-exact against the engine. |
+| `world` | `d2-world` | The live map of a running game: levels, collision, who stands where. |
+| `pathfinding` | `d2-pathfinding` | Routing over those maps, walking or teleporting, across levels. |
+| `render` | `d2-render` | The automap and the DT1 tile-art layer. |
+| `bnet` | `d2-bnet` | Battle.net, before a game exists: BNCS, MCP, BNFTP. |
+| `net` | `d2-net` | The D2GS game protocol, once one does. |
+| `game` | `d2-game` | The simulation: units, stats, combat, skills, monsters, objects. |
+| `client` | `d2-client` | The world as a client knows it — what the server has told you so far. |
 
 ## build.zig.zon
 
@@ -40,39 +57,38 @@ your build root** (absolute paths are rejected):
 
 ## build.zig
 
-Take one dependency and pull the modules you want off it with `.module("<name>")`:
-
 ```zig
 const libd2 = b.dependency("libd2", .{ .target = target, .optimize = optimize });
 
-exe.root_module.addImport("d2-sim", libd2.module("d2-sim"));
-exe.root_module.addImport("d2-data", libd2.module("d2-data"));
-exe.root_module.addImport("d2-core", libd2.module("d2-core"));
-// ...and d2-item / d2-drlg / d2-formats as needed.
+exe.root_module.addImport("libd2", libd2.module("libd2"));
 ```
 
-Inter-package imports (e.g. `d2-sim` depending on `d2-core` + `d2-data`) are
-already wired inside libd2, so they resolve transitively — you only add the
-top-level modules you actually `@import`.
+Or take individual packages instead, if you would rather name them explicitly. The
+inter-package imports are already wired inside libd2, so they resolve transitively —
+you only add the ones you `@import` yourself:
+
+```zig
+exe.root_module.addImport("d2-game", libd2.module("d2-game"));
+exe.root_module.addImport("d2-data", libd2.module("d2-data"));
+```
 
 ## src/main.zig (worked example)
 
 ```zig
 const std = @import("std");
-const sim = @import("d2-sim");
-const d2data = @import("d2-data");
+const libd2 = @import("libd2");
 
 pub fn main() !void {
     var dbg = std.heap.DebugAllocator(.{}).init;
     defer _ = dbg.deinit();
     const alloc = dbg.allocator();
 
-    // d2-data: open a real 1.14d excel table from the embedded bytes.
-    var skills_tbl = try d2data.open(alloc, "Skills");
+    // data: open a real 1.14d excel table from the embedded bytes.
+    var skills_tbl = try libd2.data.open(alloc, "Skills");
     defer skills_tbl.deinit();
 
-    // d2-sim: load the Skills model (built on d2-data) and read a real value.
-    var skills = try sim.Skills.load(alloc);
+    // game: load the Skills model (built on data) and read a real value.
+    var skills = try libd2.game.Skills.load(alloc);
     defer skills.deinit();
     const fire_bolt = skills.byId(36) orelse return error.SkillMissing; // 36 = FireBolt
 

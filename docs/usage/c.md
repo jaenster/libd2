@@ -1,8 +1,14 @@
 # libd2 from C
 
-Download the native archive for your platform from a package's GitHub Release
-(`drlg-vX.Y.Z`, `items-vX.Y.Z`, …) — it contains `include/d2<pkg>.h` and
-`lib/libd2<pkg>.*`. The full API is at the bottom of this page.
+Build the package you want and link what it writes:
+
+```sh
+cd packages/drlg && zig build          # zig-out/include/d2drlg.h + zig-out/lib/libd2drlg.*
+cd packages/drlg && zig build -Dtarget=aarch64-linux-musl   # or any target Zig supports
+```
+
+Zig cross-compiles to every target from any host, so there is no toolchain to install
+per platform and no archive to download. The full API is at the bottom of this page.
 
 ## drlg — generate a map from a seed
 

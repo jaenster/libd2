@@ -12,13 +12,19 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/lib.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+    // Anything a test writes to stderr makes the build runner report the step as
+    // `failed command:` even when every assertion passed, so the fixture dumps are off
+    // unless asked for: `zig build test -Dverbose`.
+    const opts = b.addOptions();
+    opts.addOption(bool, "verbose", b.option(bool, "verbose", "Print test fixture diagnostics") orelse false);
+
+    const test_mod = b.createModule(.{
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
     });
+    test_mod.addOptions("build_options", opts);
+    const tests = b.addTest(.{ .root_module = test_mod });
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);

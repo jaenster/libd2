@@ -244,6 +244,35 @@ pub fn frameFlush(out: []u8, concat: []const u8) []u8 {
     return out[0..w];
 }
 
+/// One framed unit read off a stream: the packet itself, and what the whole frame cost.
+pub const Frame = struct {
+    /// The packet bytes, header stripped.
+    packet: []const u8,
+    /// Header + packet, i.e. how far to advance the read cursor.
+    total: usize,
+};
+
+/// Read ONE length-prefixed frame off the front of `buf` — the exact inverse of `frameInto`.
+///
+/// Null means "not yet": either the header is not fully present, or it is but the packet it
+/// describes is not. Both are the normal state of a socket read, so a caller keeps the bytes and
+/// asks again with more. A degenerate header (a length of zero, which no packet has, since every
+/// packet carries at least its opcode) is also null rather than an error — on a stream that has
+/// desynced there is nothing better to say, and the caller finds out from `packetSize` next.
+pub fn nextFrame(buf: []const u8) ?Frame {
+    if (buf.len < 1) return null;
+    const hi = buf[0];
+    const header: usize, const len: usize = if (hi < 0xF0)
+        .{ 1, hi }
+    else blk: {
+        if (buf.len < 2) return null;
+        break :blk .{ 2, (@as(usize, hi & 0x0F) << 8) | buf[1] };
+    };
+    if (len == 0) return null;
+    if (buf.len < header + len) return null;
+    return .{ .packet = buf[header..][0..len], .total = header + len };
+}
+
 // --- typed packets -------------------------------------------------------------------------
 
 /// 0x03 LoadAct — CLIENT_AllocAct handler @0x0045C8E0. Cross-checked: D2GSPacketSrv0x03.
@@ -1221,6 +1250,49 @@ test "frameInto: two-byte header for len>=0xF0" {
     // 0xF0 is the exact boundary: still two bytes.
     try std.testing.expectEqual(@as(usize, 2), frameHeaderLen(0xF0));
     try std.testing.expectEqual(@as(usize, 1), frameHeaderLen(0xEF));
+}
+
+test "nextFrame: inverts frameInto at both header widths, and waits for the rest" {
+    var out: [8192]u8 = undefined;
+
+    const small = [_]u8{ 0x03, 0xAA, 0xBB, 0xCC };
+    const framed_small = frameInto(&out, &small);
+    const fr = nextFrame(framed_small).?;
+    try std.testing.expectEqualSlices(u8, &small, fr.packet);
+    try std.testing.expectEqual(@as(usize, 1 + 4), fr.total);
+
+    // A two-byte header carries its length in the low nibble of the first byte plus the second,
+    // so reading it back has to mask 0xF0 off rather than take the byte whole.
+    var big: [0x123]u8 = undefined;
+    @memset(&big, 0x5A);
+    big[0] = 0xAC;
+    const framed_big = frameInto(&out, &big);
+    const fr_big = nextFrame(framed_big).?;
+    try std.testing.expectEqualSlices(u8, &big, fr_big.packet);
+    try std.testing.expectEqual(@as(usize, 2 + 0x123), fr_big.total);
+
+    // A partial read is not an error, at either width, and not a truncated packet either.
+    try std.testing.expectEqual(@as(?Frame, null), nextFrame(framed_small[0..3]));
+    try std.testing.expectEqual(@as(?Frame, null), nextFrame(framed_big[0..1]));
+    try std.testing.expectEqual(@as(?Frame, null), nextFrame(framed_big[0 .. framed_big.len - 1]));
+    try std.testing.expectEqual(@as(?Frame, null), nextFrame(&.{}));
+    try std.testing.expectEqual(@as(?Frame, null), nextFrame(&.{0})); // a zero-length packet
+}
+
+test "nextFrame: walks a reframed burst back to the packets that went in" {
+    var concat: [64]u8 = undefined;
+    var cw = PacketWriter.init(&concat);
+    cw.add(RemoveObject{ .unit_type = 1, .guid = 0x10 });
+    cw.add(PlayerStop{ .guid = 0x20, .x = 100, .y = 200 });
+
+    var out: [128]u8 = undefined;
+    const framed = frameFlush(&out, cw.bytes());
+
+    const first = nextFrame(framed).?;
+    try std.testing.expectEqual(@as(u32, 0x10), (try RemoveObject.decode(first.packet)).guid);
+    const second = nextFrame(framed[first.total..]).?;
+    try std.testing.expectEqual(@as(u32, 0x20), (try PlayerStop.decode(second.packet)).guid);
+    try std.testing.expectEqual(framed.len, first.total + second.total);
 }
 
 test "frameFlush: reframes a burst per-packet, demux splits back cleanly" {

@@ -47,8 +47,24 @@ pub const Unit = struct {
     is_warp: bool = false, // came in via 0x09 AssignLevelWarp (a clickable inter-level warp)
     life_abs: u16 = 0, // absolute hitpoints, when a stat packet (0x9E..0xA2) states one
     state: u8 = 0, // last eD2States applied via 0xA8/0xAA
+    /// `UNITSTAT_velocitypercent` as the server last stated it (0x67 NpcMove). Signed, clamped by
+    /// the engine to i16, and the multiplier on a unit's base movement speed.
+    velocity_pct: i16 = 0,
+    /// Last animation mode the server stated (`eD2PlayerAnimMode`): 1 neutral, 2 walk, 3 run,
+    /// 5 townNeutral, 6 townWalk. Worth carrying because `PLRMODES_MoveToLocation` discards a
+    /// move outright when `PLRMODES_CanInterruptCurrentMode` says no — so a character that
+    /// ignores every command in every direction is answered by this byte and by nothing else.
+    mode: u8 = 0,
     name: [16]u8 = [_]u8{0} ** 16,
     name_len: u8 = 0,
+    /// The level this unit was last described on.
+    ///
+    /// A unit belongs to a level, and the server does not say goodbye when you leave one — it
+    /// simply stops mentioning what is behind you. Without this stamp the units of every level
+    /// you have visited pile up in one table, and since positions are WORLD coordinates read
+    /// through the CURRENT level's origin, yesterday's monsters reappear thousands of subtiles
+    /// outside today's map.
+    level: u16 = 0,
 
     pub fn nameSlice(self: *const Unit) []const u8 {
         return self.name[0..self.name_len];
@@ -219,7 +235,35 @@ pub const World = struct {
     fn upsert(self: *World, utype: u8, guid: u32) !*Unit {
         const gop = try self.units.getOrPut(unitKey(utype, guid));
         if (!gop.found_existing) gop.value_ptr.* = .{ .utype = utype, .guid = guid };
+        // Hearing about a unit is what puts it on the level we are on now. A guid can be reused
+        // across levels, so this has to be stamped on every mention, not only on the first.
+        gop.value_ptr.level = self.level_id;
         return gop.value_ptr;
+    }
+
+    /// Is this unit on the level we are standing on? Anything else is a leftover.
+    pub fn onThisLevel(self: *const World, unit: *const Unit) bool {
+        return unit.level == self.level_id;
+    }
+
+    /// Forget everything that belongs to a level we have left.
+    ///
+    /// Called when the level changes. Cheaper than it looks — the table is small — and it keeps
+    /// "what is here" honest, which every other answer is built on.
+    pub fn dropOtherLevels(self: *World) void {
+        var stale: [512]u64 = undefined;
+        var n: usize = 0;
+        var it = self.units.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.level == self.level_id) continue;
+            if (self.local_player_guid) |me| {
+                if (entry.value_ptr.guid == me and entry.value_ptr.utype == 0) continue;
+            }
+            if (n == stale.len) break;
+            stale[n] = entry.key_ptr.*;
+            n += 1;
+        }
+        for (stale[0..n]) |key| _ = self.units.remove(key);
     }
 
     /// Feed one framed S->C packet (starting at the opcode byte). Compressed 0xAE containers
@@ -285,7 +329,7 @@ pub const World = struct {
             0x53 => {}, // DRLGENV_InitializeEnvironment: weather/light, not unit state
             0x59 => self.applyCreatePlayer(buf),
             0x5b => self.applyRosterPlayer(buf),
-            0x67 => self.applyUnitStop(buf), // MonsterStop: same shape, mode + target
+            0x67 => self.applyNpcMove(buf), // NpcMove: destination, path type and velocity
             0x68 => self.applyMonsterMove(buf, 6, 8), // MonsterBeginCast x@6 y@8
             0x6b, 0x6c => self.applyMonsterMove(buf, 0x0c, 0x0e), // MonsterBeginCastWalk / CastStationary
             0x6d => self.applyUnitMoveTo(buf), // PATH_MoveUnitToPoint x@5 y@7
@@ -362,7 +406,9 @@ pub const World = struct {
         if (buf.len < 12) return;
         self.act = buf[1];
         self.map_seed = std.mem.readInt(u32, buf[2..6], .little);
+        const was = self.level_id;
         self.level_id = std.mem.readInt(u16, buf[6..8], .little);
+        if (self.level_id != was) self.dropOtherLevels();
         self.automap = std.mem.readInt(u32, buf[8..12], .little);
         note("  world: LoadAct act={d} area={d} mapSeed=0x{x:0>8}\n", .{ self.act, self.level_id, self.map_seed });
     }
@@ -370,7 +416,9 @@ pub const World = struct {
     // 0x07 MapReveal @0045CAB0: [id][nX u16][nY u16][eLevel u8] -> AddRoomData(act, eLevel, x, y).
     fn applyMapReveal(self: *World, buf: []const u8) void {
         if (buf.len < 6) return;
+        const was = self.level_id;
         self.level_id = buf[5];
+        if (self.level_id != was) self.dropOtherLevels();
         if (self.verbose) {
             const x = std.mem.readInt(u16, buf[1..3], .little);
             const y = std.mem.readInt(u16, buf[3..5], .little);
@@ -613,21 +661,61 @@ pub const World = struct {
         }
     }
 
-    // 0x0D PlayerStop / 0x67 MonsterStop: the unit comes to rest. `[id][unitType u8][guid u32]
-    // [mode u8@0x06 (0x0D) / @0x05 (0x67)]…` — note NEITHER carries a position, so this only ends
-    // the unit's motion; where it stopped arrives separately. 0x0D's byte 0x0C is the roster
-    // health percent (SetRosterPlayerHpPercent), 0x67's is the monster's.
+    // 0x67 NpcMove @0053b710, SIXTEEN bytes — a monster's DESTINATION, not a stop:
+    //   `[67][guid u32@0x01][moveType@0x05][destX u16@0x06][destY u16@0x08][flag@0x0a]
+    //    [pathType@0x0c][velocityPercent i16@0x0d][maxDistance@0x0f]`
+    //
+    // Like 0x6D there is no unit-type byte; the guid begins at offset one. This was decoded as a
+    // "stop" sharing 0x0D's shape, which read the PATH TYPE at 0x0c as a health percentage and threw
+    // the destination away — so monsters never moved in our model and their health jittered to
+    // whatever the path type happened to be.
+    //
+    // The velocity and max-distance fields are the engine stating how the unit will travel, which
+    // is what a movement simulation needs and what we had nowhere else to get.
+    fn applyNpcMove(self: *World, buf: []const u8) void {
+        if (buf.len < 16) return;
+        const guid = std.mem.readInt(u32, buf[1..5], .little);
+        const u = self.upsert(@intFromEnum(UnitType.monster), guid) catch return;
+        u.x = std.mem.readInt(u16, buf[6..8], .little);
+        u.y = std.mem.readInt(u16, buf[8..10], .little);
+        u.mode = buf[5];
+        u.velocity_pct = std.mem.readInt(i16, buf[13..15], .little);
+    }
+
+    // 0x0D PlayerStop @0053b4b0, THIRTEEN bytes — the unit comes to rest, and says WHERE:
+    //   `[0d][unitType@0x01][guid u32@0x02][param1@0x06][x u16@0x07][y u16@0x09][param2@0x0b]
+    //    [rosterHp@0x0c]`
+    //
+    // The position was being thrown away here, under a comment asserting the packet did not carry
+    // one. It is the authoritative position at the moment motion ENDS, which is the one moment a
+    // client cannot infer it: nothing else is sent afterwards, because nothing is moving. Discard
+    // it and your idea of where you are freezes exactly when the character stops, every command
+    // after is measured from a cell you have left, and once that drift passes the server's
+    // fifty-subtile range gate every move is dropped in silence. That is indistinguishable from a
+    // character that refuses to walk.
     fn applyUnitStop(self: *World, buf: []const u8) void {
         if (buf.len < 13) return;
         const u = self.upsert(buf[1], std.mem.readInt(u32, buf[2..6], .little)) catch return;
+        u.x = std.mem.readInt(u16, buf[7..9], .little);
+        u.y = std.mem.readInt(u16, buf[9..11], .little);
+        u.mode = buf[0x06];
         u.life = buf[0x0c];
     }
 
-    // 0x6D: PATH_MoveUnitToPoint(pUnit, x@5, y@7) with a direction byte at 9. The unit is the one
-    // the dispatcher resolved from type@1/guid@2.
+    // 0x6D NpcStop @0053bb70: `[6d][guid u32@0x01][x u16@0x05][y u16@0x07][flag@0x09]`, ten bytes.
+    //
+    // There is NO unit-type byte: the sender builds the packet as `CONCAT31((int3)guid, 0x6d)`
+    // followed by the guid's high byte, so the guid starts at offset ONE. Reading a type at 1 and
+    // the guid at 2 puts a monster's real position under a key made of its own low byte and three
+    // bytes of guid — a phantom unit per packet, at a place something really is standing, while the
+    // actual monster never moves. Harmless while nothing consulted the live world; not harmless now
+    // that the router treats these as obstacles.
+    //
+    // It is a monster stop, so the unit type is MONSTER by construction rather than by a field.
     fn applyUnitMoveTo(self: *World, buf: []const u8) void {
         if (buf.len < 10) return;
-        const u = self.upsert(buf[1], std.mem.readInt(u32, buf[2..6], .little)) catch return;
+        const guid = std.mem.readInt(u32, buf[1..5], .little);
+        const u = self.upsert(@intFromEnum(UnitType.monster), guid) catch return;
         u.x = std.mem.readInt(u16, buf[5..7], .little);
         u.y = std.mem.readInt(u16, buf[7..9], .little);
     }
@@ -1183,4 +1271,31 @@ test "the local player is identified by name, not by arrival order" {
     defer w2.deinit();
     mk.player(&w2, 0x07, "Whoever", 5, 5);
     try std.testing.expectEqual(@as(?u32, 0x07), w2.local_player_guid);
+}
+
+test "leaving a level takes its units with you" {
+    var w = World.init(std.testing.allocator);
+    defer w.deinit();
+
+    // Land on a level and be told about a waypoint standing on it.
+    var load = [_]u8{0} ** 12;
+    load[0] = 0x03;
+    std.mem.writeInt(u16, load[6..8], 1, .little);
+    w.apply(&load);
+
+    var obj = [_]u8{0} ** 14;
+    obj[0] = 0x51;
+    obj[1] = 2; // object
+    std.mem.writeInt(u32, obj[2..6], 0x77, .little);
+    std.mem.writeInt(u16, obj[6..8], 119, .little); // Waypoint
+    std.mem.writeInt(u16, obj[8..10], 4000, .little);
+    std.mem.writeInt(u16, obj[10..12], 5000, .little);
+    w.apply(&obj);
+    try std.testing.expectEqual(@as(usize, 1), w.units.count());
+
+    // Cross into another level. The server never says goodbye to what is behind us, so if this
+    // survives it gets read through the NEW level's origin — thousands of subtiles off the map.
+    std.mem.writeInt(u16, load[6..8], 2, .little);
+    w.apply(&load);
+    try std.testing.expectEqual(@as(usize, 0), w.units.count());
 }

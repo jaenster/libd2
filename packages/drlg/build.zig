@@ -1,10 +1,8 @@
 const std = @import("std");
 
-// Public-mirror build for the drlg package. Unlike the private source repo, this
-// does NOT bake asset blobs from a raw assets/tiles/ tree at build time — the four
-// blobs are pre-baked and committed under blobs/, and embedded directly by the
-// src/*_data.zig files (@embedFile "../blobs/<name>_blob.bin"). So there is no
-// gen-from-assets step, no wasm/web target, and no raw Blizzard art in the repo.
+// The drlg package. The four asset blobs are pre-baked and committed under blobs/, embedded
+// directly by the src/*_data.zig files (@embedFile "../blobs/<name>_blob.bin") — so there is
+// no bake-from-assets step in this build and no raw Blizzard art in the repo.
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -13,6 +11,11 @@ pub fn build(b: *std.Build) void {
     // instead of the baked blob). Always false here — there is no asset tree.
     const opts = b.addOptions();
     opts.addOption(bool, "ds1_disk", false);
+
+    // Anything a test writes to stderr makes the build runner report the step as
+    // `failed command:` even when every assertion passed, so the fidelity dumps are off
+    // unless asked for: `zig build test -Dverbose`.
+    opts.addOption(bool, "verbose", b.option(bool, "verbose", "Print test fidelity diagnostics") orelse false);
 
     // Sibling packages factored out of drlg: the pure DS1/DT1 parsers, and d2-core which
     // owns the seed-RNG, the Fog::Memory pool allocator and the shared collision bit/mask
@@ -112,8 +115,8 @@ pub fn build(b: *std.Build) void {
     verify_step.dependOn(&b.addRunArtifact(verify_tests).step);
 
     // C-ABI shim: consumable from C/C++/C#/Node as native shared+static libs, or as
-    // a wasm reactor module. The generator is libc-free (smp_allocator + page_allocator),
-    // so nothing links libc and the wasm target is wasm32-freestanding-capable.
+    // a wasm reactor module. The generator is libc-free (smp_allocator + d2-core's heap), so
+    // nothing links libc and the wasm target is wasm32-freestanding-capable.
     const capi = b.option(bool, "capi", "Build the C-ABI shim (libs / wasm)") orelse true;
     if (capi) {
         const capi_optimize: std.builtin.OptimizeMode =
