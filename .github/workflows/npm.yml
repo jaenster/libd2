@@ -116,13 +116,15 @@ jobs:
           if (cold.name !== 'Cold Plains') throw new Error(`expected Cold Plains, got ${cold.name}`);
           if (cold.rooms.length !== 97) throw new Error(`expected 97 rooms, got ${cold.rooms.length}`);
           if (game.generatedActs.length !== 1) throw new Error('one act should cover both areas');
-          const legs = route(
-            { area: town, x: 25130, y: 5140 },
-            { area: cold, x: cold.rooms[0].x, y: cold.rooms[0].y },
-            { teleport: true },
-          );
-          if (!legs) throw new Error('no route across the seam');
-          console.log(`ok: ${cold.name} ${cold.rooms.length} rooms, routed across ${cold.name}`);
+          const trip = route(town.middle, cold.middle, { teleport: true });
+          if (!trip) throw new Error('no route across the seam');
+          // Deliberately also route to a ROOM, because that crosses the frames: a Location is
+          // level-local subtiles and a Room is world TILES, and mixing them is silent — route
+          // just returns null. fromWorld is the conversion, and this is the assertion that the
+          // two halves of the published surface still fit together.
+          const room = cold.fromWorld(cold.rooms[0].x * 5, cold.rooms[0].y * 5);
+          if (!route(town.middle, room, { teleport: true })) throw new Error('no route to room 0');
+          console.log(`ok: ${cold.name} ${cold.rooms.length} rooms, ${trip.legs.length} legs across the seam`);
           JS
           node smoke.mjs
 
