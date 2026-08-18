@@ -1,5 +1,5 @@
 //! Engine object vocabulary — the Objects.txt `OperateFn` index. Pure constants (parallel to the
-//! srvdofunc DoFunc in skill.zig); the object-operation behaviour lives in d2-sim object.zig.
+//! srvdofunc DoFunc in skill.zig); the object-operation behaviour lives in d2-game object.zig.
 
 const std = @import("std");
 

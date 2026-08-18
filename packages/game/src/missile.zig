@@ -308,7 +308,7 @@ pub fn find(missiles: []Missile, guid: u32) ?*Missile {
 /// snapshot cast against THIS victim's resist (its resist for the cast's element minus the cast's
 /// Cold-Mastery / -%enemy-resist pierce) and subtract the applied damage from its life. Consumes
 /// one RNG step (the damage roll). A no-op when the missile carries no `elem_cast`. This is the
-/// host's `applyHit` seam moved into d2-sim: the elemental cast + resist math lives here, the host
+/// host's `applyHit` seam moved into d2-game: the elemental cast + resist math lives here, the host
 /// only owns unit storage + the seed. Mirrors skill.resolveElementalVsUnit + applyElementalHit
 /// (kept inline here to avoid a missile<->skill import cycle).
 /// The resolved elemental hit a caster-derived missile deals to `victim` — computed but NOT applied,

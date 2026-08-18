@@ -1,6 +1,6 @@
 //! d2-core public library API — the canonical Stat/Item model foundation.
 //!
-//! Shared by d2-sim (runtime simulation), d2-items (drop generation) and d2-drlg
+//! Shared by d2-game (runtime simulation), d2-item (drop generation) and d2-drlg
 //! (map generation): the seed-RNG, the Stat enum + StatList, ItemStatCost metadata,
 //! the wire (save-file) item bit-decoder, and the Fog::Memory pool allocator.
 //! Owning these here gives every consumer a single source of truth instead of

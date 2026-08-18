@@ -1,10 +1,8 @@
 const std = @import("std");
 
-// Public-mirror build for the drlg package. Unlike the private source repo, this
-// does NOT bake asset blobs from a raw assets/tiles/ tree at build time — the four
-// blobs are pre-baked and committed under blobs/, and embedded directly by the
-// src/*_data.zig files (@embedFile "../blobs/<name>_blob.bin"). So there is no
-// gen-from-assets step, no wasm/web target, and no raw Blizzard art in the repo.
+// The drlg package. The four asset blobs are pre-baked and committed under blobs/, embedded
+// directly by the src/*_data.zig files (@embedFile "../blobs/<name>_blob.bin") — so there is
+// no bake-from-assets step in this build and no raw Blizzard art in the repo.
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
