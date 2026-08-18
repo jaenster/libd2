@@ -6,11 +6,12 @@ name: test
 # shim never defined, a Rust binding hard-failing on an ABI the shim disagreed with, a red Go
 # suite, and a `zig build verify` step pointing at a file that was never committed.
 #
-# Each binding is its own job because each one fails differently. Rust builds its native from
-# source, so it only ever tests the tree. Go and .NET carry a CHECKED-IN native, which can drift
-# from the tree in either direction — that is what went wrong — so the Go job deliberately runs on
-# macOS with NO LIBD2_PATH, where the embedded darwin_arm64 binary is the one that gets loaded.
-# Pointing it at a freshly built library would test the source and let the shipped artifact rot.
+# Each binding is its own job because each one gets its native a different way. Rust builds one
+# from source in build.rs. Go embeds one: `natives/` is gitignored and assembled at pack time, so
+# the job has to run the same sync script a release does — testing the embed path, not just the
+# code around it. .NET is the one that carries its native IN the repository, and it has no job
+# here yet; its binaries are stale at ABI 3 and refreshing them needs the cross-compile matrix
+# that no longer exists.
 
 on:
   pull_request:
@@ -65,16 +66,29 @@ jobs:
 
   go:
     name: go test
-    # macOS on purpose: darwin_arm64 is the only platform Go ships a committed native for, so this
-    # is the one runner where `go test` loads the binary a consumer would actually get.
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
       - uses: actions/setup-go@v5
         with: { go-version: '1.24' }
 
-      # No LIBD2_PATH and no zig: the embedded library is the subject. Its ABI number is asserted
-      # against the bindings' pin, which is how a drifted checked-in native announces itself.
+      # `packages/go/**/natives/` is gitignored, so a checkout has no library to embed and every
+      # test fails with "no linux/amd64 binary is compiled into this build". go-pack.sh fills it
+      # at release time from the same script used here, which is the point: this exercises the
+      # embed path a published module ships with rather than a LIBD2_PATH shortcut that only CI
+      # would ever take.
+      - name: Build and embed the natives
+        run: |
+          set -euo pipefail
+          for p in drlg item pathfinding; do
+            ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
+          done
+          ./scripts/go-sync-natives.sh --local
+
+      # The bindings assert the native's ABI against their own pin, so a shim that has moved on
+      # without them fails here.
       - name: Test
         working-directory: packages/go/libd2
         run: go test ./...
