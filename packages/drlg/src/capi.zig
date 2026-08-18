@@ -4,16 +4,19 @@
 //! primitives, fixed ints, pointers and `extern struct`s. Every export catches all
 //! Zig errors and returns a negative status / null; nothing escapes.
 //!
-//! Allocator note: page_allocator for the caller-facing handles and smp_allocator
-//! for the generation core's live-allocation registry (drlg/pool.zig reg_allocator).
+//! Allocator note: the caller-facing handles come from `d2-core`'s `heap.default`, and the
+//! generation core's live-allocation registry (drlg/pool.zig reg_allocator) from smp_allocator.
 //! Both are libc-free, so no artifact links libc and the wasm build targets
-//! wasm32-freestanding (no WASI).
+//! wasm32-freestanding (no WASI). On wasm `heap.default` is a coalescing free list rather than
+//! std's size-class allocator, which is what keeps a long-lived module's footprint bounded —
+//! `d2drlg_heap_usage` reports what it is holding.
 
 const std = @import("std");
 // Imported as a MODULE, not as a relative file: this shim is also linked into the combined
 // wasm alongside d2pf, which reaches the same lib.zig through the "d2-drlg" module. A file may
 // belong to only one module, so a relative import here would collide there.
 const lib = @import("d2-drlg");
+const core = @import("d2-core");
 
 /// One generated room's world rectangle + type. Field order/types MUST match the
 /// `D2DrlgRoom` in d2drlg.h. Mirrors `lib.RoomRect`.
@@ -44,7 +47,7 @@ pub const Act = struct {
 
 /// Loads the game tables. Returns null on any failure.
 export fn d2drlg_ctx_create() ?*Ctx {
-    const pa = std.heap.page_allocator;
+    const pa = core.heap.default;
     const ctx = pa.create(Ctx) catch return null;
     ctx.inner = lib.Ctx.init(pa) catch {
         pa.destroy(ctx);
@@ -66,7 +69,7 @@ export fn d2drlg_ctx_core(ctx: ?*Ctx) ?*anyopaque {
 export fn d2drlg_ctx_destroy(ctx: ?*Ctx) void {
     const c = ctx orelse return;
     c.inner.deinit();
-    std.heap.page_allocator.destroy(c);
+    core.heap.default.destroy(c);
 }
 
 fn diffFromInt(difficulty: i32) ?lib.Difficulty {
@@ -86,7 +89,7 @@ export fn d2drlg_gen_act(ctx: ?*Ctx, seed: u32, difficulty: i32, act_no: i32) ?*
     const diff = diffFromInt(difficulty) orelse return null;
     if (act_no < 0 or act_no > 4) return null;
 
-    const pa = std.heap.page_allocator;
+    const pa = core.heap.default;
     const act = pa.create(Act) catch return null;
     act.arena = std.heap.ArenaAllocator.init(pa);
     const a = act.arena.allocator();
@@ -103,7 +106,7 @@ export fn d2drlg_gen_act(ctx: ?*Ctx, seed: u32, difficulty: i32, act_no: i32) ?*
 export fn d2drlg_act_free(act: ?*Act) void {
     const a = act orelse return;
     a.arena.deinit();
-    std.heap.page_allocator.destroy(a);
+    core.heap.default.destroy(a);
 }
 
 /// Number of levels in the generated act, or -1 on error.
@@ -253,7 +256,7 @@ export fn d2drlg_act_level_collision(
     out_h.* = lf.coll_h;
     // The handle keeps the CollMap DEFLATED (memory win); rehydrate the raw u16 grid on demand.
     const total: usize = @intCast(@as(i64, lf.coll_w) * @as(i64, lf.coll_h));
-    const pa = std.heap.page_allocator;
+    const pa = core.heap.default;
     const raw = lib.inflateZlib(pa, lf.coll_deflated, total * 2) catch return -4;
     defer pa.free(raw);
     const cap_us: usize = @intCast(cap);
@@ -265,7 +268,7 @@ export fn d2drlg_act_level_collision(
 
 /// zlib-deflate a byte slice (rfc1950 container) into a freshly page-allocated buffer.
 /// Uses the fastest flate level (level_1) — these CollMap grids are ultra-repetitive so a
-/// heavier level barely changes the ratio. Caller owns the returned slice (page_allocator).
+/// heavier level barely changes the ratio. Caller owns the returned slice (d2-core heap).
 fn deflateZlib(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     const flate = std.compress.flate;
     // History window for the compressor (must be >= max_window_len).
@@ -338,7 +341,7 @@ export fn d2drlg_act_level_walk(
     w.* = lf.coll_w;
     h.* = lf.coll_h;
     const total: usize = @intCast(@as(i64, lf.coll_w) * @as(i64, lf.coll_h));
-    const pa = std.heap.page_allocator;
+    const pa = core.heap.default;
     const walk = lib.inflateZlib(pa, lf.walk_deflated, total) catch return -4;
     defer pa.free(walk);
     const cap_us: usize = @intCast(cap);
@@ -353,7 +356,7 @@ export fn d2drlg_act_level_walk(
 /// a host deflate any buffer (e.g. an OOB-fill fallback grid) entirely in-wasm, no host zlib.
 export fn d2drlg_deflate_zlib(in: [*]const u8, in_len: i32, out: [*]u8, cap: i32) i32 {
     if (in_len < 0 or cap < 0) return -1;
-    const pa = std.heap.page_allocator;
+    const pa = core.heap.default;
     const deflated = deflateZlib(pa, in[0..@intCast(in_len)]) catch return -2;
     defer pa.free(deflated);
     const cap_us: usize = @intCast(cap);
@@ -409,7 +412,7 @@ export fn d2drlg_level_collision(
     const tlv = c.inner.act.level(level_id) orelse return -4;
     const act_no: i32 = @intCast(tlv.act);
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(core.heap.default);
     defer arena.deinit();
     const a = arena.allocator();
 
@@ -458,7 +461,7 @@ export fn d2drlg_level_collision_raw(
     const tlv = c.inner.act.level(level_id) orelse return -4;
     const act_no: i32 = @intCast(tlv.act);
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(core.heap.default);
     defer arena.deinit();
     const a = arena.allocator();
 
@@ -515,7 +518,7 @@ export fn d2drlg_level_shrines(
     const tlv = c.inner.act.level(level_id) orelse return -4;
     const act_no: i32 = @intCast(tlv.act);
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(core.heap.default);
     defer arena.deinit();
     const a = arena.allocator();
 
@@ -559,7 +562,7 @@ export fn d2drlg_level_presets(
     const tlv = c.inner.act.level(level_id) orelse return -4;
     const act_no: i32 = @intCast(tlv.act);
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(core.heap.default);
     defer arena.deinit();
     const a = arena.allocator();
 
@@ -603,7 +606,7 @@ export fn d2drlg_level_adjacents(
     const tlv = c.inner.act.level(level_id) orelse return -4;
     const act_no: i32 = @intCast(tlv.act);
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(core.heap.default);
     defer arena.deinit();
     const a = arena.allocator();
 
@@ -640,6 +643,23 @@ fn writeCStr(s: []const u8, buf: [*]u8, cap: i32) i32 {
     return @intCast(s.len);
 }
 
+/// Write up to `cap` heap counters into `out` and return how many exist, so a caller can size
+/// its buffer by asking with cap 0. d2drlg.h names them in order.
+///
+/// Only the wasm build can answer. There `heap.default` is d2-core's own free list, which knows
+/// what it obtained and what is live; a native build hands the same work to the platform
+/// allocator, which reports nothing — so the counters read 0 rather than a number that looks
+/// measured.
+export fn d2drlg_heap_usage(out: ?[*]u32, cap: i32) i32 {
+    const fields = 5;
+    if (cap <= 0) return fields;
+    const dst = out orelse return -1;
+    const u = core.heap.usage();
+    const vals = [fields]usize{ u.obtained, u.live, u.free_bytes, u.spans, u.largest_free };
+    for (0..@min(@as(usize, @intCast(cap)), fields)) |i| dst[i] = std.math.lossyCast(u32, vals[i]);
+    return fields;
+}
+
 export fn d2drlg_abi_version() u32 {
-    return 3;
+    return 5;
 }
