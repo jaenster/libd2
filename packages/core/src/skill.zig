@@ -1,5 +1,5 @@
 //! Engine skill vocabulary — the server do-function index. Pure constants, like the collision/stat
-//! vocabularies here; the behaviour that reads them stays in d2-sim.
+//! vocabularies here; the behaviour that reads them stays in d2-game.
 
 const std = @import("std");
 

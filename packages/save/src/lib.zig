@@ -7,7 +7,7 @@
 //! tables to do it — and is re-exported here as `header` for convenience.
 //!
 //! Pure over byte slices: no filesystem, no allocator, no libc. The host reads and writes the
-//! bytes; d2-sim maps the result onto its unit/stat model.
+//! bytes; d2-game maps the result onto its unit/stat model.
 
 const std = @import("std");
 

@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
     const pathfinding = b.dependency("d2_pathfinding", .{ .target = target, .optimize = optimize });
 
     // Library module: the faithful D2 1.14d runtime game-simulation port.
-    // Consumers depend on this via `.d2sim = .{ .path = "../d2-sim" }`.
+    // Consumers depend on this via `.d2_game = .{ .path = "../game" }`.
     const mod = b.addModule("d2-game", .{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
