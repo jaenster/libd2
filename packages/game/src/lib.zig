@@ -1,14 +1,16 @@
-//! d2-sim public library API — the faithful D2 1.14d runtime game SIMULATION.
+//! d2-game public library API — the faithful D2 1.14d runtime game SIMULATION.
 //!
-//! Sibling to the standalone content libs d2-drlg (map generation) and d2-item
-//! (item generation); d2-sim is the STATEFUL runtime that composes them. Same
-//! philosophy: faithful-to-Ghidra, pure Zig (no C, no @cImport), seeded +
-//! verifiable. Ported from the reconstructed 1.14d Game.exe (Ghidra 62fbfe69);
-//! every ported function cites its 1.14d address.
+//! d2-drlg generates a world and d2-item generates drops; both are pure, stateless content.
+//! This package is the STATEFUL runtime that composes them: units and their stats, attack
+//! resolution, the skill catalog for all seven classes, missiles, monster AI, objects and
+//! shrines, quest and level state, and `GameInstance` — the server-side game loop itself.
 //!
-//! This first pass ships the COMBAT CORE (physical attack resolution) on top of a
-//! minimal unit-stat foundation. Skills, missiles, AI, elemental/DOT damage,
-//! blocking and PvP are explicit follow-ups (see the module TODOs).
+//! Same philosophy throughout: faithful-to-Ghidra, pure Zig (no C, no @cImport), seeded +
+//! verifiable. Ported from the reconstructed 1.14d Game.exe (Ghidra 62fbfe69); every ported
+//! function cites its 1.14d address.
+//!
+//! What is NOT modelled is called out where it lives rather than listed here — each module's
+//! header names its own gaps, and a stub says so at the site that would have done the work.
 
 const std = @import("std");
 

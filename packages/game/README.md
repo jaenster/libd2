@@ -1,42 +1,40 @@
-# d2-sim
+# d2-game
 
-A clean-room Zig reimplementation of the Diablo II 1.14d **runtime game
-simulation** — the stateful engine that turns units, stats and RNG into gameplay.
+A clean-room Zig reimplementation of the Diablo II 1.14d **runtime game simulation** —
+the stateful engine that turns units, stats and RNG into gameplay.
 
-Sibling to the standalone content libraries [`d2-drlg`](../d2-drlg) (map
-generation) and [`d2-item`](../d2-item) (item generation). Those two are pure,
-stateless content generators; **d2-sim is the stateful runtime that composes
-them**. Same philosophy: **faithful-to-Ghidra, pure Zig (no C, no `@cImport`),
-seeded + verifiable**. Ported from the reconstructed 1.14d `Game.exe` (Ghidra
-session `62fbfe69`); every ported function cites its 1.14d address.
+[`d2-drlg`](../drlg) generates a world and [`d2-item`](../item) generates drops; both are
+pure, stateless content. **This package is the stateful runtime that composes them.**
+Same philosophy: faithful-to-Ghidra, pure Zig (no C, no `@cImport`), seeded and verifiable.
+Ported from the reconstructed 1.14d `Game.exe` (Ghidra session `62fbfe69`); every ported
+function cites its 1.14d address.
 
-## Status — combat core
+## What it covers
 
-| Component | 1.14d addr | State |
-|-|-|-|
-| Seed RNG (`D2SeedStrc` LCG, low-word reductions) | 0x45c3e0 | vendored from d2-item |
-| Unit-stat model (`StatList` + ItemStatCost ids) | — | done |
-| Chance-to-hit (AR vs defense, clamp 5..95) | 0x57d9b0 | done |
-| Physical damage (base + str/dex + ED, seeded roll) | 0x57b420 | done |
-| Damage application (flat DR then resist%) | 0x57bf80 | done, physical only |
-| Defense (`armorclass + dex/4`, ×item_armor%) | 0x6223f0 | done |
-| Attack rating | 0x6449f0 | partial (character-AR base) |
+| area | what is in it |
+|-|-|
+| units and stats | the `StatList`/ItemStatCost model, derived life/mana, character save state |
+| combat | chance-to-hit, physical and elemental damage, resists, blocking, monster attacks |
+| skills | the catalog for all seven classes, plus monster skills and casting |
+| missiles | spawn, advance, collision, on-hit |
+| monsters | level-scaled stats, unique modifiers, and the AI behaviour scripts |
+| world objects | shrines, chests, doors and portals, and the level state holding them |
+| the game itself | `GameInstance` — the server-side loop: clients, levels, timers, events |
 
-### Out of scope this pass (follow-ups, stubbed/TODO)
-- Full skill catalog + skill dispatch, missiles, monster AI.
-- Elemental / poison / DOT damage (only physical is applied).
-- Blocking, dodge/evade, crushing blow, open wounds, deadly strike.
-- PvP damage penalty.
+Each module's header names its own gaps, and a stub says so at the site that would have
+done the work. Read those rather than trusting a status table to stay true.
 
 ## Dependencies
 
-The intended architecture is to depend on the two content libs via `build.zig.zon`
-path deps (`d2drlg`, `d2item`). That is not wired yet: neither sibling ships a
-`build.zig.zon` and `d2-drlg` is exe-only (no `b.addModule`), so `b.dependency`
-cannot resolve them without modifying those repos. Following the d2-item
-precedent, the shared **seed-RNG foundation is vendored** (`src/rng.zig`, copied
-verbatim from d2-item) so this repo stays self-contained and green. **Follow-up:**
-expose consumable modules on the siblings and switch to real path deps.
+`d2-core`, `d2-data`, `d2-drlg`, `d2-item`, `d2-net`, `d2-pathfinding`, `d2-world`, all
+wired as path deps in `build.zig.zon`. From another project, take the package by name:
+
+```zig
+.dependencies = .{ .d2_game = .{ .path = "../game" } },
+```
+
+or reach it through the umbrella as `libd2.game` — see
+[docs/consuming-libd2.md](../../docs/consuming-libd2.md).
 
 ## Build & test
 
@@ -48,8 +46,9 @@ zig build run      # resolves a demo attack for a fixed seed
 
 ## Verification
 
-Determinism is unit-tested: identical `(attacker, defender, seed)` yields an
-identical hit result + damage number. **Stretch:** a d2gs `srvtrace` combat golden
-(log live `DAMAGE_*` inputs/outputs from a real 1.14d server and replay them
-through `resolveAttack`) would validate the formulas against the true engine,
-exactly like d2-drlg validates map gen against the DRLG oracle.
+Determinism is unit-tested: identical `(attacker, defender, seed)` yields an identical hit
+result and damage number. That is weaker evidence than `d2-drlg`'s cell-exact capture, and
+[docs/VERIFICATION.md](../../docs/VERIFICATION.md) says so package by package. The standing
+follow-up is a `srvtrace` combat golden — log live `DAMAGE_*` inputs and outputs from a real
+1.14d server and replay them through `resolveAttack`, so the formulas are checked against the
+engine rather than against themselves.
