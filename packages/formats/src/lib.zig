@@ -9,6 +9,10 @@
 //!          component/animation layer descriptors.
 //!   dt1pix — raw DT1 pixel-art decode.  *_blob / *_data — the baked-blob
 //!          container codec + its embedded payload used by the tile pipeline.
+//!   mpq  — the archive all of the above ship inside, including the protected
+//!          ones whose names have been stripped.  pkware — the implode codec an
+//!          MPQ member is packed with.  ptc — the PrePatch delta a patch
+//!          installer carries instead of a whole file.
 
 pub const ds1 = @import("ds1.zig");
 pub const d2s = @import("d2s.zig");
@@ -21,6 +25,9 @@ pub const dt1_blob = @import("dt1_blob.zig");
 pub const dt1_data = @import("dt1_data.zig");
 pub const dt1pix = @import("dt1pix.zig");
 pub const dt1pix_data = @import("dt1pix_data.zig");
+pub const mpq = @import("mpq.zig");
+pub const pkware = @import("pkware.zig");
+pub const ptc = @import("ptc.zig");
 
 test {
     _ = ds1;
@@ -34,4 +41,7 @@ test {
     _ = dt1_data;
     _ = dt1pix;
     _ = dt1pix_data;
+    _ = mpq;
+    _ = pkware;
+    _ = ptc;
 }
