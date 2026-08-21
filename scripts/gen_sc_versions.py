@@ -31,17 +31,26 @@ def find_i32(data, vals):
     i = data.find(b''.join(struct.pack('<i', v) for v in vals))
     return None if i < 0 else i
 
-def read(path, cs_table):
+def read(path, cs_tables):
+    """cs_tables: the C->S tables cs_versions.zig carries, this build's own first.
+
+    The end of the S->C table is the start of the C->S one. A build whose own C->S table is not in
+    cs_versions.zig can still be bounded by another build's, since the leading entries are shared
+    along the line -- but only when one of them is actually FOUND in this binary. That keeps it a
+    measurement: an unbounded build is skipped rather than emitted with a guessed length."""
     data = open(os.path.expanduser(path), 'rb').read()
     at = find_i32(data, ANCHOR)
     if at is None:
         return None, "no S->C table (the 0x02..0x0f anchor is absent)"
     sc_off = at - 8
-    cs_off = find_i32(data, cs_table[:16]) if cs_table else None
-    if cs_off is None or cs_off <= sc_off:
-        return None, "its C->S table is not in cs_versions.zig, so the length cannot be bounded"
-    n = (cs_off - sc_off) // 4
-    return [struct.unpack_from('<i', data, sc_off + i * 4)[0] for i in range(n)], (sc_off, n)
+    for tab in cs_tables:
+        if not tab:
+            continue
+        cs_off = find_i32(data, tab[:16])
+        if cs_off is not None and cs_off > sc_off:
+            n = (cs_off - sc_off) // 4
+            return [struct.unpack_from('<i', data, sc_off + i * 4)[0] for i in range(n)], (sc_off, n)
+    return None, "no C->S table from cs_versions.zig is present here, so the length cannot be bounded"
 
 def emit(rows, ref):
     out = ['''//! The server-to-client framing table, per engine build.
@@ -64,9 +73,7 @@ const sc = @import("sc.zig");
 
 /// The builds whose S->C table has actually been read.
 pub const Version = enum {
-    v106b,
-    v107,
-    v110f,
+__VERSIONS__
     /// `sc.SC_SIZE`. Here so callers can name every build the same way.
     v114d,
 };
@@ -86,10 +93,7 @@ pub const packet_size_{ver.replace('.','')} = [0x{n:x}]i16{{''')
 /// The table this build frames with.
 pub fn sizeTable(v: Version) []const i16 {
     return switch (v) {
-        .v106b => &packet_size_106b,
-        .v107 => &packet_size_107,
-        .v110f => &packet_size_110f,
-        .v114d => &sc.SC_SIZE,
+__ARMS__        .v114d => &sc.SC_SIZE,
     };
 }
 
@@ -150,7 +154,10 @@ test "an opcode past a build's table is a desync, not a wrap" {
     const high: u8 = @intCast(sizeTable(.v106b).len);
     try std.testing.expectEqual(@as(?usize, 0), packetSize(.v106b, &[_]u8{high}));
 }''')
-    return '\n'.join(out) + '\n'
+    vers = ''.join(f"    v{v.replace('.', '')},\n" for v, _, _ in rows)
+    arms = ''.join(f"        .v{v.replace('.', '')} => &packet_size_{v.replace('.', '')},\n"
+                   for v, _, _ in rows)
+    return '\n'.join(out).replace('__VERSIONS__', vers.rstrip('\n')).replace('__ARMS__', arms) + '\n'
 
 if __name__ == '__main__':
     net = sys.argv[1]
@@ -159,7 +166,9 @@ if __name__ == '__main__':
     rows = []
     for arg in sys.argv[2:]:
         ver, path = arg.split('=', 1)
-        tab, meta = read(path, zig_array(cs_src, 'packet_size_' + ver.replace('.', '')))
+        own = zig_array(cs_src, 'packet_size_' + ver.replace('.', ''))
+        others = [zig_array(cs_src, n) for n in re.findall(r'pub const (packet_size_\w+)', cs_src)]
+        tab, meta = read(path, [own] + others)
         if tab is None:
             print(f"  skipped {ver}: {meta}", file=sys.stderr); continue
         rows.append((ver, tab, meta))
