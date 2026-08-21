@@ -1,6 +1,6 @@
 .{
     .name = .d2_pathfinding,
-    .version = "0.6.3",
+    .version = "0.6.4",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0x39333ccecddd07de,
 
