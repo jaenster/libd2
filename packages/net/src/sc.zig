@@ -47,6 +47,14 @@ pub fn packetSize(buf: []const u8) ?usize {
         const n: usize = @intCast(t);
         return if (buf.len >= n) n else null;
     }
+    const need = variableSize(op, buf) orelse return null;
+    return if (buf.len >= need) need else null;
+}
+
+/// Size of a variable-length S->C packet, read from its own body, or null when too few bytes have
+/// arrived to tell. Split out so `sc_versions.zig` can frame an older build with that build's own
+/// fixed sizes without duplicating these readers.
+pub fn variableSize(op: u8, buf: []const u8) ?usize {
     const sz: ?usize = switch (op) {
         0x16, 0x5b => if (buf.len > 2) @as(usize, std.mem.readInt(u16, buf[1..3], .little)) else null,
         0x3e => if (buf.len > 1) @as(usize, buf[1]) else null,
@@ -65,8 +73,7 @@ pub fn packetSize(buf: []const u8) ?usize {
         0x26 => scanChat(buf), // event/chat message: fixed header + two NUL-terminated strings
         else => return 0,
     };
-    const need = sz orelse return null;
-    return if (buf.len >= need) need else null;
+    return sz;
 }
 
 fn scanChat(buf: []const u8) ?usize {
