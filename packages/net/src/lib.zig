@@ -14,6 +14,10 @@ pub const cs = @import("cs.zig");
 /// The same C->S vocabulary for every OTHER measured build. `cs` above is 1.14d; a consumer that
 /// talks to a pre-1.14 server needs this one to know what its join is even called.
 pub const cs_versions = @import("cs_versions.zig");
+/// The same for the OTHER direction. `sc` above is 1.14d's framing table; a client talking to a
+/// pre-1.10 server needs this one or it hangs on the first packet — GameFlags is six bytes on
+/// 1.06b and seven through 1.09, against eight from 1.10f on.
+pub const sc_versions = @import("sc_versions.zig");
 /// Every client->server command the 1.14d server dispatches (91 of them), generated from the
 /// recovered `D2GSPacketClt0xNN_*` structs. `cs` keeps the hand-written ergonomic wrappers.
 pub const clt = @import("clt.zig");
