@@ -12,6 +12,9 @@
 const std = @import("std");
 
 pub const sections = @import("sections.zig");
+/// The pre-1.09 body. A different file format rather than a variant of `sections`, so it is a
+/// separate reader — see the header comment there for what actually differs.
+pub const old_sections = @import("old_sections.zig");
 pub const attributes = @import("attributes.zig");
 
 /// The fixed .d2s header (d2-formats `d2s`): the 335-byte struct, signature/version,
@@ -33,6 +36,10 @@ pub const Attributes = attributes.Attributes;
 pub const ParseError = sections.ParseError;
 
 pub const parse = sections.parse;
+pub const OldSave = old_sections.Save;
+/// Read a pre-1.09 save. Takes the class's skill count because that is what sizes the skill
+/// section and therefore where the item list begins.
+pub const parseOld = old_sections.parse;
 pub const parseAttributes = attributes.parseAttributes;
 pub const checksum = sections.d2s.checksum;
 pub const fixChecksum = sections.d2s.fixChecksum;
@@ -41,6 +48,7 @@ pub const newSave = sections.d2s.newSave;
 
 test {
     _ = sections;
+    _ = old_sections;
     _ = attributes;
     _ = @import("tests.zig");
 }
