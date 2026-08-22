@@ -43,6 +43,7 @@ pub const cdkey = @import("cdkey.zig");
 pub const protocol = @import("protocol.zig");
 pub const bnftp = @import("bnftp.zig");
 pub const mcp = @import("mcp.zig");
+pub const realm = @import("realm.zig");
 
 test {
     _ = xsha1;
@@ -51,4 +52,5 @@ test {
     _ = protocol;
     _ = bnftp;
     _ = mcp;
+    _ = realm;
 }

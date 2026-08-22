@@ -42,6 +42,41 @@ pub const Op = enum(u8) {
 /// squeezed between STARTUP and CHARLIST2 leaves the character list never arriving.
 pub const logon_order = [_]Op{ .startup, .charlist2, .charlogon };
 
+/// Answer to MCP_CHARCREATE.
+///
+/// Its own type and not `CreateResult`: those are the answers to creating a GAME, and sharing them
+/// makes "that name is taken" come out as "no game server available".
+///
+/// The client only tells 0x14 apart — UIMENU_CreateHeroBnet @0x435c60 formats string 0x2b33 with
+/// the name for it and puts every other non-zero code into 0x145e + name + 0x145f, "Name <x>
+/// rejected by Server". The other two names here are what a realm sends inside that bucket, kept
+/// apart because a launcher of our own can say something more useful than the client could.
+pub const CharCreateResult = enum(u32) {
+    created = 0x00,
+    /// The realm could not write the save.
+    store_failed = 0x06,
+    /// String 0x2b33: "A character named '%s' already exists in this Realm."
+    name_taken = 0x14,
+    /// The name has characters the realm will not take, or the class does not exist on the
+    /// edition asked for — a Druid without the expansion bit is this, not a taken name.
+    invalid_name = 0x15,
+    _,
+
+    pub fn describe(self: CharCreateResult) []const u8 {
+        return switch (self) {
+            .created => "created",
+            .store_failed => "the realm could not save it",
+            .name_taken => "there is already a character with that name",
+            .invalid_name => "the realm will not accept that name",
+            _ => "the realm rejected it",
+        };
+    }
+
+    pub fn succeeded(self: CharCreateResult) bool {
+        return self == .created;
+    }
+};
+
 /// Answer to MCP_CREATEGAME. The named values are the ones a 1.14d client turns into a specific
 /// message; anything else lands on "Error Creating Game" (string 0x1415).
 pub const CreateResult = enum(u32) {
@@ -206,4 +241,18 @@ test "the frame length counts itself" {
     try testing.expectEqual(@as(u16, 20), got.total);
     try testing.expectEqual(Op.charlogon, got.op);
     try testing.expectError(error.Short, Header.decode(h[0..2]));
+}
+
+test "creating a character and creating a game do not share an answer" {
+    // 0x14 is the taken NAME on the character path; on the game path 0x14 is nothing at all and
+    // 0x1f is the taken name. Reading one with the other's table is the bug this type exists for.
+    try testing.expectEqualStrings(
+        "there is already a character with that name",
+        CharCreateResult.name_taken.describe(),
+    );
+    try testing.expect(!CharCreateResult.name_taken.succeeded());
+    try testing.expect(CharCreateResult.created.succeeded());
+
+    const unknown: CharCreateResult = @enumFromInt(0x99);
+    try testing.expectEqualStrings("the realm rejected it", unknown.describe());
 }
