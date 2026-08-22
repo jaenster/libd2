@@ -27,7 +27,7 @@ jobs:
     name: zig build test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
 
@@ -54,7 +54,7 @@ jobs:
     name: cargo test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
 
@@ -68,7 +68,7 @@ jobs:
     name: go test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
       - uses: actions/setup-go@v5
@@ -97,7 +97,7 @@ jobs:
     name: npm test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # 24, not the 22.12 floor `engines` declares, and the difference is the point. The suite runs
       # the SOURCE through `--experimental-strip-types`, and stripping types is not compiling: a
       # `using` statement reaches V8 verbatim and is a syntax error before 24. What ships is tsc
@@ -137,7 +137,7 @@ jobs:
     needs: npm
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
 
