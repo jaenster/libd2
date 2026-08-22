@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discord
+    url: https://discord.gg/MHK2Dg9
+    about: Questions about using a package or a binding — faster than an issue.
+  - name: Security issue
+    url: https://github.com/jaenster/libd2/security/advisories/new
+    about: Memory safety in the parsers, or anything exploitable, goes here privately.
+  - name: Running a game server
+    url: https://github.com/jaenster/d2-dedicated-server
+    about: libd2 is the engine core. The realm and game server live in d2-dedicated-server.

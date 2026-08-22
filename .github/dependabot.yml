@@ -1,0 +1,12 @@
+# The GitHub Actions this repo pins. Zig dependencies are declared by URL + hash in build.zig.zon
+# and dependabot cannot read those; the language bindings are published from this source rather
+# than consuming registries, so there is nothing for it to bump there either.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
