@@ -14,7 +14,7 @@ test {
     _ = @import("sockets.zig");
     _ = @import("item.zig");
     _ = @import("dc6.zig");
-    _ = @import("png.zig");
+    _ = @import("d2-util").png;
     _ = @import("graphic.zig");
     _ = @import("render.zig");
     _ = @import("verify.zig");

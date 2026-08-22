@@ -6,7 +6,7 @@
 
 const std = @import("std");
 const dc6 = @import("dc6.zig");
-const png = @import("png.zig");
+const png = @import("d2-util").png;
 const graphic = @import("graphic.zig");
 const tables = @import("tables.zig");
 const model = @import("model.zig");

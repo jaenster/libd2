@@ -8,6 +8,8 @@ pub fn build(b: *std.Build) void {
     const core_mod = core.module("d2-core");
     const data = b.dependency("d2_data", .{ .target = target, .optimize = optimize });
     const data_mod = data.module("d2-data");
+    const util = b.dependency("d2_util", .{ .target = target, .optimize = optimize });
+    const util_mod = util.module("d2-util");
 
     // Library module: the faithful D2 1.14d item-generation port.
     const lib_mod = b.createModule(.{
@@ -22,6 +24,7 @@ pub fn build(b: *std.Build) void {
     });
     items_mod.addImport("d2-core", core_mod);
     items_mod.addImport("d2-data", data_mod);
+    items_mod.addImport("d2-util", util_mod);
 
     // Smoke/demo CLI: roll a drop for a seed+TC+mlvl.
     const exe = b.addExecutable(.{
@@ -34,6 +37,7 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("d2-core", core_mod);
     exe.root_module.addImport("d2-data", data_mod);
+    exe.root_module.addImport("d2-util", util_mod);
     // The CLIs use std.process.Args (native only, and not cross-compilable to
     // Windows); -Dcli=false skips them so release cross-compiles build only the
     // shippable C-ABI libs + wasm. Local dev keeps them (default true).
@@ -58,6 +62,7 @@ pub fn build(b: *std.Build) void {
     });
     render_exe.root_module.addImport("d2-core", core_mod);
     render_exe.root_module.addImport("d2-data", data_mod);
+    render_exe.root_module.addImport("d2-util", util_mod);
     if (cli and !is_wasm) b.installArtifact(render_exe);
 
     const render_cmd = b.addRunArtifact(render_exe);
@@ -75,6 +80,7 @@ pub fn build(b: *std.Build) void {
     });
     tests.root_module.addImport("d2-core", core_mod);
     tests.root_module.addImport("d2-data", data_mod);
+    tests.root_module.addImport("d2-util", util_mod);
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
@@ -94,6 +100,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "d2-core", .module = core_mod },
                 .{ .name = "d2-data", .module = data_mod },
+                .{ .name = "d2-util", .module = util_mod },
             },
         });
         if (is_wasm) {
@@ -107,6 +114,7 @@ pub fn build(b: *std.Build) void {
             });
             wasm.root_module.addImport("d2-core", core_mod);
             wasm.root_module.addImport("d2-data", data_mod);
+            wasm.root_module.addImport("d2-util", util_mod);
             wasm.entry = .disabled;
             wasm.rdynamic = true;
             b.installArtifact(wasm);
@@ -132,8 +140,10 @@ pub fn build(b: *std.Build) void {
             });
             static_lib.root_module.addImport("d2-core", core_mod);
             static_lib.root_module.addImport("d2-data", data_mod);
+            static_lib.root_module.addImport("d2-util", util_mod);
             shared_lib.root_module.addImport("d2-core", core_mod);
             shared_lib.root_module.addImport("d2-data", data_mod);
+            shared_lib.root_module.addImport("d2-util", util_mod);
             b.installArtifact(static_lib);
             b.installArtifact(shared_lib);
             b.getInstallStep().dependOn(&b.addInstallHeaderFile(b.path("include/d2item.h"), "d2item.h").step);
@@ -143,4 +153,5 @@ pub fn build(b: *std.Build) void {
     lib_mod.addImport("d2-core", core_mod);
 
     lib_mod.addImport("d2-data", data_mod);
+    lib_mod.addImport("d2-util", util_mod);
 }
