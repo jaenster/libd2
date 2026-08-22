@@ -451,6 +451,69 @@ fn slice(bytes: []const u8, at: u32, len: usize) Error![]const u8 {
     return bytes[at..][0..len];
 }
 
+/// The archives a Diablo II install is made of, most-specific first.
+///
+/// `patch_d2.mpq` shadows everything — that is what a patched install differs by. `d2exp` shadows
+/// `d2data` because expansion art replaces classic art of the same name. Reading them in any other
+/// order gives an unpatched game that mostly works, which is the worst kind of bug.
+///
+/// Sound, music, speech and video are last because nothing that draws needs them; a reader after
+/// graphics can stop early and never pay for them.
+pub const install_order = [_][]const u8{
+    "patch_d2.mpq",
+    "d2exp.mpq",
+    "d2data.mpq",
+    "d2char.mpq",
+    "d2sfx.mpq",
+    "d2music.mpq",
+    "d2speech.mpq",
+    "d2video.mpq",
+};
+
+/// Several archives searched as one, in the order they were added.
+///
+/// Deliberately free of I/O: each archive is opened over bytes the caller already has, because how
+/// you get half a gigabyte of MPQ in front of the parser — mapped, read, embedded, fetched — is a
+/// question with a different answer on every platform this library builds for, and none of them
+/// belong in a parser.
+pub const Set = struct {
+    archives: std.ArrayListUnmanaged(Archive) = .empty,
+
+    pub fn deinit(self: *Set, gpa: std.mem.Allocator) void {
+        for (self.archives.items) |*a| a.deinit(gpa);
+        self.archives.deinit(gpa);
+        self.* = undefined;
+    }
+
+    /// Append an archive. `bytes` must outlive the set, exactly as `Archive.open` requires.
+    pub fn add(self: *Set, gpa: std.mem.Allocator, bytes: []const u8) !void {
+        const archive = try Archive.open(gpa, bytes);
+        errdefer {
+            var a = archive;
+            a.deinit(gpa);
+        }
+        try self.archives.append(gpa, archive);
+    }
+
+    /// The first archive holding `name`, or null.
+    pub fn find(self: *const Set, name: []const u8) ?*const Archive {
+        for (self.archives.items) |*a| {
+            if (a.lookup(name) != null) return a;
+        }
+        return null;
+    }
+
+    pub fn has(self: *const Set, name: []const u8) bool {
+        return self.find(name) != null;
+    }
+
+    /// Read a member from the first archive that has it. Caller owns the result.
+    pub fn read(self: *const Set, gpa: std.mem.Allocator, name: []const u8) ![]u8 {
+        const a = self.find(name) orelse return Error.NoSuchFile;
+        return a.read(gpa, name);
+    }
+};
+
 // ---- tests ---------------------------------------------------------------------------------
 
 const testing = std.testing;

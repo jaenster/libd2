@@ -10,9 +10,14 @@
 //!   dt1pix — raw DT1 pixel-art decode.  *_blob / *_data — the baked-blob
 //!          container codec + its embedded payload used by the tile pipeline.
 //!   mpq  — the archive all of the above ship inside, including the protected
-//!          ones whose names have been stripped.  pkware — the implode codec an
+//!          ones whose names have been stripped, and `mpq.Set`, several of them
+//!          searched in a real install's order.  pkware — the implode codec an
 //!          MPQ member is packed with.  ptc — the PrePatch delta a patch
 //!          installer carries instead of a whole file.
+//!   palette — pal.dat, the 256-entry B,G,R table sprite indices refer to.
+//!   canvas — an RGBA surface and the index-0-is-a-hole compositing that turns
+//!          those indices back into a picture, including the block grid a
+//!          full-screen background is stored as.
 
 pub const ds1 = @import("ds1.zig");
 pub const d2s = @import("d2s.zig");
@@ -26,6 +31,11 @@ pub const dt1_data = @import("dt1_data.zig");
 pub const dt1pix = @import("dt1pix.zig");
 pub const dt1pix_data = @import("dt1pix_data.zig");
 pub const mpq = @import("mpq.zig");
+pub const palette = @import("palette.zig");
+pub const canvas = @import("canvas.zig");
+pub const font = @import("font.zig");
+pub const pl2 = @import("pl2.zig");
+pub const strtbl = @import("strtbl.zig");
 pub const pkware = @import("pkware.zig");
 pub const ptc = @import("ptc.zig");
 
@@ -42,6 +52,11 @@ test {
     _ = dt1pix;
     _ = dt1pix_data;
     _ = mpq;
+    _ = palette;
+    _ = canvas;
+    _ = font;
+    _ = pl2;
+    _ = strtbl;
     _ = pkware;
     _ = ptc;
 }

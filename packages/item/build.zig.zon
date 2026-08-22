@@ -9,6 +9,7 @@
     .dependencies = .{
         .d2_core = .{ .path = "../core" },
         .d2_data = .{ .path = "../data" },
+        .d2_util = .{ .path = "../util" },
     },
 
     .paths = .{"."},
