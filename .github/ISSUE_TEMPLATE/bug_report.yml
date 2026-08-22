@@ -1,0 +1,75 @@
+name: Bug report
+description: libd2 disagrees with the game, crashes, or will not build
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For anything seed-driven, **the seed is the bug report**. With it this is reproducible in
+        one command; without it, it usually is not reproducible at all.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, what you got, and how the two differ.
+    validations:
+      required: true
+  - type: dropdown
+    id: package
+    attributes:
+      label: Which package
+      multiple: true
+      options:
+        - d2-drlg (map generation)
+        - d2-item (item generation)
+        - d2-sim / d2-game (server rules)
+        - d2-net / d2-client (wire protocol)
+        - d2-save / d2-formats (files)
+        - d2-world / d2-pathfinding
+        - d2-core / d2-data
+        - d2-bnet
+        - build / release
+        - not sure
+    validations:
+      required: true
+  - type: input
+    id: seed
+    attributes:
+      label: Seed, level and difficulty
+      description: For anything generated. Say the difficulty explicitly — the same seed generates different worlds across the three.
+      placeholder: seed 305419896, level 2, normal
+  - type: dropdown
+    id: how
+    attributes:
+      label: How you are using it
+      options:
+        - Zig, as a source module
+        - C / C++ via the header
+        - Rust (crates.io)
+        - .NET (NuGet)
+        - Node / Bun / Deno / browser (npm)
+        - Go
+        - the drlg-server HTTP API
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Which version
+      description: Release tag, package version, or `git rev-parse HEAD`. For a binding, give both its version and the native ABI it reports.
+      placeholder: libd2 0.6.5, npm libd2@0.6.5
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproducer
+      description: The smallest program or command that shows it, and its output.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: No Blizzard game files are attached to this issue.
+          required: true
