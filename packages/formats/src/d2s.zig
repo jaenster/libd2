@@ -10,6 +10,16 @@
 
 const std = @import("std");
 
+/// The pre-1.09 header. Kept in its own file because it is a different struct, not a variant of
+/// this one, and the only thing they share is the signature.
+pub const old = @import("d2s_old.zig");
+
+pub const Era = old.Era;
+/// Which header layout a version uses. `< 0x5c` is the engine's own dispatch test, not an era name
+/// — see d2s_old.zig.
+pub const era = old.era;
+pub const loadable = old.loadable;
+
 /// A fresh character's `.d2s` is the header alone; the engine materializes starting
 /// stats/skills/items from CharStats.txt on first play and grows the file on save.
 pub const header_size: usize = 0x14f; // 335
@@ -337,4 +347,212 @@ test "setName rewrites the name field and rejects bad names" {
     try std.testing.expectEqualStrings("Cloney", std.mem.sliceTo(buf[off_name..][0..16], 0));
     try std.testing.expect(!setName(&buf, "")); // empty
     try std.testing.expect(!setName(&buf, "ThisNameIsWayTooLong")); // > 15
+}
+
+// ── reading a save of any version ────────────────────────────────────────────
+
+/// A `.d2s` header of whichever layout the file actually uses. The version field decides, and it is
+/// the first thing worth knowing about a save: the two layouts share only the signature at 0x00 and
+/// the version at 0x04, and reading one as the other yields a plausible-looking wrong answer rather
+/// than a failure — the old name at 0x08 lands on the modern checksum.
+pub const Any = union(Era) {
+    old: old.Header,
+    modern: Header,
+
+    pub fn version(self: Any) u32 {
+        return switch (self) {
+            inline else => |h| h.version,
+        };
+    }
+    pub fn nameSlice(self: *const Any) []const u8 {
+        return switch (self.*) {
+            inline else => |*h| h.nameSlice(),
+        };
+    }
+    pub fn hardcore(self: *const Any) bool {
+        return switch (self.*) {
+            inline else => |*h| h.hardcore(),
+        };
+    }
+    pub fn expansion(self: *const Any) bool {
+        return switch (self.*) {
+            inline else => |*h| h.expansion(),
+        };
+    }
+};
+
+/// Parse a save of any supported version. Null when the buffer is too short for the layout its own
+/// version field claims.
+pub fn parseAny(data: []const u8) ?Any {
+    if (data.len < 8) return null;
+    return switch (era(rd32(data, off_version))) {
+        .old => .{ .old = old.parse(data) orelse return null },
+        .modern => .{ .modern = parseHeader(data) orelse return null },
+    };
+}
+
+// ── converting between the two layouts ───────────────────────────────────────
+//
+// Only the fields that genuinely correspond are carried. The old header is 0x82 bytes against the
+// modern 0x14f, and most of the difference is not fields that moved — it is fields that did not
+// exist. Level, creation time, appearance, mercenary, map id and the assigned-skill hotkeys have no
+// counterpart before 0x5c: some live in the body, some the engine derives. Converting cannot invent
+// them, so it leaves them at their defaults and says so here rather than producing a header that
+// looks complete.
+//
+// The correspondence that DOES hold is exact and is what makes the two convertible at all: the low
+// byte of the old `flags` is the modern `status`, and the next five bits are its `progression`.
+
+/// The old header as the modern layout, stamped with `target_version` (0x5c or later).
+pub fn oldToModern(o: *const old.Header, target_version: u32) Header {
+    var h = Header{
+        .signature = o.signature,
+        .version = target_version,
+        .status = @truncate(o.flags & 0xff),
+        .progression = o.progression(),
+        .class = @truncate(o.class),
+        .const16 = @truncate(o.skill_tab_count),
+    };
+    @memcpy(&h.name, &o.name);
+    // Per-difficulty act with the active one flagged, out of the single packed byte.
+    const lvl = o.difficultyLevel();
+    if (lvl < h.difficulty.len) h.difficulty[lvl] = o.act() | 0x80;
+    return h;
+}
+
+/// The modern header as the old layout, stamped with `target_version` (below 0x5c).
+///
+/// `txt_skills_count` is the caller's to supply: it is the row count Skills.txt had in the TARGET
+/// build (221 on classic 1.06b, 319 on the 1.07/1.08 expansion) and the engine refuses a save
+/// claiming more skills than its own table holds. There is nothing in a modern header to derive it
+/// from, so guessing it here would produce a save that loads on one build and is refused by another
+/// for a reason the caller could not see.
+pub fn modernToOld(h: *const Header, target_version: u32, txt_skills_count: u16) old.Header {
+    var o = old.Header{
+        .signature = h.signature,
+        .version = target_version,
+        .flags = @as(u32, h.status) | (@as(u32, h.progression & 0x1f) << 8),
+        .txt_skills_count = txt_skills_count,
+        .skill_tab_count = if (h.const16 != 0) h.const16 else 0x10,
+        .class = h.class,
+    };
+    @memcpy(&o.name, &h.name);
+    for (h.difficulty, 0..) |d, i| {
+        if (d & 0x80 != 0) {
+            o.difficulty = (d & 0x0f) | (@as(u8, @intCast(i)) << 4);
+            break;
+        }
+    }
+    return o;
+}
+
+test "the era boundary is the engine's own, and it is exactly 0x5c" {
+    // SERVER_LoadPlayerFromSaveFile @0x00534330: `if (dwFileVersion < 0x5c) old else modern`.
+    for ([_]u32{ 0x47, 0x57, 0x59, 0x5b }) |v| try std.testing.expectEqual(Era.old, era(v));
+    for ([_]u32{ 0x5c, 0x60 }) |v| try std.testing.expectEqual(Era.modern, era(v));
+}
+
+test "1.14d refuses versions outside 0x47..0x60 before it looks at anything else" {
+    try std.testing.expect(!loadable(0x46));
+    try std.testing.expect(loadable(0x47));
+    try std.testing.expect(loadable(0x60));
+    try std.testing.expect(!loadable(0x61)); // D2R, and this engine will not take it
+}
+
+test "an old header survives parse -> write byte for byte" {
+    // Every byte distinct, so a field silently dropped shows up as a difference rather than as a
+    // zero that happened to match.
+    var raw: [old.header_size]u8 = undefined;
+    for (&raw, 0..) |*b, i| b.* = @truncate(i *% 7 +% 13);
+    std.mem.writeInt(u32, raw[0..4], old.signature, .little);
+    std.mem.writeInt(u32, raw[4..8], 0x57, .little);
+    std.mem.writeInt(u16, raw[0x20..0x22], @intCast(old.header_size), .little);
+
+    const h = old.parse(&raw).?;
+    var out: [old.header_size]u8 = undefined;
+    old.write(&h, &out);
+    try std.testing.expectEqualSlices(u8, &raw, &out);
+}
+
+test "the old header has no checksum, because the name is sitting on it" {
+    var raw: [old.header_size]u8 = @splat(0);
+    std.mem.writeInt(u32, raw[0..4], old.signature, .little);
+    std.mem.writeInt(u32, raw[4..8], 0x59, .little);
+    std.mem.writeInt(u16, raw[0x20..0x22], @intCast(old.header_size), .little);
+    @memcpy(raw[old.off_name..][0.."Bartuc".len], "Bartuc");
+    const h = old.parse(&raw).?;
+    try std.testing.expectEqualStrings("Bartuc", h.nameSlice());
+    // 0x0c is the modern checksum offset and it is inside name[16] here (0x08..0x18).
+    try std.testing.expect(old.off_name <= 0x0c and 0x0c < old.off_name + 16);
+}
+
+test "validate refuses exactly what the engine refuses" {
+    var ok: [old.header_size]u8 = @splat(0);
+    std.mem.writeInt(u32, ok[0..4], old.signature, .little);
+    std.mem.writeInt(u32, ok[4..8], 0x57, .little);
+    std.mem.writeInt(u16, ok[0x20..0x22], @intCast(old.header_size), .little);
+    ok[0x1e] = 0x10; // skill tabs
+    ok[0x58] = 0x21; // act 1, difficulty 2
+    try std.testing.expect(old.validate(&ok));
+
+    const Case = struct { off: usize, val: u8, why: []const u8 };
+    for ([_]Case{
+        .{ .off = 0x00, .val = 0x00, .why = "signature" },
+        .{ .off = 0x20, .val = 0x81, .why = "header size must be 0x82" },
+        .{ .off = 0x04, .val = 0x46, .why = "older than the engine loads" },
+        .{ .off = 0x1e, .val = 0x11, .why = "more than 16 skill tabs" },
+        .{ .off = 0x58, .val = 0x05, .why = "act 5" },
+        .{ .off = 0x58, .val = 0x30, .why = "difficulty 3" },
+    }) |c| {
+        var bad = ok;
+        bad[c.off] = c.val;
+        try std.testing.expect(!old.validate(&bad));
+    }
+    try std.testing.expect(!old.validate(ok[0 .. old.header_size - 1])); // short buffer
+}
+
+test "old -> modern -> old keeps everything the two layouts share" {
+    var o = old.Header{ .version = 0x57, .class = 3, .txt_skills_count = 319, .skill_tab_count = 0x10 };
+    @memcpy(o.name[0.."Zealot".len], "Zealot");
+    o.flags = old.flag_hardcore | old.flag_expansion | (@as(u32, 9) << 8); // progression 9
+    o.difficulty = 0x24; // act 4, difficulty 2
+
+    const m = oldToModern(&o, version_114d);
+    try std.testing.expectEqualStrings("Zealot", m.nameSlice());
+    try std.testing.expect(m.hardcore());
+    try std.testing.expect(m.expansion());
+    try std.testing.expectEqual(@as(u8, 9), m.progression);
+    try std.testing.expectEqual(@as(u8, 3), m.class);
+    try std.testing.expectEqual(@as(u32, version_114d), m.version);
+    try std.testing.expectEqual(@as(u8, 4 | 0x80), m.difficulty[2]);
+
+    const back = modernToOld(&m, 0x57, 319);
+    try std.testing.expectEqualStrings("Zealot", back.nameSlice());
+    try std.testing.expectEqual(o.flags & 0x1fff, back.flags & 0x1fff);
+    try std.testing.expectEqual(o.class, back.class);
+    try std.testing.expectEqual(o.difficulty, back.difficulty);
+    try std.testing.expectEqual(o.txt_skills_count, back.txt_skills_count);
+    try std.testing.expectEqual(@as(u32, 0x57), back.version);
+}
+
+test "parseAny reads each layout's name from its own offset" {
+    // The trap this exists for: an old name at 0x08 lands where the modern header keeps its
+    // checksum, so reading the wrong layout gives a plausible answer instead of an error.
+    var o: [old.header_size]u8 = @splat(0);
+    std.mem.writeInt(u32, o[0..4], old.signature, .little);
+    std.mem.writeInt(u32, o[4..8], 0x47, .little);
+    std.mem.writeInt(u16, o[0x20..0x22], @intCast(old.header_size), .little);
+    @memcpy(o[0x08..][0.."Classic".len], "Classic");
+
+    var m: [header_size]u8 = @splat(0);
+    std.mem.writeInt(u32, m[0..4], signature, .little);
+    std.mem.writeInt(u32, m[4..8], version_114d, .little);
+    @memcpy(m[off_name..][0.."Modern".len], "Modern");
+
+    const a = parseAny(&o).?;
+    const b = parseAny(&m).?;
+    try std.testing.expectEqual(Era.old, @as(Era, a));
+    try std.testing.expectEqual(Era.modern, @as(Era, b));
+    try std.testing.expectEqualStrings("Classic", a.nameSlice());
+    try std.testing.expectEqualStrings("Modern", b.nameSlice());
 }
