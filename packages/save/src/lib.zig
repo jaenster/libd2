@@ -15,6 +15,9 @@ pub const sections = @import("sections.zig");
 /// The pre-1.09 body. A different file format rather than a variant of `sections`, so it is a
 /// separate reader — see the header comment there for what actually differs.
 pub const old_sections = @import("old_sections.zig");
+/// Whole-save conversion between the two layouts. Items are refused across the boundary — the
+/// engine selects the item format by save version.
+pub const convert = @import("convert.zig");
 pub const attributes = @import("attributes.zig");
 
 /// The fixed .d2s header (d2-formats `d2s`): the 335-byte struct, signature/version,
@@ -49,6 +52,7 @@ pub const newSave = sections.d2s.newSave;
 test {
     _ = sections;
     _ = old_sections;
+    _ = convert;
     _ = attributes;
     _ = @import("tests.zig");
 }
