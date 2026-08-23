@@ -169,6 +169,17 @@ pub const GameOptions = mcp.GameOptions;
 /// hardcore and ladder bits live alongside it and are not offered yet.
 const STATUS_EXPANSION: u16 = 0x20;
 
+/// The HIGH byte of that word, which the game never sets and a multi-version realm can therefore
+/// use to say which engine a character is being made for.
+///
+/// It has to travel with the request rather than be taken from the connection, because the engine
+/// is chosen on the creation screen — after the logon that would otherwise have decided it. A
+/// stock client sends zero here, which means "whatever this client is", and that is exactly the
+/// behaviour a realm had before any of this.
+///
+/// The value is the era's own two digits as a number: 6, 8, 9, 13, 14.
+const STATUS_ERA_SHIFT: u4 = 8;
+
 fn fourcc(s: []const u8) u32 {
     return @as(u32, s[3]) | (@as(u32, s[2]) << 8) | (@as(u32, s[1]) << 16) | (@as(u32, s[0]) << 24);
 }
@@ -575,11 +586,19 @@ pub fn Session(comptime T: type) type {
         /// The reply's result word is the whole answer and it is not a boolean: a name already
         /// taken and a name the realm will not accept are different failures and a player has to
         /// be told which. `mcp.CreateResult` names them.
-        pub fn createCharacter(self: *Self, name: []const u8, class: u8, expansion: bool) !CharCreateResult {
+        pub fn createCharacter(
+            self: *Self,
+            name: []const u8,
+            class: u8,
+            expansion: bool,
+            era: u8,
+        ) !CharCreateResult {
             if (name.len == 0 or name.len > 15) return Error.CharacterRejected;
             var ccb: [64]u8 = undefined;
             std.mem.writeInt(u32, ccb[0..4], class, .little);
-            std.mem.writeInt(u16, ccb[4..6], if (expansion) STATUS_EXPANSION else 0, .little);
+            const status: u16 = (if (expansion) STATUS_EXPANSION else 0) |
+                (@as(u16, era) << STATUS_ERA_SHIFT);
+            std.mem.writeInt(u16, ccb[4..6], status, .little);
             @memcpy(ccb[6 .. 6 + name.len], name);
             ccb[6 + name.len] = 0;
             try self.mcpSend(MCP_CHARCREATE, ccb[0 .. 7 + name.len]);
@@ -596,14 +615,21 @@ pub fn Session(comptime T: type) type {
         }
 
         /// Delete one. The realm answers with a result word of its own; zero is gone.
+        /// Delete one.
+        ///
+        /// The request is a REQUEST ID and then the name, and the reply echoes that id before its
+        /// result. Leaving the id out does not fail cleanly: the server reads the first two
+        /// characters of the name as the id and looks for a character two letters shorter, which
+        /// it does not have — so every delete comes back refused and nothing is ever removed.
         pub fn deleteCharacter(self: *Self, name: []const u8) !bool {
             var b: [64]u8 = undefined;
-            @memcpy(b[0..name.len], name);
-            b[name.len] = 0;
-            try self.mcpSend(MCP_CHARDELETE, b[0 .. name.len + 1]);
+            std.mem.writeInt(u16, b[0..2], 1, .little);
+            @memcpy(b[2..][0..name.len], name);
+            b[2 + name.len] = 0;
+            try self.mcpSend(MCP_CHARDELETE, b[0 .. 3 + name.len]);
             var mb: [256]u8 = undefined;
             const r = try self.mcpRecv(MCP_CHARDELETE, &mb);
-            const res = if (r.len >= 4) std.mem.readInt(u32, r[0..4], .little) else 0xffffffff;
+            const res = if (r.len >= 6) std.mem.readInt(u32, r[2..6], .little) else 0xffffffff;
             self.say("[MCP_CHARDELETE] \"{s}\" result=0x{x}\n", .{ name, res });
             return res == 0;
         }
@@ -990,4 +1016,46 @@ test "the era rides in the guild tag, two characters and no more" {
     var e: Character = .{};
     readStatString(&short, &e);
     try testing.expectEqualStrings("", e.era());
+}
+
+test "the era travels in the high byte of the create status, where the game puts nothing" {
+    // The reply is only there so the call returns; what is under test is what went out.
+    var reply: [16]u8 = @splat(0);
+    std.mem.writeInt(u16, reply[0..2], 7, .little);
+    reply[2] = MCP_CHARCREATE;
+    std.mem.writeInt(u32, reply[3..7], 0, .little);
+    Replay.reset(reply[0..7]);
+
+    var s = Session(Replay){ .opts = .{ .host = "x" }, .bncs = 1, .mcp = 2 };
+    _ = try s.createCharacter("Bob", 6, true, 9);
+
+    // [0..3] frame header, then class, then the status word.
+    const status = std.mem.readInt(u16, Replay.sent[7..9], .little);
+    try testing.expectEqual(@as(u16, 0x20), status & 0xff); // expansion, and nothing else low
+    try testing.expectEqual(@as(u16, 9), status >> 8); // 1.09d
+
+    // No era asked for means a zero high byte, which is what a stock client always sends.
+    Replay.reset(reply[0..7]);
+    var t = Session(Replay){ .opts = .{ .host = "x" }, .bncs = 1, .mcp = 2 };
+    _ = try t.createCharacter("Bob", 0, false, 0);
+    const plain = std.mem.readInt(u16, Replay.sent[7..9], .little);
+    try testing.expectEqual(@as(u16, 0), plain);
+}
+
+test "a delete carries a request id, and the result is behind the echo of it" {
+    var reply: [16]u8 = undefined;
+    std.mem.writeInt(u16, reply[0..2], 9, .little);
+    reply[2] = MCP_CHARDELETE;
+    std.mem.writeInt(u16, reply[3..5], 1, .little); // the echoed request id
+    std.mem.writeInt(u32, reply[5..9], 0, .little); // gone
+    Replay.reset(reply[0..9]);
+
+    var s = Session(Replay){ .opts = .{ .host = "x" }, .bncs = 1, .mcp = 2 };
+    try testing.expect(try s.deleteCharacter("Jaenster"));
+
+    // The id goes out in front of the name, or the server reads "Ja" as the id and hunts for a
+    // character called "enster".
+    try testing.expectEqual(@as(u16, 1), std.mem.readInt(u16, Replay.sent[3..5], .little));
+    try testing.expectEqualStrings("Jaenster", Replay.sent[5..13]);
+    try testing.expectEqual(@as(u8, 0), Replay.sent[13]);
 }
