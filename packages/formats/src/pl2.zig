@@ -74,6 +74,20 @@ pub fn textColor(bytes: []const u8, index: TextColor) Error![3]u8 {
     return .{ bytes[off], bytes[off + 1], bytes[off + 2] };
 }
 
+/// The one transform the file calls a darkened colour shift, which sits immediately before the
+/// text colours.
+///
+/// This is what `DRAW_DARKTRANSPARENT` draws with — draw mode 4, the mode every button caption in
+/// the front end uses. `Create_D2WinButton` memsets its button and never sets a font or a text
+/// colour, so a caption is font 0 and palette 0, which is "do not shift"; the darkness is this
+/// transform and nothing else. Flattening the glyphs to one black index instead loses their
+/// shading and the letters come out thick and closed up.
+pub fn darkShift(bytes: []const u8) Error![]const u8 {
+    const at = try shiftsStart(bytes);
+    if (at < colors_len + transform_len) return Error.ShortPl2;
+    return bytes[at - colors_len - transform_len ..][0..transform_len];
+}
+
 /// The index remap for a text colour: `new = table[old]`.
 ///
 /// Index 0 maps to 0 in every table, so a sprite's holes stay holes. Returns null for `white`,
@@ -142,4 +156,26 @@ test "a shift maps index 0 to 0 so holes stay holes" {
 test "a file too short to hold the tail is refused" {
     var tiny: [16]u8 = @splat(0);
     try testing.expectError(Error.ShortPl2, textColor(&tiny, .red));
+}
+
+test "the darkened shift is the transform right before the text colours" {
+    const gpa = testing.allocator;
+    const buf = try stubPl2(gpa);
+    defer gpa.free(buf);
+
+    const shifts = buf.len - shifts_len;
+    const dark = shifts - colors_len - transform_len;
+    // Something recognisable, and 0 left alone the way every transform here leaves it.
+    @memset(buf[dark..][0..transform_len], 0x5c);
+    buf[dark] = 0;
+
+    const t = try darkShift(buf);
+    try testing.expectEqual(@as(usize, transform_len), t.len);
+    try testing.expectEqual(@as(u8, 0), t[0]);
+    try testing.expectEqual(@as(u8, 0x5c), t[1]);
+    try testing.expectEqual(@as(u8, 0x5c), t[255]);
+
+    // And it does not overlap the text colours that follow it.
+    const c = try textColor(buf, .black);
+    try testing.expectEqual([3]u8{ 0, 0, 0 }, c);
 }
