@@ -34,6 +34,19 @@ pub const Op = enum(u8) {
     charrank = 0x16,
     charupgrade = 0x18,
     charlist2 = 0x19,
+
+    /// OURS, not Blizzard's: which engine each of the account's characters belongs to.
+    ///
+    /// A realm that hosts several game versions has to record what a character was made on — the
+    /// save format and the wire framing both moved between eras — and MCP has nowhere to say so.
+    /// Every field of CHARLIST2's reply is parsed by the client, including the ones that look
+    /// spare, so there is no room to smuggle it into the list.
+    ///
+    /// 0x80 rather than one of the dead ids in Blizzard's own range (0x08, 0x09, 0x0b-0x0d, 0x0f,
+    /// 0x10 have no senders in Game.exe): dead is not the same as unused, and a stock client that
+    /// ever sent one would be answered with something it cannot parse. Nothing sends 0x80 but a
+    /// launcher that knows to.
+    char_versions = 0x80,
     _,
 };
 

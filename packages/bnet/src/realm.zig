@@ -42,6 +42,8 @@ const MCP_CREATEGAME = @intFromEnum(mcp.Op.creategame);
 const MCP_JOINGAME = @intFromEnum(mcp.Op.joingame);
 const MCP_CHARLOGON = @intFromEnum(mcp.Op.charlogon);
 const MCP_CHARLIST2 = @intFromEnum(mcp.Op.charlist2);
+const MCP_GAMELIST = @intFromEnum(mcp.Op.gamelist);
+const MCP_CHAR_VERSIONS = @intFromEnum(mcp.Op.char_versions);
 
 const CLIENT_TOKEN: u32 = 0xCAFEBABE;
 
@@ -109,6 +111,44 @@ pub const Character = struct {
         const keep = @min(from.len, self.name_buf.len);
         @memcpy(self.name_buf[0..keep], from[0..keep]);
         self.name_len = keep;
+    }
+};
+
+/// Which engine a character belongs to, from the realm's own extension op.
+pub const CharVersion = struct {
+    name_buf: [24]u8 = @splat(0),
+    name_len: usize = 0,
+    /// The engine tag, spelled the way the fleet spells it: "1.09d", "1.14d". Empty means the
+    /// realm has not recorded one, which is not the same as a mismatch — characters made before
+    /// a realm started recording have none and play anywhere.
+    tag_buf: [16]u8 = @splat(0),
+    tag_len: usize = 0,
+
+    pub fn name(self: *const CharVersion) []const u8 {
+        return self.name_buf[0..self.name_len];
+    }
+
+    pub fn tag(self: *const CharVersion) []const u8 {
+        return self.tag_buf[0..self.tag_len];
+    }
+};
+
+/// One game on the realm's list, as MCP_GAMELIST describes it.
+pub const Game = struct {
+    name_buf: [24]u8 = @splat(0),
+    name_len: usize = 0,
+    desc_buf: [32]u8 = @splat(0),
+    desc_len: usize = 0,
+    /// The realm's own id for it. Its low half is what the client dedups on.
+    id: u32 = 0,
+    players: u8 = 0,
+
+    pub fn name(self: *const Game) []const u8 {
+        return self.name_buf[0..self.name_len];
+    }
+
+    pub fn description(self: *const Game) []const u8 {
+        return self.desc_buf[0..self.desc_len];
     }
 };
 
@@ -577,6 +617,80 @@ pub fn Session(comptime T: type) type {
             self.character = who;
         }
 
+        /// Which engine each of the account's characters was made on.
+        ///
+        /// Not part of Battle.net: `mcp.Op.char_versions` is an extension a multi-version realm
+        /// answers and a stock client never asks for. A realm that does not know the op simply
+        /// does not reply, so this times out rather than failing loudly — which is why the caller
+        /// gets an empty list and not an error when talking to a plain realm.
+        pub fn charVersions(self: *Self, out: []CharVersion) ![]CharVersion {
+            try self.mcpSend(MCP_CHAR_VERSIONS, &[_]u8{});
+            var mb: [4096]u8 = undefined;
+            const r = self.mcpRecv(MCP_CHAR_VERSIONS, &mb) catch return out[0..0];
+            if (r.len < 2) return out[0..0];
+
+            const count = std.mem.readInt(u16, r[0..2], .little);
+            var off: usize = 2;
+            var n: usize = 0;
+            while (n < count and n < out.len and off < r.len) : (n += 1) {
+                const nm = cstrAt(r, off);
+                off += nm.len + 1;
+                const tg = cstrAt(r, off);
+                off += tg.len + 1;
+
+                out[n] = .{};
+                const keep = @min(nm.len, out[n].name_buf.len);
+                @memcpy(out[n].name_buf[0..keep], nm[0..keep]);
+                out[n].name_len = keep;
+                const tkeep = @min(tg.len, out[n].tag_buf.len);
+                @memcpy(out[n].tag_buf[0..tkeep], tg[0..tkeep]);
+                out[n].tag_len = tkeep;
+            }
+            return out[0..n];
+        }
+
+        /// The games on the realm.
+        ///
+        /// One game per packet, not one packet with a list in it — `NET_MCP_CLIENT_Incoming0x05`
+        /// takes a single game and the client accumulates them. The end is a packet whose token
+        /// is -2, which is also what tells the client to redraw; a reader that stops at the first
+        /// packet sees one game and a reader with no terminator waits forever.
+        pub fn games(self: *Self, out: []Game) ![]Game {
+            var req: [8]u8 = @splat(0);
+            std.mem.writeInt(u16, req[0..2], 1, .little); // request id
+            std.mem.writeInt(u32, req[2..6], 0, .little); // no difficulty filter
+            req[6] = 0; // empty search string
+            try self.mcpSend(MCP_GAMELIST, req[0..7]);
+
+            var n: usize = 0;
+            var guard: usize = 0;
+            while (guard < 256) : (guard += 1) {
+                var mb: [512]u8 = undefined;
+                const r = try self.mcpRecv(MCP_GAMELIST, &mb);
+                if (r.len < 11) break;
+                const token = std.mem.readInt(u32, r[7..11], .little);
+                if (token == 0xFFFF_FFFE) break;
+                if (n == out.len) continue; // keep draining to the terminator
+
+                out[n] = .{
+                    .id = std.mem.readInt(u32, r[2..6], .little),
+                    .players = r[6],
+                };
+                const nm = cstrAt(r, 11);
+                const keep = @min(nm.len, out[n].name_buf.len);
+                @memcpy(out[n].name_buf[0..keep], nm[0..keep]);
+                out[n].name_len = keep;
+
+                const ds = cstrAt(r, 11 + nm.len + 1);
+                const dkeep = @min(ds.len, out[n].desc_buf.len);
+                @memcpy(out[n].desc_buf[0..dkeep], ds[0..dkeep]);
+                out[n].desc_len = dkeep;
+                n += 1;
+            }
+            self.say("[MCP_GAMELIST] {d} game(s)\n", .{n});
+            return out[0..n];
+        }
+
         /// Ask the realm to make a game. The reply's result word is at offset 6, behind the
         /// request id and the game token — reading it from the front gets the token instead and
         /// every create looks like it worked.
@@ -792,4 +906,131 @@ test "the flags are fourteen-bit, so a raw read confuses hardcore with the expan
     var d: Character = .{ .expansion = false };
     readStatString(&short, &d);
     try testing.expect(!d.expansion);
+}
+
+test "a game list is one packet per game, ended by a token of -2" {
+    // Two games and a terminator, in the layout realmd writes: reqid, gameid, players, token,
+    // name, description. Reading the token from the wrong offset is how a list either stops at
+    // the first game or never stops at all.
+    var buf: [256]u8 = undefined;
+    var w: usize = 0;
+
+    const games_in = [_]struct { id: u32, players: u8, name: []const u8, desc: []const u8 }{
+        .{ .id = 0x1111, .players = 3, .name = "baal-01", .desc = "hell" },
+        .{ .id = 0x2222, .players = 8, .name = "chaos", .desc = "" },
+    };
+    for (games_in) |g| {
+        var body: [64]u8 = undefined;
+        var b: usize = 0;
+        std.mem.writeInt(u16, body[0..2], 1, .little);
+        std.mem.writeInt(u32, body[2..6], g.id, .little);
+        body[6] = g.players;
+        std.mem.writeInt(u32, body[7..11], g.id, .little);
+        b = 11;
+        @memcpy(body[b..][0..g.name.len], g.name);
+        b += g.name.len;
+        body[b] = 0;
+        b += 1;
+        @memcpy(body[b..][0..g.desc.len], g.desc);
+        b += g.desc.len;
+        body[b] = 0;
+        b += 1;
+        w += mcpFrame(body[0..b], buf[w..]).len;
+    }
+    var last: [16]u8 = @splat(0);
+    std.mem.writeInt(u16, last[0..2], 1, .little);
+    std.mem.writeInt(u32, last[7..11], 0xFFFF_FFFE, .little);
+    w += mcpFrame(last[0..11], buf[w..]).len;
+
+    Replay.reset(buf[0..w]);
+    var s = Session(Replay){ .opts = .{ .host = "x" }, .bncs = 1, .mcp = 2 };
+    var out: [8]Game = undefined;
+    const got = try s.games(&out);
+
+    try testing.expectEqual(@as(usize, 2), got.len);
+    try testing.expectEqualStrings("baal-01", got[0].name());
+    try testing.expectEqualStrings("hell", got[0].description());
+    try testing.expectEqual(@as(u8, 3), got[0].players);
+    try testing.expectEqual(@as(u32, 0x2222), got[1].id);
+    try testing.expectEqualStrings("", got[1].description());
+}
+
+test "more games than there is room for still reaches the terminator" {
+    // Draining matters: stopping early leaves the rest of the list in the socket and the next
+    // request reads someone else's answer.
+    var buf: [512]u8 = undefined;
+    var w: usize = 0;
+    for (0..5) |i| {
+        var body: [32]u8 = @splat(0);
+        std.mem.writeInt(u16, body[0..2], 1, .little);
+        std.mem.writeInt(u32, body[2..6], @intCast(i + 1), .little);
+        std.mem.writeInt(u32, body[7..11], @intCast(i + 1), .little);
+        body[11] = 'g';
+        body[12] = 0;
+        body[13] = 0;
+        w += mcpFrame(body[0..14], buf[w..]).len;
+    }
+    var last: [16]u8 = @splat(0);
+    std.mem.writeInt(u32, last[7..11], 0xFFFF_FFFE, .little);
+    w += mcpFrame(last[0..11], buf[w..]).len;
+
+    Replay.reset(buf[0..w]);
+    var s = Session(Replay){ .opts = .{ .host = "x" }, .bncs = 1, .mcp = 2 };
+    var out: [2]Game = undefined;
+    const got = try s.games(&out);
+    try testing.expectEqual(@as(usize, 2), got.len);
+    // The whole script was consumed, terminator included.
+    try testing.expectEqual(Replay.script.len, Replay.read_at);
+}
+
+/// An MCP frame: a little-endian length that counts itself and the id, then the id, then the body.
+fn mcpFrame(body: []const u8, out: []u8) []u8 {
+    std.mem.writeInt(u16, out[0..2], @intCast(body.len + 3), .little);
+    out[2] = MCP_GAMELIST;
+    @memcpy(out[3..][0..body.len], body);
+    return out[0 .. 3 + body.len];
+}
+
+test "the realm's own op says which engine each character belongs to" {
+    var body: [128]u8 = undefined;
+    var b: usize = 0;
+    std.mem.writeInt(u16, body[0..2], 2, .little);
+    b = 2;
+    for ([_][2][]const u8{
+        .{ "Jaenster", "1.14d" },
+        .{ "Steeg", "" }, // never recorded, which is not the same as a mismatch
+    }) |pair| {
+        for (pair) |part| {
+            @memcpy(body[b..][0..part.len], part);
+            b += part.len;
+            body[b] = 0;
+            b += 1;
+        }
+    }
+
+    var buf: [160]u8 = undefined;
+    std.mem.writeInt(u16, buf[0..2], @intCast(b + 3), .little);
+    buf[2] = MCP_CHAR_VERSIONS;
+    @memcpy(buf[3..][0..b], body[0..b]);
+    Replay.reset(buf[0 .. 3 + b]);
+
+    var s = Session(Replay){ .opts = .{ .host = "x" }, .bncs = 1, .mcp = 2 };
+    var out: [8]CharVersion = undefined;
+    const got = try s.charVersions(&out);
+    try testing.expectEqual(@as(usize, 2), got.len);
+    try testing.expectEqualStrings("Jaenster", got[0].name());
+    try testing.expectEqualStrings("1.14d", got[0].tag());
+    try testing.expectEqualStrings("Steeg", got[1].name());
+    try testing.expectEqualStrings("", got[1].tag());
+}
+
+test "a realm that does not know the op leaves the list empty rather than failing" {
+    // Nothing comes back at all, which is what a plain realm does with an id it has no handler
+    // for. An empty answer means "this realm does not track eras", and every character plays
+    // anywhere — the same as before the op existed.
+    Replay.reset("");
+    var s = Session(Replay){ .opts = .{ .host = "x" }, .bncs = 1, .mcp = 2 };
+    var out: [4]CharVersion = undefined;
+    const got = try s.charVersions(&out);
+    try testing.expectEqual(@as(usize, 0), got.len);
 }
