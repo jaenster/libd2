@@ -43,7 +43,6 @@ const MCP_JOINGAME = @intFromEnum(mcp.Op.joingame);
 const MCP_CHARLOGON = @intFromEnum(mcp.Op.charlogon);
 const MCP_CHARLIST2 = @intFromEnum(mcp.Op.charlist2);
 const MCP_GAMELIST = @intFromEnum(mcp.Op.gamelist);
-const MCP_CHAR_VERSIONS = @intFromEnum(mcp.Op.char_versions);
 
 const CLIENT_TOKEN: u32 = 0xCAFEBABE;
 
@@ -102,34 +101,24 @@ pub const Character = struct {
     ladder: bool = false,
     /// How far it has got, which is what the character list draws as a title.
     progression: u8 = 0,
+    /// Which engine the character was made on, as two characters in the statstring's guild tag.
+    /// Empty when the realm put nothing there, which is every realm that serves one version.
+    era_buf: [2]u8 = @splat(0),
+    era_len: usize = 0,
 
     pub fn name(self: *const Character) []const u8 {
         return self.name_buf[0..self.name_len];
+    }
+
+    /// The two-character era code, or empty.
+    pub fn era(self: *const Character) []const u8 {
+        return self.era_buf[0..self.era_len];
     }
 
     fn setName(self: *Character, from: []const u8) void {
         const keep = @min(from.len, self.name_buf.len);
         @memcpy(self.name_buf[0..keep], from[0..keep]);
         self.name_len = keep;
-    }
-};
-
-/// Which engine a character belongs to, from the realm's own extension op.
-pub const CharVersion = struct {
-    name_buf: [24]u8 = @splat(0),
-    name_len: usize = 0,
-    /// The engine tag, spelled the way the fleet spells it: "1.09d", "1.14d". Empty means the
-    /// realm has not recorded one, which is not the same as a mismatch — characters made before
-    /// a realm started recording have none and play anywhere.
-    tag_buf: [16]u8 = @splat(0),
-    tag_len: usize = 0,
-
-    pub fn name(self: *const CharVersion) []const u8 {
-        return self.name_buf[0..self.name_len];
-    }
-
-    pub fn tag(self: *const CharVersion) []const u8 {
-        return self.tag_buf[0..self.tag_len];
     }
 };
 
@@ -218,6 +207,7 @@ fn authMeaning(r: u32) []const u8 {
 pub fn readStatString(stat: []const u8, into: *Character) void {
     if (stat.len > 13) into.class = if (stat[13] > 0) stat[13] - 1 else 0;
     if (stat.len > 25) into.level = stat[25];
+    readGuildTag(stat, into);
     if (stat.len > 27) {
         const flags: u16 = (@as(u16, stat[26]) & 0x7f) | ((@as(u16, stat[27]) & 0x7f) << 7);
         // The low byte mirrors the .d2s status byte at 0x24; the high byte is how far the
@@ -228,6 +218,23 @@ pub fn readStatString(stat: []const u8, into: *Character) void {
         into.ladder = (flags & 0x40) != 0;
         into.progression = @intCast((flags >> 8) & 0x1f);
     }
+}
+
+/// The guild tag, at the very end of the statstring, and where a multi-version realm puts the
+/// character's era.
+///
+/// TWO characters and never three. `D2CharSelStrc.szGuildTag` is `char[3]` filled by a `strncpy`
+/// of three, so a three-character tag arrives with no terminator and the client's `" {%s}"` runs
+/// on into the difficulty byte sitting at 0x32D. Two leaves the statstring's own terminator to
+/// land in the third, which is what the client then stops at.
+///
+/// A code rather than "1.14d" because that is all the room there is, and it costs nothing: the
+/// eras this realm serves differ in exactly those two digits.
+pub fn readGuildTag(stat: []const u8, into: *Character) void {
+    const tag = cstrAt(stat, 33);
+    const keep = @min(tag.len, into.era_buf.len);
+    @memcpy(into.era_buf[0..keep], tag[0..keep]);
+    into.era_len = keep;
 }
 
 /// A realm session over `T`. See the file comment for what `T` has to declare.
@@ -617,38 +624,6 @@ pub fn Session(comptime T: type) type {
             self.character = who;
         }
 
-        /// Which engine each of the account's characters was made on.
-        ///
-        /// Not part of Battle.net: `mcp.Op.char_versions` is an extension a multi-version realm
-        /// answers and a stock client never asks for. A realm that does not know the op simply
-        /// does not reply, so this times out rather than failing loudly — which is why the caller
-        /// gets an empty list and not an error when talking to a plain realm.
-        pub fn charVersions(self: *Self, out: []CharVersion) ![]CharVersion {
-            try self.mcpSend(MCP_CHAR_VERSIONS, &[_]u8{});
-            var mb: [4096]u8 = undefined;
-            const r = self.mcpRecv(MCP_CHAR_VERSIONS, &mb) catch return out[0..0];
-            if (r.len < 2) return out[0..0];
-
-            const count = std.mem.readInt(u16, r[0..2], .little);
-            var off: usize = 2;
-            var n: usize = 0;
-            while (n < count and n < out.len and off < r.len) : (n += 1) {
-                const nm = cstrAt(r, off);
-                off += nm.len + 1;
-                const tg = cstrAt(r, off);
-                off += tg.len + 1;
-
-                out[n] = .{};
-                const keep = @min(nm.len, out[n].name_buf.len);
-                @memcpy(out[n].name_buf[0..keep], nm[0..keep]);
-                out[n].name_len = keep;
-                const tkeep = @min(tg.len, out[n].tag_buf.len);
-                @memcpy(out[n].tag_buf[0..tkeep], tg[0..tkeep]);
-                out[n].tag_len = tkeep;
-            }
-            return out[0..n];
-        }
-
         /// The games on the realm.
         ///
         /// One game per packet, not one packet with a list in it — `NET_MCP_CLIENT_Incoming0x05`
@@ -991,46 +966,28 @@ fn mcpFrame(body: []const u8, out: []u8) []u8 {
     return out[0 .. 3 + body.len];
 }
 
-test "the realm's own op says which engine each character belongs to" {
-    var body: [128]u8 = undefined;
-    var b: usize = 0;
-    std.mem.writeInt(u16, body[0..2], 2, .little);
-    b = 2;
-    for ([_][2][]const u8{
-        .{ "Jaenster", "1.14d" },
-        .{ "Steeg", "" }, // never recorded, which is not the same as a mismatch
-    }) |pair| {
-        for (pair) |part| {
-            @memcpy(body[b..][0..part.len], part);
-            b += part.len;
-            body[b] = 0;
-            b += 1;
-        }
-    }
 
-    var buf: [160]u8 = undefined;
-    std.mem.writeInt(u16, buf[0..2], @intCast(b + 3), .little);
-    buf[2] = MCP_CHAR_VERSIONS;
-    @memcpy(buf[3..][0..b], body[0..b]);
-    Replay.reset(buf[0 .. 3 + b]);
+test "the era rides in the guild tag, two characters and no more" {
+    var c: Character = .{};
+    var stat: [40]u8 = @splat(0x80);
+    stat[13] = 1;
+    stat[25] = 1;
+    stat[33] = '1';
+    stat[34] = '4';
+    stat[35] = 0; // the statstring's own terminator, which is the tag's as well
+    readStatString(&stat, &c);
+    try testing.expectEqualStrings("14", c.era());
 
-    var s = Session(Replay){ .opts = .{ .host = "x" }, .bncs = 1, .mcp = 2 };
-    var out: [8]CharVersion = undefined;
-    const got = try s.charVersions(&out);
-    try testing.expectEqual(@as(usize, 2), got.len);
-    try testing.expectEqualStrings("Jaenster", got[0].name());
-    try testing.expectEqualStrings("1.14d", got[0].tag());
-    try testing.expectEqualStrings("Steeg", got[1].name());
-    try testing.expectEqualStrings("", got[1].tag());
-}
+    // A realm that puts nothing there leaves the terminator at 33 and the era empty, which is
+    // what a realm serving one version does.
+    stat[33] = 0;
+    var d: Character = .{};
+    readStatString(&stat, &d);
+    try testing.expectEqualStrings("", d.era());
 
-test "a realm that does not know the op leaves the list empty rather than failing" {
-    // Nothing comes back at all, which is what a plain realm does with an id it has no handler
-    // for. An empty answer means "this realm does not track eras", and every character plays
-    // anywhere — the same as before the op existed.
-    Replay.reset("");
-    var s = Session(Replay){ .opts = .{ .host = "x" }, .bncs = 1, .mcp = 2 };
-    var out: [4]CharVersion = undefined;
-    const got = try s.charVersions(&out);
-    try testing.expectEqual(@as(usize, 0), got.len);
+    // A statstring that stops before the tag is not read past.
+    const short: [30]u8 = @splat(0x80);
+    var e: Character = .{};
+    readStatString(&short, &e);
+    try testing.expectEqualStrings("", e.era());
 }
