@@ -17,8 +17,10 @@
 
 const std = @import("std");
 const pkware = @import("pkware.zig");
+const huffman = @import("huffman.zig");
+const adpcm = @import("adpcm.zig");
 
-pub const Error = pkware.Error || error{
+pub const Error = pkware.Error || huffman.Error || adpcm.Error || std.mem.Allocator.Error || error{
     NotAnArchive,
     BadHeader,
     Truncated,
@@ -57,8 +59,9 @@ pub const Flags = struct {
     pub const any_compression: u32 = implode | compress;
 };
 
-/// The mask byte a `compress` sector carries. Only pkware and zlib appear in a 1.14d archive;
-/// the audio codecs are for the `.wav` members nothing here reads.
+/// The mask byte a `compress` sector carries. It is a set of flags, not one algorithm id: a
+/// `.wav` member is Huffman-coded ADPCM and carries both bits. Decompression runs the flags in
+/// the fixed order below, which is the reverse of the order they were applied in.
 pub const Compression = struct {
     pub const huffman: u8 = 0x01;
     pub const zlib: u8 = 0x02;
@@ -313,7 +316,7 @@ pub const Archive = struct {
             const chunk = try gpa.dupe(u8, raw);
             defer gpa.free(chunk);
             if (key) |k| decrypt(chunk, k);
-            _ = try expand(out, chunk, blk.flags);
+            _ = try expand(gpa, out, chunk, blk.flags);
             return out;
         }
 
@@ -337,7 +340,7 @@ pub const Archive = struct {
             const chunk = buf[0..src.len];
             @memcpy(chunk, src);
             if (key) |k| decrypt(chunk, k +% @as(u32, @intCast(i)));
-            _ = try expand(out[at..][0..want], chunk, blk.flags);
+            _ = try expand(gpa, out[at..][0..want], chunk, blk.flags);
         }
         return out;
     }
@@ -408,23 +411,67 @@ pub const Archive = struct {
     }
 };
 
+/// The order a mask's flags are undone in. A compressor applies its stages in the reverse of
+/// this, so an audio sector — Huffman over ADPCM — is un-Huffman'd first and expanded to samples
+/// last. bzip2 is listed so an archive that uses it fails as unsupported rather than as corrupt.
+const stage_order = [_]u8{
+    Compression.bzip2,
+    Compression.pkware,
+    Compression.zlib,
+    Compression.huffman,
+    Compression.adpcm_stereo,
+    Compression.adpcm_mono,
+};
+
 /// Turn one packed chunk into exactly `dst.len` bytes.
-fn expand(dst: []u8, src: []const u8, flags: u32) Error!usize {
+fn expand(gpa: std.mem.Allocator, dst: []u8, src: []const u8, flags: u32) Error!usize {
     // Storm never stores a chunk that grew, so an equal size means it was left alone.
     if (src.len >= dst.len or flags & Flags.any_compression == 0) {
         if (src.len < dst.len) return Error.Truncated;
         @memcpy(dst, src[0..dst.len]);
         return dst.len;
     }
-    if (flags & Flags.compress != 0) {
-        if (src.len < 2) return Error.Truncated;
-        return switch (src[0]) {
-            Compression.pkware => pkware.explode(dst, src[1..]),
-            Compression.zlib => inflate(dst, src[1..]),
-            else => Error.UnsupportedCompression,
-        };
+    if (flags & Flags.compress == 0) return pkware.explode(dst, src);
+    if (src.len < 2) return Error.Truncated;
+
+    const mask = src[0];
+    var stages: [stage_order.len]u8 = undefined;
+    var count: usize = 0;
+    for (stage_order) |bit| {
+        if (mask & bit != 0) {
+            stages[count] = bit;
+            count += 1;
+        }
     }
-    return pkware.explode(dst, src);
+    if (count == 0) return Error.UnsupportedCompression;
+
+    const payload = src[1..];
+    if (count == 1) return stage(stages[0], dst, payload);
+
+    // Each stage but the last writes somewhere it can be read back from. Nothing real needs more
+    // than two, but a third would read what the first wrote, so the buffers alternate.
+    const scratch = try gpa.alloc(u8, dst.len * @min(count - 1, 2));
+    defer gpa.free(scratch);
+    var input = payload;
+    var slot: usize = 0;
+    for (stages[0 .. count - 1]) |bit| {
+        const buf = scratch[slot * dst.len ..][0..dst.len];
+        const n = try stage(bit, buf, input);
+        input = buf[0..n];
+        slot = if (count > 2) 1 - slot else 0;
+    }
+    return stage(stages[count - 1], dst, input);
+}
+
+fn stage(bit: u8, dst: []u8, src: []const u8) Error!usize {
+    return switch (bit) {
+        Compression.pkware => pkware.explode(dst, src),
+        Compression.zlib => inflate(dst, src),
+        Compression.huffman => huffman.decompress(dst, src),
+        Compression.adpcm_mono => adpcm.decompress(dst, src, .mono),
+        Compression.adpcm_stereo => adpcm.decompress(dst, src, .stereo),
+        else => Error.UnsupportedCompression,
+    };
 }
 
 fn inflate(dst: []u8, src: []const u8) Error!usize {
