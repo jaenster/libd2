@@ -12,8 +12,9 @@
 //!   mpq  — the archive all of the above ship inside, including the protected
 //!          ones whose names have been stripped, and `mpq.Set`, several of them
 //!          searched in a real install's order.  pkware — the implode codec an
-//!          MPQ member is packed with.  ptc — the PrePatch delta a patch
-//!          installer carries instead of a whole file.
+//!          MPQ member is packed with.  huffman / adpcm — the other two, which
+//!          a `.wav` member stacks on top of each other.  ptc — the PrePatch
+//!          delta a patch installer carries instead of a whole file.
 //!   palette — pal.dat, the 256-entry B,G,R table sprite indices refer to.
 //!   canvas — an RGBA surface and the index-0-is-a-hole compositing that turns
 //!          those indices back into a picture, including the block grid a
@@ -37,6 +38,8 @@ pub const font = @import("font.zig");
 pub const pl2 = @import("pl2.zig");
 pub const strtbl = @import("strtbl.zig");
 pub const pkware = @import("pkware.zig");
+pub const huffman = @import("huffman.zig");
+pub const adpcm = @import("adpcm.zig");
 pub const ptc = @import("ptc.zig");
 
 test {
@@ -58,5 +61,7 @@ test {
     _ = pl2;
     _ = strtbl;
     _ = pkware;
+    _ = huffman;
+    _ = adpcm;
     _ = ptc;
 }
