@@ -30,6 +30,9 @@ pub const Op = union(enum) {
     /// Add a member to an archive being installed. Needs a writer, which reading does not.
     add_to_archive: struct { container: []const u8, file: File },
     create_folder: []const u8,
+    /// Remove a file the payload is replacing. The expansion's script does this; the base
+    /// game's never does.
+    delete: []const u8,
     /// Store an encoded value — the CD key, the account name — inside an installed file.
     encrypt: struct { object: []const u8, into: []const u8 },
     registry: struct { where: []const u8, key: []const u8, value: []const u8 },
@@ -155,6 +158,8 @@ const Builder = struct {
                     .{ .add_to_archive = .{ .container = c, .file = f } }
                 else
                     .{ .extract = f });
+            } else if (std.mem.eql(u8, t, "delete")) {
+                try b.ops.append(b.gpa, .{ .delete = try b.expand(kid.attr("path") orelse kid.attr("target_path") orelse "") });
             } else if (std.mem.eql(u8, t, "create_folder")) {
                 try b.ops.append(b.gpa, .{ .create_folder = try b.expand(kid.attr("path") orelse "") });
             } else if (std.mem.eql(u8, t, "encrypt")) {
@@ -216,6 +221,9 @@ const Xml = struct {
 
     /// Declarations, comments and doctypes carry no operations.
     fn skipNoise(x: *Xml) void {
+        // A UTF-8 byte-order mark is not whitespace and not a tag; the expansion's script
+        // carries one where the base game's does not.
+        if (std.mem.startsWith(u8, x.src[x.at..], "\xef\xbb\xbf")) x.at += 3;
         while (true) {
             x.ws();
             const rest = x.src[x.at..];
@@ -388,4 +396,39 @@ test "malformed input is an error, not a crash" {
     try testing.expectError(Error.BadManifest, parse(arena.allocator(), "not xml at all", .{}));
     // truncated mid-element
     _ = parse(arena.allocator(), "<install><repack from=\"a\" to=", .{}) catch {};
+}
+
+test "a byte-order mark before the declaration does not defeat the parser" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const xml = "\xef\xbb\xbf<?xml version=\"1.0\"?>\n" ++
+        "<install><replace symbol=\"A\" with=\"b\"/></install>";
+    const plan_ = try parse(gpa, xml, .{});
+    try testing.expectEqualStrings("b", plan_.symbols.get("A").?);
+}
+
+test "the expansion's extra elements are understood, not walked past" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    // multipass_install/pass only group work; delete is an operation in its own right.
+    const xml =
+        \\<install>
+        \\ <multipass_install>
+        \\  <pass>
+        \\   <target location="user">
+        \\    <delete path="old.dll"/>
+        \\    <repack_into type="file"><repack from="a" to="b"/></repack_into>
+        \\   </target>
+        \\  </pass>
+        \\ </multipass_install>
+        \\</install>
+    ;
+    const plan_ = try parse(gpa, xml, .{});
+    try testing.expectEqual(@as(usize, 2), plan_.ops.len);
+    try testing.expectEqualStrings("old.dll", plan_.ops[0].delete);
+    try testing.expectEqualStrings("b", plan_.ops[1].extract.to);
 }
