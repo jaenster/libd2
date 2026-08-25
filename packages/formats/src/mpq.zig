@@ -28,6 +28,7 @@ pub const Error = pkware.Error || huffman.Error || adpcm.Error || std.mem.Alloca
     NoSuchBlock,
     BadSectorTable,
     UnsupportedCompression,
+    HashTableFull,
 };
 
 pub const signature = "MPQ\x1a";
@@ -506,6 +507,134 @@ fn slice(bytes: []const u8, at: u32, len: usize) Error![]const u8 {
 ///
 /// Sound, music, speech and video are last because nothing that draws needs them; a reader after
 /// graphics can stop early and never pay for them.
+
+/// A member to add to an archive.
+pub const NewFile = struct { name: []const u8, data: []const u8 };
+
+/// Add members to an archive without disturbing what is already in it.
+///
+/// An installer does this: the files it lays down include archives that it then adds more members
+/// to. Everything present keeps its offset, so nothing has to be re-encoded and no member's
+/// encryption key changes — those keys are derived from where the member sits.
+///
+/// New members are stored whole and uncompressed, which is what the install script asks for when
+/// it passes `disable_compression`. Their names go into free slots of the existing hash table, so
+/// the table is never rebuilt and the names already in it are never needed. An archive with no
+/// free slot left would have to be rebuilt instead, and that is an error here rather than a
+/// silent corruption.
+pub fn append(gpa: std.mem.Allocator, bytes: []const u8, files: []const NewFile) Error![]u8 {
+    var arc = try Archive.open(gpa, bytes);
+    defer arc.deinit(gpa);
+
+    // The tables sit after the data; new data goes where they used to start, and they move down.
+    const data_end = @min(arc.header.hash_table_pos, arc.header.block_table_pos);
+    if (arc.base + data_end > bytes.len) return Error.Truncated;
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, bytes[0 .. arc.base + data_end]);
+
+    const hashes = try gpa.dupe(HashEntry, arc.hashes);
+    defer gpa.free(hashes);
+    var blocks: std.ArrayList(BlockEntry) = .empty;
+    defer blocks.deinit(gpa);
+    try blocks.appendSlice(gpa, arc.blocks);
+
+    const mask: u32 = @intCast(hashes.len - 1);
+    for (files) |f| {
+        const at: u32 = @intCast(out.items.len - arc.base);
+        try out.appendSlice(gpa, f.data);
+        const index: u32 = @intCast(blocks.items.len);
+        try blocks.append(gpa, .{
+            .file_pos = at,
+            .packed_size = @intCast(f.data.len),
+            .unpacked_size = @intCast(f.data.len),
+            .flags = Flags.exists | Flags.single_unit,
+        });
+
+        var slot = hashString(f.name, .table_offset) & mask;
+        var probes: u32 = 0;
+        while (probes <= mask) : (probes += 1) {
+            if (hashes[slot].isFree()) {
+                hashes[slot] = .{
+                    .name_a = hashString(f.name, .name_a),
+                    .name_b = hashString(f.name, .name_b),
+                    .locale = 0,
+                    .platform = 0,
+                    .block_index = index,
+                };
+                break;
+            }
+            slot = (slot + 1) & mask;
+        } else return Error.HashTableFull;
+    }
+
+    const hash_pos: u32 = @intCast(out.items.len - arc.base);
+    {
+        const buf = try gpa.alloc(u8, hashes.len * 16);
+        defer gpa.free(buf);
+        for (hashes, 0..) |e, i| {
+            const r = buf[i * 16 ..][0..16];
+            std.mem.writeInt(u32, r[0..4], e.name_a, .little);
+            std.mem.writeInt(u32, r[4..8], e.name_b, .little);
+            std.mem.writeInt(u16, r[8..10], e.locale, .little);
+            std.mem.writeInt(u16, r[10..12], e.platform, .little);
+            std.mem.writeInt(u32, r[12..16], e.block_index, .little);
+        }
+        encrypt(buf, hashString("(hash table)", .file_key));
+        try out.appendSlice(gpa, buf);
+    }
+
+    const block_pos: u32 = @intCast(out.items.len - arc.base);
+    {
+        const buf = try gpa.alloc(u8, blocks.items.len * 16);
+        defer gpa.free(buf);
+        for (blocks.items, 0..) |e, i| {
+            const r = buf[i * 16 ..][0..16];
+            std.mem.writeInt(u32, r[0..4], e.file_pos, .little);
+            std.mem.writeInt(u32, r[4..8], e.packed_size, .little);
+            std.mem.writeInt(u32, r[8..12], e.unpacked_size, .little);
+            std.mem.writeInt(u32, r[12..16], e.flags, .little);
+        }
+        encrypt(buf, hashString("(block table)", .file_key));
+        try out.appendSlice(gpa, buf);
+    }
+
+    const head = out.items[arc.base..];
+    std.mem.writeInt(u32, head[8..12], @intCast(out.items.len - arc.base), .little); // archive_size
+    std.mem.writeInt(u32, head[16..20], hash_pos, .little);
+    std.mem.writeInt(u32, head[20..24], block_pos, .little);
+    std.mem.writeInt(u32, head[28..32], @intCast(blocks.items.len), .little);
+
+    return out.toOwnedSlice(gpa);
+}
+
+/// An archive with nothing in it, for building one up with `append`.
+pub fn empty(gpa: std.mem.Allocator, hash_slots: u32) Error![]u8 {
+    std.debug.assert(hash_slots != 0 and hash_slots & (hash_slots - 1) == 0);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendNTimes(gpa, 0, Header.encoded_len);
+
+    const table = try gpa.alloc(u8, hash_slots * 16);
+    defer gpa.free(table);
+    @memset(table, 0xFF);
+    encrypt(table, hashString("(hash table)", .file_key));
+    try out.appendSlice(gpa, table);
+
+    const h = out.items;
+    @memcpy(h[0..4], signature);
+    std.mem.writeInt(u32, h[4..8], Header.encoded_len, .little);
+    std.mem.writeInt(u32, h[8..12], @intCast(out.items.len), .little);
+    std.mem.writeInt(u16, h[12..14], 0, .little);
+    std.mem.writeInt(u16, h[14..16], 3, .little);
+    std.mem.writeInt(u32, h[16..20], Header.encoded_len, .little);
+    std.mem.writeInt(u32, h[20..24], @intCast(out.items.len), .little);
+    std.mem.writeInt(u32, h[24..28], hash_slots, .little);
+    std.mem.writeInt(u32, h[28..32], 0, .little);
+    return out.toOwnedSlice(gpa);
+}
+
 pub const install_order = [_][]const u8{
     "patch_d2.mpq",
     "d2exp.mpq",
@@ -815,4 +944,68 @@ test "archive: rejects bytes that are not an archive" {
     try testing.expectError(Error.NotAnArchive, Archive.open(gpa, &[_]u8{0} ** 64));
     try testing.expectError(Error.NotAnArchive, Archive.open(gpa, "MPQ"));
     try testing.expectError(Error.Truncated, Header.parse("MPQ\x1a"));
+}
+
+test "members can be added to an archive and read back" {
+    const gpa = std.testing.allocator;
+
+    const base = try empty(gpa, 8);
+    defer gpa.free(base);
+
+    const one = "the first member's bytes";
+    const two = "and the second, which is a different length";
+    const grown = try append(gpa, base, &.{
+        .{ .name = "data\\one.txt", .data = one },
+        .{ .name = "data\\two.txt", .data = two },
+    });
+    defer gpa.free(grown);
+
+    var arc = try Archive.open(gpa, grown);
+    defer arc.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 2), arc.blocks.len);
+
+    const got_one = try arc.read(gpa, "data\\one.txt");
+    defer gpa.free(got_one);
+    try std.testing.expectEqualStrings(one, got_one);
+
+    const got_two = try arc.read(gpa, "data\\two.txt");
+    defer gpa.free(got_two);
+    try std.testing.expectEqualStrings(two, got_two);
+
+    // Names are case-insensitive and separator-insensitive, as everywhere else in an archive.
+    const again = try arc.read(gpa, "DATA\\ONE.TXT");
+    defer gpa.free(again);
+    try std.testing.expectEqualStrings(one, again);
+}
+
+test "appending twice keeps what the first round added" {
+    const gpa = std.testing.allocator;
+    const base = try empty(gpa, 8);
+    defer gpa.free(base);
+
+    const first = try append(gpa, base, &.{.{ .name = "a", .data = "aaa" }});
+    defer gpa.free(first);
+    const second = try append(gpa, first, &.{.{ .name = "b", .data = "bbbb" }});
+    defer gpa.free(second);
+
+    var arc = try Archive.open(gpa, second);
+    defer arc.deinit(gpa);
+    const a = try arc.read(gpa, "a");
+    defer gpa.free(a);
+    const b = try arc.read(gpa, "b");
+    defer gpa.free(b);
+    try std.testing.expectEqualStrings("aaa", a);
+    try std.testing.expectEqualStrings("bbbb", b);
+}
+
+test "an archive with no free slot is refused rather than corrupted" {
+    const gpa = std.testing.allocator;
+    const base = try empty(gpa, 2);
+    defer gpa.free(base);
+    const two = try append(gpa, base, &.{
+        .{ .name = "one", .data = "1" },
+        .{ .name = "two", .data = "2" },
+    });
+    defer gpa.free(two);
+    try std.testing.expectError(Error.HashTableFull, append(gpa, two, &.{.{ .name = "three", .data = "3" }}));
 }
