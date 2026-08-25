@@ -16,8 +16,15 @@ pub const Error = error{ BadManifest, OutOfMemory };
 
 pub const Platform = enum { win32, macos };
 
+pub const Symbol = struct { name: []const u8, value: []const u8 };
+
 pub const Options = struct {
     platform: Platform = .win32,
+    /// Symbols the host knows and the script does not define. The expansion's script needs
+    /// `OriginalInstallPath` — where the base game already sits — which the real installer takes
+    /// from the registry. It is concatenated directly onto file names, so it wants a trailing
+    /// separator.
+    symbols: []const Symbol = &.{},
     /// The language condition to take, spelled as the script spells it: "English", "German",
     /// "French", "Spanish", "Italian", "Polish", "Korean", "SimplifiedChinese",
     /// "TraditionalChinese".
@@ -80,6 +87,7 @@ pub fn parse(gpa: std.mem.Allocator, xml: []const u8, options: Options) Error!Pl
     const root = (p.element() catch return Error.BadManifest) orelse return Error.BadManifest;
 
     var b: Builder = .{ .gpa = gpa, .options = options };
+    for (options.symbols) |sym| try b.symbols.put(gpa, sym.name, sym.value);
     try b.walk(root, null);
     return .{ .ops = try b.ops.toOwnedSlice(gpa), .symbols = b.symbols };
 }
@@ -431,4 +439,25 @@ test "the expansion's extra elements are understood, not walked past" {
     try testing.expectEqual(@as(usize, 2), plan_.ops.len);
     try testing.expectEqualStrings("old.dll", plan_.ops[0].delete);
     try testing.expectEqualStrings("b", plan_.ops[1].extract.to);
+}
+
+test "the host can supply symbols the script does not define" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const xml =
+        \\<install><target location="user">
+        \\ <delete path="{OriginalInstallPath}old.dll"/>
+        \\</target></install>
+    ;
+    const plan_ = try parse(gpa, xml, .{
+        .symbols = &.{.{ .name = "OriginalInstallPath", .value = "/games/d2/" }},
+    });
+    try testing.expectEqualStrings("/games/d2/old.dll", plan_.ops[0].delete);
+
+    // Left unset, the reference survives verbatim rather than turning into a bare filename,
+    // so a caller that forgot cannot delete the wrong thing.
+    const bare = try parse(gpa, xml, .{});
+    try testing.expectEqualStrings("{OriginalInstallPath}old.dll", bare.ops[0].delete);
 }
