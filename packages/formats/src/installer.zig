@@ -74,7 +74,7 @@ pub const manifest_path = "InstallCD\\InstallerFileList\\InstallerFileList.xml";
 
 pub fn parse(gpa: std.mem.Allocator, xml: []const u8, options: Options) Error!Plan {
     var p: Xml = .{ .src = xml, .gpa = gpa };
-    const root = p.element() catch return Error.BadManifest orelse return Error.BadManifest;
+    const root = (p.element() catch return Error.BadManifest) orelse return Error.BadManifest;
 
     var b: Builder = .{ .gpa = gpa, .options = options };
     try b.walk(root, null);

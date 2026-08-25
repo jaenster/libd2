@@ -56,6 +56,7 @@ test {
     _ = dt1pix;
     _ = dt1pix_data;
     _ = mpq;
+    _ = installer;
     _ = palette;
     _ = canvas;
     _ = font;
