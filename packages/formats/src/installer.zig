@@ -167,7 +167,10 @@ const Builder = struct {
                 else
                     .{ .extract = f });
             } else if (std.mem.eql(u8, t, "delete")) {
-                try b.ops.append(b.gpa, .{ .delete = try b.expand(kid.attr("path") orelse kid.attr("target_path") orelse "") });
+                // A delete with no path names nothing; emitting it would invite a caller to
+                // join it onto a directory and act on the directory itself.
+                const path = try b.expand(kid.attr("path") orelse kid.attr("target_path") orelse "");
+                if (path.len != 0) try b.ops.append(b.gpa, .{ .delete = path });
             } else if (std.mem.eql(u8, t, "create_folder")) {
                 try b.ops.append(b.gpa, .{ .create_folder = try b.expand(kid.attr("path") orelse "") });
             } else if (std.mem.eql(u8, t, "encrypt")) {
@@ -460,4 +463,12 @@ test "the host can supply symbols the script does not define" {
     // so a caller that forgot cannot delete the wrong thing.
     const bare = try parse(gpa, xml, .{});
     try testing.expectEqualStrings("{OriginalInstallPath}old.dll", bare.ops[0].delete);
+}
+
+test "a delete that names nothing is not emitted" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const plan_ = try parse(arena.allocator(),
+        "<install><target location=\"user\"><delete path=\"\"/><delete/></target></install>", .{});
+    try testing.expectEqual(@as(usize, 0), plan_.ops.len);
 }
