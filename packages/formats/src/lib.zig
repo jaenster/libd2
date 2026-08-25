@@ -32,6 +32,7 @@ pub const dt1_data = @import("dt1_data.zig");
 pub const dt1pix = @import("dt1pix.zig");
 pub const dt1pix_data = @import("dt1pix_data.zig");
 pub const mpq = @import("mpq.zig");
+pub const installer = @import("installer.zig");
 pub const palette = @import("palette.zig");
 pub const canvas = @import("canvas.zig");
 pub const font = @import("font.zig");
