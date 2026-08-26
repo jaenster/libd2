@@ -25,6 +25,10 @@
 //!   * `checkrev` — the version check, which uses STANDARD SHA-1 over the hashed MPQ.
 //!   * `cdkey`    — the CD-key decode, whose hash is standard SHA-1 as well.
 //!
+//! There is a fourth, and it lives in `keystore`: the hash guarding the CD key on disk drops
+//! SHA-1's expansion rotation altogether rather than mangling it the way `xsha1` does. Four
+//! variants, one name, no interchangeability.
+//!
 //! `protocol` is the message-level vocabulary those hashes are carried in: chat flags, event
 //! ids, the D2GS accept sequence. `bnftp` is the file transfer that delivers the version-check
 //! MPQ — encode and decode only, both directions, so a client, a server and a probe share one
@@ -44,6 +48,7 @@ pub const protocol = @import("protocol.zig");
 pub const bnftp = @import("bnftp.zig");
 pub const mcp = @import("mcp.zig");
 pub const realm = @import("realm.zig");
+pub const idea = @import("idea.zig");
 pub const keystore = @import("keystore.zig");
 
 test {
@@ -54,5 +59,6 @@ test {
     _ = bnftp;
     _ = mcp;
     _ = realm;
+    _ = idea;
     _ = keystore;
 }
