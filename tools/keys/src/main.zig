@@ -21,10 +21,11 @@ const Dir = std.Io.Dir;
 const usage =
     \\keys — the CD key material in a Diablo II installation
     \\
-    \\  keys find <game-dir>     which archive holds the key blobs, and whether they look intact
+    \\  keys show <game-dir>     the keys and owner an installation is carrying
+    \\  keys find <game-dir>     which archive holds the key blobs, without decrypting them
     \\  keys decode <key>        what a 16- or 26-character key decodes to
     \\
-    \\`find` reads only; it never writes to the installation.
+    \\Both `show` and `find` read only; neither writes to the installation.
     \\
 ;
 
@@ -37,7 +38,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (std.mem.eql(u8, argv[1], "decode")) return decode(argv[2]);
-    if (std.mem.eql(u8, argv[1], "find")) return find(gpa, init.io, argv[2]);
+    if (std.mem.eql(u8, argv[1], "find")) return walk(gpa, init.io, argv[2], false);
+    if (std.mem.eql(u8, argv[1], "show")) return walk(gpa, init.io, argv[2], true);
 
     std.debug.print("{s}", .{usage});
     return error.Usage;
@@ -69,7 +71,7 @@ fn decode(key: []const u8) !void {
 /// Walk the archives the game itself searches, in its order, and report every blob found. The
 /// container is not stable across releases — a 2001 install put the classic key in d2sfx.mpq
 /// where a 1.14b one puts it in d2data.mpq — so every archive is tried rather than one assumed.
-fn find(gpa: std.mem.Allocator, io: std.Io, game: []const u8) !void {
+fn walk(gpa: std.mem.Allocator, io: std.Io, game: []const u8, reveal: bool) !void {
     std.debug.print("{s}\n", .{game});
 
     var seen: usize = 0;
@@ -89,12 +91,21 @@ fn find(gpa: std.mem.Allocator, io: std.Io, game: []const u8) !void {
             const blob = archive.read(gpa, w.member) catch continue;
             defer gpa.free(blob);
             seen += 1;
-            std.debug.print("  {s: <14} {s: <12} {d} bytes  {s}\n", .{
-                w.label,
-                name,
-                blob.len,
-                if (keystore.plausible(blob)) "header + whole blocks" else "NOT a key blob shape",
-            });
+            if (!reveal) {
+                std.debug.print("  {s: <14} {s: <12} {d} bytes  {s}\n", .{
+                    w.label,
+                    name,
+                    blob.len,
+                    if (keystore.plausible(blob)) "header + whole blocks" else "NOT a key blob shape",
+                });
+                continue;
+            }
+            const pw = keystore.blockKey();
+            const n = keystore.decrypt(blob, &pw) orelse {
+                std.debug.print("  {s: <14} {s: <12} present, but would not decrypt\n", .{ w.label, name });
+                continue;
+            };
+            std.debug.print("  {s: <14} {s: <12} {s}\n", .{ w.label, name, blob[0..n] });
         }
     }
 
@@ -102,8 +113,7 @@ fn find(gpa: std.mem.Allocator, io: std.Io, game: []const u8) !void {
         std.debug.print("  no key material — this installation has never had a key entered\n", .{});
         return;
     }
-    // Saying so is the honest thing: the blobs are found, the cipher over them is not ported.
-    std.debug.print("\n  found {d}; reading their contents needs the Bnclient cipher, which is not ported yet\n", .{seen});
+    if (!reveal) std.debug.print("\n  found {d}; `keys show` reads them\n", .{seen});
 }
 
 const Wanted = struct { label: []const u8, member: []const u8 };
