@@ -41,7 +41,20 @@ pub const Op = union(enum) {
     /// game's never does.
     delete: []const u8,
     /// Store an encoded value — the CD key, the account name — inside an installed file.
-    encrypt: struct { object: []const u8, into: []const u8 },
+    ///
+    /// `into` is a member name, not a host path: the value is hidden inside one of the game's own
+    /// archives under the name of an ordinary asset, and `container` says which archive. Both
+    /// come from the same `repack_into` the script wraps every other archive write in, so a
+    /// writer needs nothing here it does not already have for `add_to_archive`.
+    encrypt: struct {
+        object: []const u8,
+        into: []const u8,
+        /// Null when the element sits outside a `repack_into`, which no shipped script does.
+        container: ?[]const u8 = null,
+        /// Which product the value belongs to — 24 classic, 25 expansion. The owner name carries
+        /// none, and that absence is how the two are told apart.
+        product_id: ?u16 = null,
+    },
     registry: struct { where: []const u8, key: []const u8, value: []const u8 },
     shortcut: struct { path: []const u8, name: []const u8 },
     directx: struct { file: []const u8, minimum_version: []const u8 },
@@ -177,6 +190,11 @@ const Builder = struct {
                 try b.ops.append(b.gpa, .{ .encrypt = .{
                     .object = try b.expand(kid.attr("object") orelse ""),
                     .into = try b.expand(kid.attr("into") orelse ""),
+                    .container = container,
+                    .product_id = if (kid.attr("product_id")) |v|
+                        std.fmt.parseInt(u16, std.mem.trim(u8, v, " \t"), 10) catch null
+                    else
+                        null,
                 } });
                 try b.walk(kid, container);
             } else if (std.mem.eql(u8, t, "registry_key")) {
@@ -471,4 +489,43 @@ test "a delete that names nothing is not emitted" {
     const plan_ = try parse(arena.allocator(),
         "<install><target location=\"user\"><delete path=\"\"/><delete/></target></install>", .{});
     try testing.expectEqual(@as(usize, 0), plan_.ops.len);
+}
+
+test "an encrypt says which archive it writes into, and for which product" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Verbatim from the 1.14b expansion script, which is where the CD key actually goes: a member
+    // of d2char.mpq named after an Amazon animation. Without the container an installer would know
+    // what to write and not where, which is the whole reason these two fields exist.
+    const plan_ = try parse(arena.allocator(),
+        \\<install><target location="user">
+        \\ <repack_into type="mpq" container="d2char.mpq" options="disable_compression/1">
+        \\  <encrypt object="cdkey26" into="data\global\chars\am\cof\amblxbow.cof" product_id="25"/>
+        \\  <encrypt object="user"    into="data\global\sfx\cursor\curindx.wav"/>
+        \\ </repack_into>
+        \\</target></install>
+    , .{});
+
+    try testing.expectEqual(@as(usize, 2), plan_.ops.len);
+    const key = plan_.ops[0].encrypt;
+    try testing.expectEqualStrings("cdkey26", key.object);
+    try testing.expectEqualStrings("data\\global\\chars\\am\\cof\\amblxbow.cof", key.into);
+    try testing.expectEqualStrings("d2char.mpq", key.container.?);
+    try testing.expectEqual(@as(?u16, 25), key.product_id);
+
+    // The owner name shares the container and carries no product. That absence is what tells a
+    // writer it is not a key, so it matters that it stays null rather than defaulting to a value.
+    const owner = plan_.ops[1].encrypt;
+    try testing.expectEqualStrings("user", owner.object);
+    try testing.expectEqualStrings("d2char.mpq", owner.container.?);
+    try testing.expectEqual(@as(?u16, null), owner.product_id);
+}
+
+test "an encrypt outside a repack_into names no container" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const plan_ = try parse(arena.allocator(),
+        "<install><target location=\"user\"><encrypt object=\"cdkey26\" into=\"a.wav\"/></target></install>", .{});
+    try testing.expectEqual(@as(?[]const u8, null), plan_.ops[0].encrypt.container);
 }
