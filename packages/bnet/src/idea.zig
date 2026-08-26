@@ -55,14 +55,20 @@ fn addInv(x: u16) u16 {
     return 0 -% x;
 }
 
-/// The 25-bit rotation schedule, written the way the binary writes it: the first eight subkeys
-/// are the key itself, and each later one is built from two of the previous eight.
+/// The 25-bit rotation schedule: the first eight subkeys are the key itself, and each later
+/// group of eight is the previous group rotated left 25 bits.
+///
+/// The indices are worth being careful about. Both sources come from the base of the PREVIOUS
+/// group of eight, wrapping within it — not from a window sliding one place per subkey. Getting
+/// that wrong still produces a schedule that decrypts whatever it encrypted, so a round trip
+/// against itself proves nothing here; it took the real Bnclient refusing a blob to catch it.
 pub fn encryptSchedule(key: [16]u8) Subkeys {
     var k: Subkeys = undefined;
     for (0..8) |i| k[i] = std.mem.readInt(u16, key[i * 2 ..][0..2], .little);
     for (8..52) |i| {
-        const a = k[i - 8 + ((i + 1) % 8)];
-        const b = k[i - 8 + ((i + 2) % 8)];
+        const base = (i / 8 - 1) * 8;
+        const a = k[base + ((i + 1) % 8)];
+        const b = k[base + ((i + 2) % 8)];
         k[i] = (a << 9) | (b >> 7);
     }
     return k;

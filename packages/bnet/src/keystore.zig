@@ -24,9 +24,25 @@
 //! instead of noise.
 //!
 //! `decrypt` is read out of Bnclient. `encrypt` is not: the game only ever reads these, the
-//! installer is what writes them, so the write path here is the read path run backwards. It is
-//! held to the one standard that can be checked without a captured blob — whatever it produces,
-//! `decrypt` recovers, across lengths that exercise both block rules.
+//! installer is what writes them, so the write path here is the read path run backwards.
+//!
+//! NOT YET BYTE-COMPATIBLE WITH THE GAME. The two halves round-trip against each other, and
+//! everything upstream of the hash is confirmed against the real `Bnclient.dll` running under
+//! wine — the 19-byte password comes out identical, and so do all 112 bytes of the schedule seed.
+//! `Hash` does not: the DLL folds the tiled password to a different digest than this produces,
+//! so the schedules diverge and the DLL refuses a blob written here. Until that is settled these
+//! read and write a format of their own, not Diablo II's.
+//!
+//! The ground truth to settle it against, from `Bnclient.dll` 1.09b under wine, for the password
+//! `blockKey()` returns:
+//!
+//!     tiled password -> digest  4e 3a 79 da d2 97 28 30 e2 00 3d 92 f3 54 d2 f0 e4 8e a3 9e
+//!     slot 0 hash after Schedule.init  846e6d34 658ad5c7 ef9cf2b5 2f8802c6 a45b7ed4
+//!     slot 0 decrypt subkeys begin     a775 acc1 195c 8293 f287 e665 1a48 ad96
+//!
+//! Those came from calling the DLL's own srand/rand, hash-init and hash-block entries directly,
+//! and the digest agrees with the one implied by its folded stream, so it is the hash that is
+//! wrong here rather than the reading of it.
 
 const std = @import("std");
 
