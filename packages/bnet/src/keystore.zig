@@ -26,29 +26,11 @@
 //! `decrypt` is read out of Bnclient. `encrypt` is not: the game only ever reads these, the
 //! installer is what writes them, so the write path here is the read path run backwards.
 //!
-//! NOT YET BYTE-COMPATIBLE WITH THE GAME. The two halves round-trip against each other, and
-//! everything upstream of the hash is confirmed against the real `Bnclient.dll` running under
-//! wine — the 19-byte password comes out identical, and so do all 112 bytes of the schedule seed.
-//! `Hash` does not: the DLL folds the tiled password to a different digest than this produces,
-//! so the schedules diverge and the DLL refuses a blob written here. Until that is settled these
-//! read and write a format of their own, not Diablo II's.
-//!
-//! The ground truth to settle it against, from `Bnclient.dll` 1.09b under wine. The first line is
-//! the one that matters, because an all-zero block makes every expanded word zero whatever the
-//! expansion rule — so it isolates the rounds, the constants and the starting state, and nothing
-//! else:
-//!
-//!     hash of a 64-byte zero block  d4 0b e5 96 94 f9 f4 09 96 c1 a6 7c 60 32 41 f3 e3 83 9d 0f
-//!     tiled password -> digest      4e 3a 79 da d2 97 28 30 e2 00 3d 92 f3 54 d2 f0 e4 8e a3 9e
-//!     slot 0 hash after init        846e6d34 658ad5c7 ef9cf2b5 2f8802c6 a45b7ed4
-//!     slot 0 decrypt subkeys begin  a775 acc1 195c 8293 f287 e665 1a48 ad96
-//!
-//! Standard SHA-1's compression of a zero block is `92b404e5…`, and this implementation produces
-//! exactly that, so it is a correct standard compression — and the game's is therefore NOT one.
-//! Both Ghidra databases annotate these routines as "standard rounds with the expansion rotation
-//! dropped"; that annotation is wrong, and 11,520 arrangements of round function order, constant
-//! order, rotation amounts and starting-state permutation were tried against the zero-block
-//! answer without a match. Read the rounds out of the raw disassembly, not the decompiler.
+//! Verified against the game: a blob written by `encrypt` here is handed to the real
+//! `Bnclient.dll` 1.09b running under wine, and its own decrypt recovers the key — 17 bytes back
+//! for a 16-character key, the text and its NUL. The schedules match it word for word too. The
+//! vectors that pin each stage are carried as tests below, so a regression names its own cause
+//! rather than showing up as a blob the game quietly refuses.
 
 const std = @import("std");
 
@@ -196,11 +178,18 @@ test "products name the members the installer writes" {
     try testing.expect(std.mem.endsWith(u8, Product.expansion.member(), "amblxbow.cof"));
 }
 
-/// The running hash the wrapper is built on — and it is a THIRD Blizzard SHA-1 variant, not
-/// either of the two already in this package. Standard SHA-1 expands the message with
-/// `rotl(w[i-3]^w[i-8]^w[i-14]^w[i-16], 1)`; `xsha1` replaces that with `rotl(1, xor & 0x1f)`;
-/// this one drops the rotation entirely and takes the exclusive-or as it stands. Mixing them up
-/// gives a hash that looks right and verifies nothing, so they stay separate implementations.
+/// The running hash the wrapper is built on — a THIRD Blizzard SHA-1 variant, and broken in two
+/// independent places rather than one.
+///
+///   * the message expansion drops SHA-1's `rotl(_, 1)` and takes the exclusive-or as it stands
+///     (`xsha1`, the other broken variant here, instead replaces it with `rotl(1, xor & 0x1f)`);
+///   * the two round "rotations" are not rotations. Both are built as a left shift OR'd with an
+///     ARITHMETIC right shift, so any value with its top bit set drags a run of ones into the
+///     high half. Since `h1` starts at 0xEFCDAB89 this fires on the very first round.
+///
+/// The second one is invisible in a decompiler, which renders it as `(int)x >> 27 | x << 5` —
+/// indistinguishable at a glance from the rotate idiom it is not. Reading it as a rotate gives a
+/// hash that is a correct standard SHA-1 compression and matches the game on nothing.
 ///
 /// It is also used differently: no padding, no terminator, no length suffix. Whole 64-byte
 /// blocks are fed in as the cipher walks the data, and the state is read out mid-stream as a
@@ -210,10 +199,19 @@ pub const Hash = struct {
     bits: u64 = 0,
 
     /// Absorb exactly one block. The words are read little-endian, as everywhere in D2.
+    /// What the rounds use instead of a left rotation. `shl` supplies the high bits and an
+    /// ARITHMETIC right shift the low ones, so a negative value smears ones across the top and
+    /// the `or` folds them in. Bnclient 1.09b @0x6ff0bac3 is `sar ebx,0x1b` where a rotate needs
+    /// `shr`, and the same at @0x6ff0baf5 for the other one.
+    fn smear(x: u32, comptime left: u5) u32 {
+        const signed: i32 = @bitCast(x);
+        return (x << left) | @as(u32, @bitCast(signed >> (31 - left + 1)));
+    }
+
     pub fn block(self: *Hash, data: *const [64]u8) void {
         var w: [80]u32 = undefined;
         for (0..16) |i| w[i] = std.mem.readInt(u32, data[i * 4 ..][0..4], .little);
-        // No rotation. This single missing `rotl(_, 1)` is the whole difference from FIPS.
+        // No rotation here either — the single missing `rotl(_, 1)` versus FIPS.
         for (16..80) |i| w[i] = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
 
         var a = self.h[0];
@@ -228,10 +226,10 @@ pub const Hash = struct {
                 2 => .{ (b & c) | (b & d) | (c & d), 0x8F1BBCDC },
                 else => .{ b ^ c ^ d, 0xCA62C1D6 },
             };
-            const t = std.math.rotl(u32, a, 5) +% f +% e +% k +% w[i];
+            const t = smear(a, 5) +% f +% e +% k +% w[i];
             e = d;
             d = c;
-            c = std.math.rotl(u32, b, 30);
+            c = smear(b, 30);
             b = a;
             a = t;
         }
@@ -252,18 +250,37 @@ pub const Hash = struct {
     }
 };
 
-test "the keystore hash is neither standard SHA-1 nor xsha1" {
+test "the keystore hash matches the game, on a block that isolates the rounds" {
+    // An all-zero block leaves every expanded word zero whatever the expansion rule, so this
+    // vector tests the rounds, the constants and the starting state and nothing else. Captured
+    // from Bnclient.dll 1.09b under wine. A correct standard compression answers 92b404e5 here.
     var h: Hash = .{};
     h.block(&[_]u8{0} ** 64);
-    const d = h.digest();
-    // Whatever it is, it must not be the identity and must move every word.
-    var same: usize = 0;
-    const init = Hash{};
-    for (init.h, 0..) |v, i| {
-        if (v == std.mem.readInt(u32, d[i * 4 ..][0..4], .little)) same += 1;
-    }
-    try testing.expectEqual(@as(usize, 0), same);
+    try testing.expectEqualSlices(u8, &.{
+        0xd4, 0x0b, 0xe5, 0x96, 0x94, 0xf9, 0xf4, 0x09, 0x96, 0xc1,
+        0xa6, 0x7c, 0x60, 0x32, 0x41, 0xf3, 0xe3, 0x83, 0x9d, 0x0f,
+    }, &h.digest());
     try testing.expectEqual(@as(u64, 512), h.bits);
+}
+
+test "the keystore hash matches the game on the tiled password" {
+    // The other captured vector, which does exercise the expansion. Together these pin both
+    // deviations: the unrotated expansion and the sign-smearing round shifts.
+    var tiled: [64]u8 = undefined;
+    const pw = blockKey();
+    tileKey(&pw, &tiled);
+    var h: Hash = .{};
+    h.block(&tiled);
+    try testing.expectEqualSlices(u8, &.{
+        0x4e, 0x3a, 0x79, 0xda, 0xd2, 0x97, 0x28, 0x30, 0xe2, 0x00,
+        0x3d, 0x92, 0xf3, 0x54, 0xd2, 0xf0, 0xe4, 0x8e, 0xa3, 0x9e,
+    }, &h.digest());
+}
+
+test "the round shifts smear the sign rather than rotating" {
+    // 0x80000000 rotated left 5 is 0x10; smeared it also carries the sign run.
+    try testing.expectEqual(@as(u32, 0xFFFFFFF0), Hash.smear(0x80000000, 5));
+    try testing.expectEqual(@as(u32, 0x00000020), Hash.smear(1, 5));
 }
 
 test "the expansion carries no rotation" {
@@ -492,4 +509,37 @@ test "both key lengths round-trip" {
         const n = decrypt(&buf, &key) orelse return error.Refused;
         try testing.expectEqualStrings(text, buf[0 .. n - 1]);
     }
+}
+
+test "the schedule matches the game's, word for word" {
+    // Read out of Bnclient.dll 1.09b under wine after calling its own setup with this password:
+    // the IDEA subkeys it installed in slot 0, and the state its hash context was left in.
+    // These cover the whole derivation — seed, tiling, digest, fold, schedule and inversion.
+    const pw = blockKey();
+    const s: Schedule = .init(&pw, .decrypt);
+    try testing.expectEqualSlices(u16, &.{
+        0xa775, 0xacc1, 0x195c, 0x8293, 0xf287, 0xe665, 0x1a48, 0xad96,
+    }, s.keys[0][0..8]);
+    try testing.expectEqualSlices(u16, &.{ 0x3ab4, 0x4f89 }, s.keys[0][50..52]);
+
+    const want_state = [5]u32{ 0x846e6d34, 0x658ad5c7, 0xef9cf2b5, 0x2f8802c6, 0xa45b7ed4 };
+    const d = s.hash.digest();
+    for (want_state, 0..) |v, i| {
+        try testing.expectEqual(v, std.mem.readInt(u32, d[i * 4 ..][0..4], .little));
+    }
+}
+
+test "a blob the game itself accepted" {
+    // The exact bytes `encrypt` produced for this key, which Bnclient.dll decrypted under wine
+    // and returned 17 for — the sixteen characters plus the NUL. Byte-for-byte, so any change to
+    // the cipher, the schedule or the framing fails here before it reaches a real installation.
+    const key = blockKey();
+    const text = "6BW3J82R9KDT4EHM";
+    var buf: [wrappedLen(text.len)]u8 = undefined;
+    encrypt(&buf, text, &key);
+    try testing.expectEqual(@as(usize, 72), buf.len);
+    try testing.expectEqualSlices(u8, &.{ 0xc2, 0x92, 0x6a, 0xdc, 0x48, 0x06, 0xef, 0x54 }, buf[0..8]);
+    // The trailer: four bytes of the final hash state, a zero, then 0x11 = 17, the length the
+    // game reported back.
+    try testing.expectEqualSlices(u8, &.{ 0x76, 0x8a, 0xcb, 0xb2, 0x00, 0x11, 0x00, 0x00 }, buf[64..72]);
 }
