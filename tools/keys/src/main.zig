@@ -6,6 +6,9 @@
 //! shows anything unusual. `d2-bnet`'s `keystore` holds the names and the search order; this
 //! walks a real installation with them.
 //!
+//! Verified against the game: `d2-bnet`'s wrapper produces blobs the real Bnclient.dll accepts,
+//! so what `show` prints is what the game would read.
+//!
 //! No key is written anywhere by this program, and none is committed to the repository.
 
 const std = @import("std");
@@ -100,15 +103,14 @@ fn walk(gpa: std.mem.Allocator, io: std.Io, game: []const u8, reveal: bool) !voi
                 });
                 continue;
             }
-            // The wrapper is not yet byte-compatible with the game (see d2-bnet's keystore),
-            // so a real installation's blob is expected to refuse here. Saying which it is
-            // beats printing something that looks like a key and is not.
             const pw = keystore.blockKey();
             const n = keystore.decrypt(blob, &pw) orelse {
-                std.debug.print("  {s: <14} {s: <12} {d} bytes, not readable yet\n", .{ w.label, name, blob.len });
+                std.debug.print("  {s: <14} {s: <12} {d} bytes, would not decrypt\n", .{ w.label, name, blob.len });
                 continue;
             };
-            std.debug.print("  {s: <14} {s: <12} {s}\n", .{ w.label, name, blob[0..n] });
+            // The length includes the NUL the installer encrypted with the text.
+            const text = std.mem.sliceTo(blob[0..n], 0);
+            std.debug.print("  {s: <14} {s: <12} {s}\n", .{ w.label, name, text });
         }
     }
 
