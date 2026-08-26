@@ -1,0 +1,19 @@
+.{
+    .name = .d2_keys,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x84aed2c4bbbfa816,
+
+    // Reads the CD key material a Diablo II installation hides inside its own MPQs.
+    // d2-bnet says where it lives and how it is wrapped; d2-formats opens the archives.
+    .dependencies = .{
+        .d2_bnet = .{ .path = "../../packages/bnet" },
+        .d2_formats = .{ .path = "../../packages/formats" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
