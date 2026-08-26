@@ -44,6 +44,7 @@ pub const protocol = @import("protocol.zig");
 pub const bnftp = @import("bnftp.zig");
 pub const mcp = @import("mcp.zig");
 pub const realm = @import("realm.zig");
+pub const keystore = @import("keystore.zig");
 
 test {
     _ = xsha1;
@@ -53,4 +54,5 @@ test {
     _ = bnftp;
     _ = mcp;
     _ = realm;
+    _ = keystore;
 }

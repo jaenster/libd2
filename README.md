@@ -118,7 +118,9 @@ depend on one: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 ## Packages in this repo
 
 Everything under `packages/` is a library, consumable on its own. Runnable programs
-built on top of them live under `apps/`.
+built on top of them live under `apps/` when they are deployed — a service, a container —
+and under [`tools/`](tools) when they are something you run yourself against a real Diablo II
+installation.
 
 | package | module | depends on | what it is |
 |-|-|-|-|
