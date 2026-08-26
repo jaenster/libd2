@@ -33,16 +33,22 @@
 //! so the schedules diverge and the DLL refuses a blob written here. Until that is settled these
 //! read and write a format of their own, not Diablo II's.
 //!
-//! The ground truth to settle it against, from `Bnclient.dll` 1.09b under wine, for the password
-//! `blockKey()` returns:
+//! The ground truth to settle it against, from `Bnclient.dll` 1.09b under wine. The first line is
+//! the one that matters, because an all-zero block makes every expanded word zero whatever the
+//! expansion rule — so it isolates the rounds, the constants and the starting state, and nothing
+//! else:
 //!
-//!     tiled password -> digest  4e 3a 79 da d2 97 28 30 e2 00 3d 92 f3 54 d2 f0 e4 8e a3 9e
-//!     slot 0 hash after Schedule.init  846e6d34 658ad5c7 ef9cf2b5 2f8802c6 a45b7ed4
-//!     slot 0 decrypt subkeys begin     a775 acc1 195c 8293 f287 e665 1a48 ad96
+//!     hash of a 64-byte zero block  d4 0b e5 96 94 f9 f4 09 96 c1 a6 7c 60 32 41 f3 e3 83 9d 0f
+//!     tiled password -> digest      4e 3a 79 da d2 97 28 30 e2 00 3d 92 f3 54 d2 f0 e4 8e a3 9e
+//!     slot 0 hash after init        846e6d34 658ad5c7 ef9cf2b5 2f8802c6 a45b7ed4
+//!     slot 0 decrypt subkeys begin  a775 acc1 195c 8293 f287 e665 1a48 ad96
 //!
-//! Those came from calling the DLL's own srand/rand, hash-init and hash-block entries directly,
-//! and the digest agrees with the one implied by its folded stream, so it is the hash that is
-//! wrong here rather than the reading of it.
+//! Standard SHA-1's compression of a zero block is `92b404e5…`, and this implementation produces
+//! exactly that, so it is a correct standard compression — and the game's is therefore NOT one.
+//! Both Ghidra databases annotate these routines as "standard rounds with the expansion rotation
+//! dropped"; that annotation is wrong, and 11,520 arrangements of round function order, constant
+//! order, rotation amounts and starting-state permutation were tried against the zero-block
+//! answer without a match. Read the rounds out of the raw disassembly, not the decompiler.
 
 const std = @import("std");
 
@@ -310,8 +316,9 @@ pub const Schedule = struct {
     }
 };
 
-/// Undo the wrapper, in place. Returns how many bytes of `buf` are plaintext, or null if the
-/// blob is not one — a wrong password shows up as a failed trailer check, not as garbage.
+/// Undo the wrapper, in place. Returns how many bytes of `buf` are plaintext — including the
+/// terminating NUL the installer encrypted with it — or null if the blob is not one. A wrong
+/// password shows up as a failed trailer check rather than as garbage.
 ///
 /// Only one of the three schedules is used here; the other two belong to operations this does
 /// not implement. Bnclient 1.09b @0x6ff0a2e0.
@@ -356,12 +363,15 @@ pub fn decrypt(buf: []u8, password: []const u8) ?usize {
 /// It is held to the standard that matters: whatever it produces, `decrypt` must recover.
 ///
 /// The caller owns `out`, which must be `wrappedLen(plain.len)` bytes.
-pub fn encrypt(out: []u8, plain: []const u8, password: []const u8) void {
-    std.debug.assert(out.len == wrappedLen(plain.len));
+pub fn encrypt(out: []u8, text: []const u8, password: []const u8) void {
+    std.debug.assert(out.len == wrappedLen(text.len));
     const body = out.len - header_len;
+    // The NUL goes in the ciphertext: the reader gets a length back but the game still expects a
+    // C string, and the installer encrypts strlen+1 bytes for exactly that reason.
+    const n = text.len + 1;
 
     @memset(out, 0);
-    @memcpy(out[0..plain.len], plain);
+    @memcpy(out[0..text.len], text);
 
     var sched: Schedule = .init(password, .encrypt);
     var at: usize = 0;
@@ -392,15 +402,21 @@ pub fn encrypt(out: []u8, plain: []const u8, password: []const u8) void {
     const mac = sched.hash.digest();
     @memcpy(out[body..][0..4], mac[0..4]);
     out[body + 4] = 0;
-    out[body + 5] = @intCast(plain.len % block_len);
+    // Not `n % 64`: the trailer records how many bytes the LAST round consumed, which is 64 when
+    // the plaintext fills its final block exactly rather than 0.
+    const blocks = (n + block_len - 1) / block_len;
+    out[body + 5] = @intCast(n - (blocks - 1) * block_len);
     out[body + 6] = 0;
     out[body + 7] = 0;
 }
 
-/// How long a blob holding `n` bytes of plaintext is: whole blocks plus one, and the trailer.
-/// The spare block is where the trailer's length byte does its work.
-pub fn wrappedLen(n: usize) usize {
-    return header_len + block_len * (n / block_len + 1);
+/// How long a blob holding `text` is. The installer encrypts the key text **with its terminating
+/// NUL**, rounds that up to whole blocks, and adds the trailer — and when the length is already a
+/// multiple of 64 it adds no block at all, which is why this is not simply "blocks plus one".
+/// `Installer.exe` BlizzCrypt_GetEncryptedSize @0x0048d620.
+pub fn wrappedLen(text_len: usize) usize {
+    const n = text_len + 1;
+    return if (n % block_len == 0) n + header_len else n + (0x48 - n % block_len);
 }
 
 test "a wrapped blob comes back out" {
@@ -413,8 +429,9 @@ test "a wrapped blob comes back out" {
     try testing.expect(std.mem.indexOf(u8, &buf, secret) == null);
 
     const n = decrypt(&buf, &key) orelse return error.Refused;
-    try testing.expectEqual(secret.len, n);
-    try testing.expectEqualStrings(secret, buf[0..n]);
+    try testing.expectEqual(secret.len + 1, n);
+    try testing.expectEqualStrings(secret, buf[0 .. n - 1]);
+    try testing.expectEqual(@as(u8, 0), buf[n - 1]);
 }
 
 test "a blob long enough to exercise both block rules" {
@@ -426,8 +443,8 @@ test "a blob long enough to exercise both block rules" {
     var buf: [wrappedLen(secret.len)]u8 = undefined;
     encrypt(&buf, &secret, &key);
     const n = decrypt(&buf, &key) orelse return error.Refused;
-    try testing.expectEqual(secret.len, n);
-    try testing.expectEqualSlices(u8, &secret, buf[0..n]);
+    try testing.expectEqual(secret.len + 1, n);
+    try testing.expectEqualSlices(u8, &secret, buf[0 .. n - 1]);
 }
 
 test "the wrong password is refused rather than guessed at" {
@@ -445,4 +462,34 @@ test "a blob of the wrong shape is refused before any work" {
     try testing.expect(decrypt(&buf, &key) == null);
     var empty: [4]u8 = undefined;
     try testing.expect(decrypt(&empty, &key) == null);
+}
+
+test "a plaintext that exactly fills its blocks gains no extra one" {
+    // Installer.exe adds only the trailer when the length is already a multiple of 64, and the
+    // trailer then records 64 rather than 0. Getting this wrong shifts every later offset.
+    try testing.expectEqual(@as(usize, 72), wrappedLen(63)); // 63 + NUL = 64 -> one block + 8
+    try testing.expectEqual(@as(usize, 136), wrappedLen(64)); // 65 bytes -> two blocks + 8
+    try testing.expectEqual(@as(usize, 72), wrappedLen(16)); // a 16-character classic key
+
+    const key = blockKey();
+    var text: [63]u8 = undefined;
+    for (&text, 0..) |*b, i| b.* = @as(u8, 'a') + @as(u8, @intCast(i % 26));
+    var buf: [wrappedLen(63)]u8 = undefined;
+    encrypt(&buf, &text, &key);
+    try testing.expectEqual(@as(u8, 64), buf[buf.len - 3]); // the trailer's length byte
+    const n = decrypt(&buf, &key) orelse return error.Refused;
+    try testing.expectEqual(@as(usize, 64), n);
+    try testing.expectEqualSlices(u8, &text, buf[0..63]);
+}
+
+test "both key lengths round-trip" {
+    // 16 characters is the original classic CD key, 26 is what the modern installer writes for
+    // classic and expansion alike. Both are just text to the wrapper, and both must survive.
+    const key = blockKey();
+    inline for (.{ "6BW3J82R9KDT4EHM", "8MW4G2XPVJC6RTB9KD3HZN5QFA" }) |text| {
+        var buf: [wrappedLen(text.len)]u8 = undefined;
+        encrypt(&buf, text, &key);
+        const n = decrypt(&buf, &key) orelse return error.Refused;
+        try testing.expectEqualStrings(text, buf[0 .. n - 1]);
+    }
 }
