@@ -3,7 +3,7 @@
 //! One struct per `SCMD_0xNN_*` handler, laid out from the `D2GSPacketClt0xNN_*` packet
 //! structs recovered in Ghidra (session 62fbfe69, Game.exe 1.14d). Field offsets are the
 //! recovered ones, so `encode` produces exactly the bytes the server's handler reads and
-//! `decode` accepts exactly what it accepts. Generated — see scripts/gen_clt.py.
+//! `decode` accepts exactly what it accepts. Generated from those structs.
 //!
 //! Every packet exposes `OPCODE`, `SIZE` (wire size including the opcode byte), an
 //! `encode(out) []u8` and a `decode(buf) !Self`. Trailing-string packets carry a `text`

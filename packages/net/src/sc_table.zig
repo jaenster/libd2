@@ -1,9 +1,9 @@
 //! Server -> client opcode table, 1.14d — the whole 175-entry dispatch space.
 //!
-//! Generated from `NET_D2GS_CLIENT_INCOMING` @0x007114D0 (Ghidra session 62fbfe69) via
-//! scripts/gen_sc_table.py. `handler` is the client function the engine actually runs for
-//! the opcode, which is the honest name for it — several of the symbols in the binary are
-//! misnomers, and this table records what the code does, not what the label claims.
+//! Generated from `NET_D2GS_CLIENT_INCOMING` @0x007114D0 (Ghidra session 62fbfe69).
+//! `handler` is the client function the engine actually runs for the opcode, which is the honest
+//! name for it — several of the symbols in the binary are misnomers, and this table records what
+//! the code does, not what the label claims.
 
 const std = @import("std");
 
