@@ -1,10 +1,19 @@
-//! Multi-seed masked-CRC collision holdout. The per-cell byte verify only covers a handful of
-//! seeds, which invites seed-specific fixes. This checks our generated collision against a broad
-//! golden: 200 seeds x 131 levels of per-level order-independent FNV checksums captured from the
-//! real 1.14d engine (d2probe). The checksum hashes each room's (px,py,w,h) + its cells masked to
-//! the low 5 static-terrain COLBITs (0x1F), identical to coll_logger.zig — so a level's CRC
-//! matches ONLY if every one of our rooms is byte-exact for that seed. A fix tuned to one seed
-//! fails the rest.
+//! Multi-seed CRC collision holdout. The per-cell byte verify only covers a handful of seeds,
+//! which invites seed-specific fixes. This checks our generated collision against a broad golden:
+//! 200 seeds x 131 levels of per-level order-independent FNV checksums captured from the real
+//! 1.14d engine (d2probe). The checksum hashes each room's (px,py,w,h) + the FULL u16 of every
+//! cell, identical to coll_logger.zig — so a level's CRC matches ONLY if every one of our rooms
+//! is byte-exact for that seed. A fix tuned to one seed fails the rest.
+//!
+//! The checksum used to mask cells to the low 5 static-terrain COLBITs (0x1F), on the theory that
+//! the runtime CollMap carries dynamic bits a pre-population rasterizer cannot reproduce. It does
+//! not: the probe reads the CollMap at DRLG time, before object population and unit occupancy
+//! touch it, so every bit set there is static terrain. The mask hid COLLIDE_BLANK (0x20) — the
+//! bit that says "no room covers this subtile" as opposed to solid rock — from 26200 of the
+//! 26200 comparisons, and a wrong 0x20 is exactly the class of bug that once shipped 818 walkable
+//! cells as walls. Unmasking cost nothing: the goldens were re-captured with the same probe on
+//! the same engine, each sweep first shown to reproduce the masked golden it replaces
+//! checksum-for-checksum, and all three difficulties are byte-exact on the full u16.
 //!
 //! Scope: ALL FIVE ACTS, 200 seeds, at ALL THREE DIFFICULTIES. Difficulty reaches the DRLG in
 //! exactly one place: ActualLevelGeneration (Maze.cpp, 0x671210) indexes the LvlMaze row's
@@ -16,19 +25,19 @@
 //! levels differ Normal vs Nightmare, 6 differ Nightmare vs Hell (Rooms(N) == Rooms(H) on ids 24,
 //! 100 and 101), 122 levels are identical CRC and cell count at every difficulty.
 //!
-//! The Nightmare golden long predates the other two: until the d2probe fix that stopped the
-//! bGameIsSetup write from landing on D2GameStrc+109 (nDifficulty), every capture came out at
-//! Nightmare whatever --diff asked for. The Normal and Hell goldens are the first captures where
-//! the flag actually reached the engine; the re-captured Nightmare set is byte-identical to the
-//! golden it replaced, which is what pins the old capture's true difficulty.
+//! All three goldens now record the difficulty they were really generated at. That was not always
+//! true: until the d2probe fix that stopped the bGameIsSetup write from landing on D2GameStrc+109
+//! (nDifficulty), every capture came out at Nightmare whatever --diff asked for, so the old
+//! Nightmare golden carried a "diff":2 the engine never saw. Re-capturing at --diff=1 reproduces
+//! that file's checksums exactly, which is what pins the old capture's true difficulty.
 
 const std = @import("std");
 const lib = @import("lib.zig");
 const testalloc = @import("testalloc.zig");
 
-const GOLDEN_NM_GZ = @embedFile("golden/coll_crc_masked_200.jsonl.gz");
-const GOLDEN_N_GZ = @embedFile("golden/coll_crc_masked_200_normal.jsonl.gz");
-const GOLDEN_H_GZ = @embedFile("golden/coll_crc_masked_200_hell.jsonl.gz");
+const GOLDEN_NM_GZ = @embedFile("golden/coll_crc_200_nightmare.jsonl.gz");
+const GOLDEN_N_GZ = @embedFile("golden/coll_crc_200_normal.jsonl.gz");
+const GOLDEN_H_GZ = @embedFile("golden/coll_crc_200_hell.jsonl.gz");
 
 fn fnvByte(h: u32, b: u8) u32 {
     return (h ^ b) *% 0x01000193;
@@ -55,10 +64,8 @@ fn jval(line: []const u8, key: []const u8) ?u64 {
 
 /// Run the cross-seed gate for one difficulty. `golden_gz` is a gzip'd d2probe CRC sweep; `diff`
 /// is the difficulty it was really captured at, and every per-level checksum must match.
-/// `recorded_diff` is the value the capture WROTE into its records, which is not always the same
-/// thing — the pre-fix probe logged the requested flag without ever reading the engine back.
-/// Asserting it separately pins each golden's provenance instead of letting a relabelled file
-/// slip through.
+/// `recorded_diff` is the value the capture WROTE into its records; asserting it separately keeps
+/// a relabelled or misfiled sweep from slipping through as the wrong difficulty's golden.
 fn runCrcGate(
     gpa: std.mem.Allocator,
     golden_gz: []const u8,
@@ -126,7 +133,7 @@ fn runCrcGate(
             var res = lib.generateActRoomCollision(&ctx, gpa, act_no, seed, diff) catch continue;
             defer res.deinit(gpa);
 
-            // Our per-level masked CRC (commutative sum of per-room hashes).
+            // Our per-level CRC (commutative sum of per-room hashes), over the full u16 cell.
             var lvl_crc: std.AutoHashMapUnmanaged(i32, u32) = .empty;
             defer lvl_crc.deinit(gpa);
             for (res.rooms) |r| {
@@ -135,7 +142,7 @@ fn runCrcGate(
                 hashU32(&rh, @bitCast(r.py));
                 hashU32(&rh, @bitCast(r.w));
                 hashU32(&rh, @bitCast(r.h));
-                for (r.cells) |c| hashU32(&rh, @as(u32, c & 0x1F));
+                for (r.cells) |c| hashU32(&rh, @as(u32, c));
                 const gop = try lvl_crc.getOrPut(gpa, r.level_id);
                 gop.value_ptr.* = if (gop.found_existing) gop.value_ptr.* +% rh else rh;
             }
@@ -184,23 +191,19 @@ fn runCrcGate(
     try std.testing.expectEqual(grand_total - known_deviations, grand_match);
 }
 
-test "coll: masked-CRC holdout across seeds (all acts, Nightmare)" {
-    // This golden's records say "diff":2. They are wrong and always were: the probe echoed the
-    // requested flag while the engine ran at Nightmare, because the setup-flag write had landed
-    // on nDifficulty. Re-capturing at --diff=1 with the fixed probe reproduces this file
-    // checksum-for-checksum, which is what identifies the difficulty it was really generated at.
+test "coll: CRC holdout across seeds (all acts, Nightmare)" {
     var mem: testalloc.Checked = .{};
     defer mem.deinit();
-    try runCrcGate(mem.allocator(), GOLDEN_NM_GZ, .nightmare, 2, "Nightmare");
+    try runCrcGate(mem.allocator(), GOLDEN_NM_GZ, .nightmare, 1, "Nightmare");
 }
 
-test "coll: masked-CRC holdout across seeds (all acts, Normal)" {
+test "coll: CRC holdout across seeds (all acts, Normal)" {
     var mem: testalloc.Checked = .{};
     defer mem.deinit();
     try runCrcGate(mem.allocator(), GOLDEN_N_GZ, .normal, 0, "Normal");
 }
 
-test "coll: masked-CRC holdout across seeds (all acts, Hell)" {
+test "coll: CRC holdout across seeds (all acts, Hell)" {
     var mem: testalloc.Checked = .{};
     defer mem.deinit();
     try runCrcGate(mem.allocator(), GOLDEN_H_GZ, .hell, 2, "Hell");

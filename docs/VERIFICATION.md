@@ -20,15 +20,15 @@ The captured dumps live in `packages/drlg/src/golden/`:
 |-|-|
 | per-cell dumps | seeds 1, 2, 17, 18, 777, every level of all five acts, Nightmare only |
 | blind holdouts | 2 further seeds, same depth and difficulty, captured and never looked at during development |
-| masked CRC | 200 seeds × 3 difficulties, 26,200 level records each |
+| per-level CRC | 200 seeds × 3 difficulties, 26,200 level records each, over the full 16 bits of every cell |
 
 Difficulty is where that corpus is thinnest, though not as thin as it looks. Every per-cell
 capture is Nightmare, so the *cell-exact* claim is a Nightmare claim. All three difficulties are
-covered by the masked CRC over 200 seeds, and those three corpora are genuinely different
+covered by the per-level CRC over 200 seeds, and those three corpora are genuinely different
 generations rather than one capture relabelled: Normal and Hell disagree on 1800 of 26,200
 records, across the nine levels difficulty actually rescales. What a CRC cannot do is localise a
-fault. It catches a level that generates differently; it will not catch a single wrong cell
-inside a level that otherwise matches.
+fault. It catches a level that differs anywhere, down to one bit of one cell, but it names only the
+level and the seed, not the cell.
 
 The holdouts carry the argument. Matching the seeds you developed against proves little; a seed
 captured up front, never inspected, and only run at the end is the one that would have exposed a
