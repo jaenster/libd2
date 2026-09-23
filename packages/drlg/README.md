@@ -15,9 +15,10 @@ code compared against that capture — 11.1M subtiles per seed, every level of a
 acts, **zero differing cells**. Two of the seeds are blind holdouts: captured up front,
 never looked at while developing, only run at the end.
 
-The per-cell corpus is Nightmare; all three difficulties are covered by a masked CRC over
-200 seeds. [docs/VERIFICATION.md](../../docs/VERIFICATION.md) is honest about what each
-of those can and cannot catch.
+The per-cell corpus is Nightmare; all three difficulties are covered by a per-level CRC
+over the full 16 bits of every cell, 200 seeds each.
+[docs/VERIFICATION.md](../../docs/VERIFICATION.md) is honest about what each of those can
+and cannot catch.
 
 ## Using it
 
