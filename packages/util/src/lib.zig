@@ -5,17 +5,23 @@
 //! the length-prefix framing and the `AF` greeting that wraps it. Both are libc-free and
 //! allocator-free: a table is a value you can build at comptime.
 //!
-//! `png` writes RGBA8888 out as a file any viewer opens. It is here rather than next to a
+//! `png` writes RGBA8888 or palette-indexed images out as a file any viewer opens, and reads an
+//! indexed one back to its indices. It is here rather than next to a
 //! renderer because everything in this library that produces pixels — item sprites, the automap,
 //! a launcher drawing the game's own menus — needs the same twenty lines to show them to a human,
 //! and three copies of a PNG writer is three chances to write a subtly invalid one. It takes an
 //! allocator; the rest of this package does not.
+//!
+//! `mmpx` magnifies palette-indexed pixels 2x, 3x or 4x with MMPX, which only ever copies input
+//! pixels, so the result is still indices into the same palette. It is allocator-free and has a
+//! C ABI (`capi.zig`, `include/d2util.h`) for hosts such as the D2OpenGL renderer DLL.
 
 const std = @import("std");
 
 pub const huffman = @import("huffman.zig");
 pub const frame = @import("frame.zig");
 pub const png = @import("png.zig");
+pub const mmpx = @import("mmpx.zig");
 
 pub const HuffmanTable = huffman.Table;
 
@@ -23,6 +29,8 @@ test {
     _ = huffman;
     _ = frame;
     _ = png;
+    _ = mmpx;
     _ = @import("huffman_test.zig");
     _ = @import("frame_test.zig");
+    _ = @import("mmpx_test.zig");
 }
