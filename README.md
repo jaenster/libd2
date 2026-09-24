@@ -28,7 +28,9 @@ Anything else with a C FFI works as well. Packages with a C ABI export it as an 
 surface compiled to native shared and static libs with a plain header, plus a freestanding
 **WebAssembly** build, so the same artifacts serve every language above. There is no binding
 layer on either side: each package calls the same exported symbols. Four packages ship that
-today: `drlg`, `item`, `pathfinding` and `net`.
+today: `drlg`, `item`, `pathfinding` and `net`. `util` also exports a C ABI (`d2_upscale_indices`,
+MMPX on palette indices) as native static and shared libs, for linking into a renderer; it is not
+in the wasm or the language bindings.
 
 Building from source: [docs/BUILDING.md](docs/BUILDING.md). Why the project is written in Zig,
 and why that is what makes the packages above possible: [docs/WHY-ZIG.md](docs/WHY-ZIG.md).
@@ -126,7 +128,7 @@ installation.
 |-|-|-|-|
 | [`data`](packages/data) | `d2-data` | — | The 1.14d Blizzard excel tables, `@embedFile`d, so no filesystem is needed and it cross-compiles to wasm. |
 | [`core`](packages/core) | `d2-core` | `data` | Shared foundation: seed-RNG, stats, the `Unit` base type, the item bit-decoder, the Fog pool allocator. |
-| [`formats`](packages/formats) | `d2-formats` | — | Parsers for D2 on-disk data: `ds1`, `dt1`, `dc6`/`dcc`/`cof`, the `.d2s` header, and the `mpq` archive they all ship inside — protected archives included. Bytes in, records out. |
+| [`formats`](packages/formats) | `d2-formats` | — | Parsers for D2 on-disk data: `ds1`, `dt1`, `dc6`/`dcc`/`cof`, the `.d2s` header, and the `mpq` archive they all ship inside — protected archives included. Bytes in, records out; and back out again for `dc6`, `dcc` and `cof`. |
 | [`save`](packages/save) | `d2-save` | `core`, `data`, `item`, `formats` | The `.d2s` character save, read and write. Byte-exact round trip over real saves. |
 | [`drlg`](packages/drlg) | `d2-drlg` | `formats`, `core`, `data` | **The map generator.** A seed in, and every level of all five acts out: rooms, tiles, collision, roads, objects and monsters. |
 | [`render`](packages/render) | `d2-render` | `drlg`, `formats` | Turns generation output into visuals: automap cells and real DT1 tile art. |
@@ -137,7 +139,7 @@ installation.
 | [`net`](packages/net) | `d2-net` | — | The D2GS wire protocol, both directions, including the variable and bit-packed packets. |
 | [`bnet`](packages/bnet) | `d2-bnet` | — | Everything before a game exists: BNCS logon and chat, MCP realm and character list, BNFTP. |
 | [`client`](packages/client) | `d2-client` | `core`, `data`, `net` | The world as a client knows it: feed it the server->client stream and it remembers what that stream described. |
-| [`util`](packages/util) | `d2-util` | — | Cross-cutting primitives: the D2GS Huffman packet codec and its framing. |
+| [`util`](packages/util) | `d2-util` | — | Cross-cutting primitives: the D2GS Huffman packet codec and its framing, PNG in and out, and MMPX upscaling of palette indices (with a C ABI). |
 
 ## Apps
 

@@ -1,0 +1,20 @@
+.{
+    .name = .d2_sprite,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x712c27656c77c083,
+
+    // DC6/DCC/COF art out of the archives and back in: d2-formats reads and writes the files,
+    // d2-util scales them in palette-index space.
+    .dependencies = .{
+        .d2_formats = .{ .path = "../../packages/formats" },
+        .d2_util = .{ .path = "../../packages/util" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+}
