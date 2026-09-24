@@ -10,10 +10,25 @@
 //! (768-byte B,G,R) to get RGBA — see objgfx.compositeToRgba / dc6.frameToRgba.
 //!
 //! Bit order matches OD2's BitMuncher: bits are consumed LSB-first within each byte.
+//!
+//! The inverse, `encode`, lives in dcc_encode.zig and takes the `Dcc` this returns.
 
 const std = @import("std");
 
+const dcc_encode = @import("dcc_encode.zig");
+pub const encode = dcc_encode.encode;
+pub const encodeWith = dcc_encode.encodeWith;
+pub const EncodeOptions = dcc_encode.Options;
+pub const EncodeError = dcc_encode.Error;
+
 pub const Rect = struct { left: i32, top: i32, width: i32, height: i32 };
+
+/// The per-frame header fields the decoder does not use, kept so a re-encode can
+/// write them back unchanged.
+pub const FrameMeta = struct {
+    variable0: u32 = 0,
+    coded_bytes: u32 = 0,
+};
 
 /// One decoded direction: `box` is the direction bounding box (sprite-local
 /// coords, object pivot at 0,0); each frame is box.width*box.height palette indices.
@@ -21,30 +36,55 @@ pub const Direction = struct {
     box: Rect,
     /// frames[f] = box.width*box.height indices, row-major, top-down. 0 = transparent.
     frames: [][]u8,
+    /// Each frame's own box as its header gives it; `box` is their union. The cell
+    /// split depends on these, so a faithful re-encode needs them. Empty when built
+    /// by hand: the encoder then gives every frame the whole direction box.
+    frame_boxes: []Rect = &.{},
+    /// Parallel to `frames`; empty when built by hand.
+    frame_meta: []FrameMeta = &.{},
+    /// The seven CRAZY_BIT_TABLE codes of the direction header (Variable0, Width,
+    /// Height, XOffset, YOffset, OptionalBytes, CodedBytes). The encoder reuses a
+    /// code whenever the values still fit it.
+    field_codes: ?[7]u4 = null,
+    /// The header's two compression flags: bit 1 = EqualCell stream present, bit 0 =
+    /// EncodingType + RawPixel streams present.
+    compression_flags: ?u2 = null,
+    /// The EqualCell stream as read: one flag per cell whose direction-grid position an
+    /// earlier frame already covered, in coding order. The encoder follows these where
+    /// they still reproduce the pixels, since Blizzard's choice cannot always be derived
+    /// from the decoded frames. Empty when the direction has no EqualCell stream.
+    equal_cells: []bool = &.{},
 };
 
 pub const Dcc = struct {
     directions: []Direction,
     frames_per_dir: u32,
     allocator: std.mem.Allocator,
+    /// Header byte 1.
+    version: u8 = 6,
 
     pub fn deinit(self: *Dcc) void {
-        for (self.directions) |d| {
-            for (d.frames) |f| self.allocator.free(f);
-            self.allocator.free(d.frames);
-        }
+        for (self.directions) |d| freeDirection(self.allocator, d);
         self.allocator.free(self.directions);
     }
 };
 
-const DCC_SIGNATURE = 0x74;
+fn freeDirection(alloc: std.mem.Allocator, d: Direction) void {
+    for (d.frames) |f| alloc.free(f);
+    alloc.free(d.frames);
+    alloc.free(d.frame_boxes);
+    alloc.free(d.frame_meta);
+    alloc.free(d.equal_cells);
+}
+
+pub const DCC_SIGNATURE = 0x74;
 const DIR_OFFSET_MULT = 8;
-const CELLS_PER_ROW = 4;
+pub const CELLS_PER_ROW = 4;
 
 // crazyBitTable: 4-bit index -> actual field bit-width.
-const CRAZY_BIT_TABLE = [16]u8{ 0, 1, 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 26, 28, 30, 32 };
+pub const CRAZY_BIT_TABLE = [16]u8{ 0, 1, 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 26, 28, 30, 32 };
 // pixelMaskLookup: 4-bit mask -> popcount (number of encoded pixel values).
-const PIXEL_MASK_LOOKUP = [16]u8{ 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4 };
+pub const PIXEL_MASK_LOOKUP = [16]u8{ 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4 };
 
 /// LSB-first bit reader over a byte slice; bit position tracked in bits.
 const BitMuncher = struct {
@@ -104,7 +144,9 @@ fn makeSigned(value: u32, bits: u6) i32 {
     return @intCast(@as(i64, value) - span);
 }
 
-const Cell = struct {
+/// One cell of a cell grid: `w`x`h` pixels at (`xoff`,`yoff`) inside the direction box.
+/// The `last_*` fields are decoder state for the direction grid.
+pub const Cell = struct {
     w: i32,
     h: i32,
     xoff: i32,
@@ -136,7 +178,7 @@ const FrameHeader = struct {
 pub fn parse(alloc: std.mem.Allocator, bytes: []const u8) !Dcc {
     var bm = BitMuncher.init(bytes, 0);
     if (bm.getByte() != DCC_SIGNATURE) return error.InvalidDcc;
-    _ = bm.getByte(); // version
+    const version = bm.getByte();
     const ndir = bm.getByte();
     const frames_per_dir: u32 = @bitCast(bm.getI32());
     if (bm.getI32() != 1) return error.InvalidDcc;
@@ -151,19 +193,16 @@ pub fn parse(alloc: std.mem.Allocator, bytes: []const u8) !Dcc {
     var directions = try alloc.alloc(Direction, ndir);
     var built: usize = 0;
     errdefer {
-        for (directions[0..built]) |d| {
-            for (d.frames) |f| alloc.free(f);
-            alloc.free(d.frames);
-        }
+        for (directions[0..built]) |d| freeDirection(alloc, d);
         alloc.free(directions);
     }
 
     for (dir_offsets, 0..) |off, i| {
-        directions[i] = try decodeDirection(alloc, bytes, off * DIR_OFFSET_MULT, frames_per_dir);
+        directions[i] = try decodeDirection(alloc, bytes, @as(usize, off) * DIR_OFFSET_MULT, frames_per_dir);
         built += 1;
     }
 
-    return .{ .directions = directions, .frames_per_dir = frames_per_dir, .allocator = alloc };
+    return .{ .directions = directions, .frames_per_dir = frames_per_dir, .allocator = alloc, .version = version };
 }
 
 fn decodeDirection(alloc: std.mem.Allocator, bytes: []const u8, bit_offset: usize, frames_per_dir: u32) !Direction {
@@ -171,13 +210,15 @@ fn decodeDirection(alloc: std.mem.Allocator, bytes: []const u8, bit_offset: usiz
 
     _ = bm.getU32(); // OutSizeCoded
     const compression_flags = bm.getBits(2);
-    const variable0_bits = CRAZY_BIT_TABLE[bm.getBits(4)];
-    const width_bits = CRAZY_BIT_TABLE[bm.getBits(4)];
-    const height_bits = CRAZY_BIT_TABLE[bm.getBits(4)];
-    const xoffset_bits = CRAZY_BIT_TABLE[bm.getBits(4)];
-    const yoffset_bits = CRAZY_BIT_TABLE[bm.getBits(4)];
-    const optional_bits = CRAZY_BIT_TABLE[bm.getBits(4)];
-    const coded_bytes_bits = CRAZY_BIT_TABLE[bm.getBits(4)];
+    var field_codes: [7]u4 = undefined;
+    for (&field_codes) |*c| c.* = @intCast(bm.getBits(4));
+    const variable0_bits = CRAZY_BIT_TABLE[field_codes[0]];
+    const width_bits = CRAZY_BIT_TABLE[field_codes[1]];
+    const height_bits = CRAZY_BIT_TABLE[field_codes[2]];
+    const xoffset_bits = CRAZY_BIT_TABLE[field_codes[3]];
+    const yoffset_bits = CRAZY_BIT_TABLE[field_codes[4]];
+    const optional_bits = CRAZY_BIT_TABLE[field_codes[5]];
+    const coded_bytes_bits = CRAZY_BIT_TABLE[field_codes[6]];
 
     const frames = try alloc.alloc(FrameHeader, frames_per_dir);
     defer {
@@ -185,24 +226,31 @@ fn decodeDirection(alloc: std.mem.Allocator, bytes: []const u8, bit_offset: usiz
         alloc.free(frames);
     }
 
+    const frame_boxes = try alloc.alloc(Rect, frames_per_dir);
+    errdefer alloc.free(frame_boxes);
+    const frame_meta = try alloc.alloc(FrameMeta, frames_per_dir);
+    errdefer alloc.free(frame_meta);
+
     var minx: i32 = 100000;
     var miny: i32 = 100000;
     var maxx: i32 = -100000;
     var maxy: i32 = -100000;
 
-    for (frames) |*fr| {
-        _ = bm.getBits(@intCast(variable0_bits)); // Variable0
+    for (frames, 0..) |*fr, fi| {
+        const variable0 = bm.getBits(@intCast(variable0_bits));
         const width = @as(i32, @intCast(bm.getBits(@intCast(width_bits))));
         const height = @as(i32, @intCast(bm.getBits(@intCast(height_bits))));
         const xoffset = bm.getSignedBits(@intCast(xoffset_bits));
         const yoffset = bm.getSignedBits(@intCast(yoffset_bits));
         _ = bm.getBits(@intCast(optional_bits)); // NumberOfOptionalBytes
-        _ = bm.getBits(@intCast(coded_bytes_bits)); // NumberOfCodedBytes
+        const coded_bytes = bm.getBits(@intCast(coded_bytes_bits));
         const bottom_up = bm.getBit() == 1;
         if (bottom_up) return error.BottomUpUnsupported;
 
         const box: Rect = .{ .left = xoffset, .top = yoffset - height + 1, .width = width, .height = height };
         fr.* = .{ .box = box, .width = width, .height = height, .xoffset = xoffset, .yoffset = yoffset };
+        frame_boxes[fi] = box;
+        frame_meta[fi] = .{ .variable0 = variable0, .coded_bytes = coded_bytes };
 
         minx = @min(minx, box.left);
         miny = @min(miny, box.top);
@@ -259,13 +307,25 @@ fn decodeDirection(alloc: std.mem.Allocator, bytes: []const u8, bit_offset: usiz
     for (frames) |*fr| try recalcFrameCells(alloc, fr, dbox);
 
     // Pixel buffer.
-    const pixel_buffer = try fillPixelBuffer(alloc, &ec, &pm, &et, &rp, &pcd, frames, dir_cells, dbox, h_cells, v_cells, equal_cells_size, encoding_type_size, palette_entries);
+    var equal_cells = try alloc.alloc(bool, equal_cells_size);
+    errdefer alloc.free(equal_cells);
+    var equal_cells_read: usize = 0;
+    const pixel_buffer = try fillPixelBuffer(alloc, &ec, &pm, &et, &rp, &pcd, frames, dir_cells, dbox, h_cells, v_cells, equal_cells_size, encoding_type_size, palette_entries, equal_cells, &equal_cells_read);
+    equal_cells = try alloc.realloc(equal_cells, equal_cells_read);
     defer alloc.free(pixel_buffer);
 
     // Generate the per-frame index bitmaps (direction-box sized).
     const out_frames = try generateFrames(alloc, &pcd, frames, dir_cells, pixel_buffer, dbox, h_cells);
 
-    return .{ .box = dbox, .frames = out_frames };
+    return .{
+        .box = dbox,
+        .frames = out_frames,
+        .frame_boxes = frame_boxes,
+        .frame_meta = frame_meta,
+        .field_codes = field_codes,
+        .compression_flags = @intCast(compression_flags),
+        .equal_cells = equal_cells,
+    };
 }
 
 fn buildDirectionCells(cells: []Cell, dbox: Rect, h_cells: i32, v_cells: i32) void {
@@ -301,59 +361,74 @@ fn buildDirectionCells(cells: []Cell, dbox: Rect, h_cells: i32, v_cells: i32) vo
 }
 
 fn recalcFrameCells(alloc: std.mem.Allocator, fr: *FrameHeader, dbox: Rect) !void {
-    const w0 = 4 - @mod(fr.box.left - dbox.left, 4); // first-column width
-    if (fr.width - w0 <= 1) {
-        fr.h_cells = 1;
+    const grid = try frameCells(alloc, fr.box, dbox);
+    fr.h_cells = grid.h_cells;
+    fr.v_cells = grid.v_cells;
+    fr.cells = grid.cells;
+}
+
+pub const FrameCells = struct { h_cells: i32, v_cells: i32, cells: []Cell };
+
+/// Split a frame box into its cells, row-major. The first column and row end at the
+/// next 4-pixel boundary of the direction grid; a remainder of one pixel is folded
+/// into its neighbour, so a cell can be 1 to 5 pixels on a side. Caller frees `cells`.
+pub fn frameCells(alloc: std.mem.Allocator, box: Rect, dbox: Rect) !FrameCells {
+    var h_cells: i32 = undefined;
+    var v_cells: i32 = undefined;
+    const w0 = 4 - @mod(box.left - dbox.left, 4); // first-column width
+    if (box.width - w0 <= 1) {
+        h_cells = 1;
     } else {
-        const tmp = fr.width - w0 - 1;
-        fr.h_cells = 2 + @divTrunc(tmp, 4);
-        if (@mod(tmp, 4) == 0) fr.h_cells -= 1;
+        const tmp = box.width - w0 - 1;
+        h_cells = 2 + @divTrunc(tmp, 4);
+        if (@mod(tmp, 4) == 0) h_cells -= 1;
     }
-    const h0 = 4 - @mod(fr.box.top - dbox.top, 4); // first-row height
-    if (fr.height - h0 <= 1) {
-        fr.v_cells = 1;
+    const h0 = 4 - @mod(box.top - dbox.top, 4); // first-row height
+    if (box.height - h0 <= 1) {
+        v_cells = 1;
     } else {
-        const tmp = fr.height - h0 - 1;
-        fr.v_cells = 2 + @divTrunc(tmp, 4);
-        if (@mod(tmp, 4) == 0) fr.v_cells -= 1;
+        const tmp = box.height - h0 - 1;
+        v_cells = 2 + @divTrunc(tmp, 4);
+        if (@mod(tmp, 4) == 0) v_cells -= 1;
     }
 
-    const hc: usize = @intCast(fr.h_cells);
-    const vc: usize = @intCast(fr.v_cells);
+    const hc: usize = @intCast(h_cells);
+    const vc: usize = @intCast(v_cells);
     var widths = try alloc.alloc(i32, hc);
     defer alloc.free(widths);
     var heights = try alloc.alloc(i32, vc);
     defer alloc.free(heights);
 
     if (hc == 1) {
-        widths[0] = fr.width;
+        widths[0] = box.width;
     } else {
         widths[0] = w0;
         var i: usize = 1;
         while (i < hc - 1) : (i += 1) widths[i] = 4;
-        widths[hc - 1] = fr.width - w0 - 4 * @as(i32, @intCast(hc - 2));
+        widths[hc - 1] = box.width - w0 - 4 * @as(i32, @intCast(hc - 2));
     }
     if (vc == 1) {
-        heights[0] = fr.height;
+        heights[0] = box.height;
     } else {
         heights[0] = h0;
         var i: usize = 1;
         while (i < vc - 1) : (i += 1) heights[i] = 4;
-        heights[vc - 1] = fr.height - h0 - 4 * @as(i32, @intCast(vc - 2));
+        heights[vc - 1] = box.height - h0 - 4 * @as(i32, @intCast(vc - 2));
     }
 
-    fr.cells = try alloc.alloc(Cell, hc * vc);
-    var offy = fr.box.top - dbox.top;
+    const cells = try alloc.alloc(Cell, hc * vc);
+    var offy = box.top - dbox.top;
     var y: usize = 0;
     while (y < vc) : (y += 1) {
-        var offx = fr.box.left - dbox.left;
+        var offx = box.left - dbox.left;
         var x: usize = 0;
         while (x < hc) : (x += 1) {
-            fr.cells[x + y * hc] = .{ .w = widths[x], .h = heights[y], .xoff = offx, .yoff = offy };
+            cells[x + y * hc] = .{ .w = widths[x], .h = heights[y], .xoff = offx, .yoff = offy };
             offx += widths[x];
         }
         offy += heights[y];
     }
+    return .{ .h_cells = h_cells, .v_cells = v_cells, .cells = cells };
 }
 
 fn fillPixelBuffer(
@@ -371,6 +446,8 @@ fn fillPixelBuffer(
     equal_cells_size: usize,
     encoding_type_size: usize,
     palette_entries: [256]u8,
+    equal_cells: []bool,
+    equal_cells_read: *usize,
 ) ![]PixelBufferEntry {
     _ = dir_cells;
     var max_cell_x: usize = 0;
@@ -407,7 +484,13 @@ fn fillPixelBuffer(
 
                 if (grid[current_cell] != null) {
                     var tmp: u32 = 0;
-                    if (equal_cells_size > 0) tmp = ec.getBit();
+                    if (equal_cells_size > 0) {
+                        tmp = ec.getBit();
+                        if (equal_cells_read.* < equal_cells.len) {
+                            equal_cells[equal_cells_read.*] = tmp != 0;
+                            equal_cells_read.* += 1;
+                        }
+                    }
                     if (tmp == 0) {
                         pixel_mask = pm.getBits(4);
                     } else {
@@ -596,4 +679,8 @@ fn generateFrames(
 
 fn frame_index_usize(i: i32) usize {
     return @intCast(i);
+}
+
+test {
+    _ = @import("dcc_encode.zig");
 }

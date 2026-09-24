@@ -179,3 +179,70 @@ test "the darkened shift is the transform right before the text colours" {
     const c = try textColor(buf, .black);
     try testing.expectEqual([3]u8{ 0, 0, 0 }, c);
 }
+
+/// The index-to-index tables in the body of a PL2, in file order. Each is a run of 256-byte
+/// transforms; `count` is how many the file holds.
+pub const Table = enum {
+    light,
+    inv_colour,
+    selected,
+    alpha_blend,
+    additive_blend,
+    multiply_blend,
+    hue,
+    red,
+    green,
+    blue,
+    unknown,
+    max_component,
+    darkened,
+
+    pub fn count(self: Table) usize {
+        return switch (self) {
+            .light => 32,
+            .inv_colour => 16,
+            .selected, .red, .green, .blue, .darkened => 1,
+            .alpha_blend => 3 * 256,
+            .additive_blend, .multiply_blend, .max_component => 256,
+            .hue => 111,
+            .unknown => 14,
+        };
+    }
+
+    fn start(self: Table) usize {
+        var at: usize = base_palette_len;
+        for (std.enums.values(Table)) |t| {
+            if (t == self) return at;
+            at += t.count() * transform_len;
+        }
+        unreachable;
+    }
+};
+
+const base_palette_len = 256 * 4;
+
+/// The full size of a 1.14d `pal.pl2`, which the body layout above adds up to.
+pub const file_len = blk: {
+    var n: usize = base_palette_len;
+    for (std.enums.values(Table)) |t| n += t.count() * transform_len;
+    break :blk n + colors_len + shifts_len;
+};
+
+/// Transform `n` of `table`: `new = t[old]`. Refuses a file of the wrong size rather than
+/// reading a table from the wrong place.
+pub fn transform(bytes: []const u8, table: Table, n: usize) (Error || error{ NoSuchTransform, WrongPl2Size })![]const u8 {
+    if (bytes.len < file_len) return Error.ShortPl2;
+    if (bytes.len != file_len) return error.WrongPl2Size;
+    if (n >= table.count()) return error.NoSuchTransform;
+    return bytes[table.start() + n * transform_len ..][0..transform_len];
+}
+
+test "the body layout adds up to the size a real pal.pl2 measures" {
+    try testing.expectEqual(@as(usize, 443175), file_len);
+    // The darkened shift located from the front is the one `darkShift` locates from the end.
+    const gpa = testing.allocator;
+    const buf = try stubPl2(gpa);
+    defer gpa.free(buf);
+    try testing.expectEqual((try darkShift(buf)).ptr, (try transform(buf, .darkened, 0)).ptr);
+    try testing.expectError(error.NoSuchTransform, transform(buf, .light, 32));
+}
