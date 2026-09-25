@@ -46,7 +46,7 @@ jobs:
           - x86_64-windows-gnu
           - aarch64-windows-gnu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
       - name: Build every package that has a C ABI for ${{ matrix.target }}
@@ -76,7 +76,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with: { path: artifacts, pattern: nuget-*, merge-multiple: true }
       - uses: actions/setup-dotnet@v4
