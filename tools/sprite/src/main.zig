@@ -13,6 +13,8 @@ const pngx = @import("d2-util").png;
 const scale_mod = @import("scale.zig");
 const compose_mod = @import("compose.zig");
 const pack_mod = @import("pack.zig");
+const hdpack_mod = @import("hdpack.zig");
+const tiles_mod = @import("tiles.zig");
 
 const Source = source.Source;
 const Dir = std.Io.Dir;
@@ -34,6 +36,16 @@ pub const usage =
     \\  sprite batch   --match GLOB --out DIR [--scale K] [--filter F] [--palette P] [--rgba] [--by-hash]
     \\                 [--manifest FILE]
     \\  sprite verify  [--match GLOB] [--json]                 decode/encode round trip of every match
+    \\  sprite tiles   --match GLOB --out DIR [--palette P] [--manifest FILE]
+    \\                 DT1 floors (orientation 0, roofs 15) as <member>/fNNNN.png, 160x80, and walls
+    \\                 (the rest, shadows too) as <member>/wNNNN.png assembled from their blocks, each
+    \\                 block's rect in the manifest; decoded as the D2OpenGL renderer decodes them
+    \\  sprite hdpack  (--src DIR --up DIR)... --scale N --out FILE.hd [--manifest FILE]... [--format 1|2]
+    \\                 an HD pack: the 1x batch frames and tiles under each --src keyed, their
+    \\                 upscaled copies from the --up that follows it. Repeat the pair to mix sources
+    \\                 (sprites and tiles) in one pack; a key in several is taken from the first.
+    \\                 Floors are keyed whole; walls one entry per block, cut at the block's rect.
+    \\                 Format 2 (the default) zlib-compresses each image; 1 is the old raw form
     \\
     \\Sources (every command):
     \\  --mpq PATH       an archive, repeatable; searched in the order given. Default: patch_d2,
@@ -246,7 +258,7 @@ pub fn main(init: std.process.Init) u8 {
 }
 
 fn run(c: *Ctx, cmd: []const u8) !void {
-    const Cmd = enum { list, info, extract, render, compose, unpack, pack, upscale, batch, verify, help };
+    const Cmd = enum { list, info, extract, render, compose, unpack, pack, upscale, batch, verify, hdpack, tiles, help };
     const which = std.meta.stringToEnum(Cmd, cmd) orelse {
         std.debug.print("{s}", .{usage});
         return error.Usage;
@@ -263,6 +275,8 @@ fn run(c: *Ctx, cmd: []const u8) !void {
         .upscale => try pack_mod.upscaleCmd(c),
         .batch => try pack_mod.batchCmd(c),
         .verify => try pack_mod.verifyCmd(c),
+        .hdpack => try hdpack_mod.cmd(c),
+        .tiles => try tiles_mod.cmd(c),
     }
 }
 
@@ -359,4 +373,6 @@ test {
     _ = pngx;
     _ = pack_mod;
     _ = compose_mod;
+    _ = hdpack_mod;
+    _ = tiles_mod;
 }
