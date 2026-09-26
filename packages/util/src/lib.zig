@@ -15,6 +15,11 @@
 //! `mmpx` magnifies palette-indexed pixels 2x, 3x or 4x with MMPX, which only ever copies input
 //! pixels, so the result is still indices into the same palette. It is allocator-free and has a
 //! C ABI (`capi.zig`, `include/d2util.h`) for hosts such as the D2OpenGL renderer DLL.
+//!
+//! `framekey` keys an index image by the bounding box of its non-zero indices (FNV-1a 64), so the
+//! same art is recognised whatever margin it sits in. `hdpack` is the file of replacement images
+//! filed under those keys that a renderer looks sprite frames up in. Both are exported through the
+//! C ABI; the pack writer takes an allocator.
 
 const std = @import("std");
 
@@ -22,6 +27,8 @@ pub const huffman = @import("huffman.zig");
 pub const frame = @import("frame.zig");
 pub const png = @import("png.zig");
 pub const mmpx = @import("mmpx.zig");
+pub const framekey = @import("framekey.zig");
+pub const hdpack = @import("hdpack.zig");
 
 pub const HuffmanTable = huffman.Table;
 
@@ -30,6 +37,8 @@ test {
     _ = frame;
     _ = png;
     _ = mmpx;
+    _ = framekey;
+    _ = hdpack;
     _ = @import("huffman_test.zig");
     _ = @import("frame_test.zig");
     _ = @import("mmpx_test.zig");
