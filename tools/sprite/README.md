@@ -42,6 +42,8 @@ sprite pack    DIR --out FILE.dc6|.dcc|.cof
 sprite upscale NAME --scale K --out FILE.dc6|.dcc|.png
 sprite batch   --match GLOB --out DIR [--scale K] [--by-hash] [--rgba] [--manifest FILE]
 sprite verify  [--match GLOB] [--json]
+sprite tiles   --match GLOB --out DIR [--palette P] [--manifest FILE]
+sprite hdpack  (--src DIR --up DIR)... --scale N --out FILE.hd [--manifest FILE]... [--format 1|2]
 ```
 
 - **Globs**: `*` stays inside a directory, `**` crosses them, `?` is one character:
@@ -125,6 +127,32 @@ that fails is reported on stderr, the rest continue, and the exit code is 1.
 ```sh
 sprite batch --match 'data/global/items/*.dc6' --scale 2 --by-hash --out pack/
 ```
+
+### tiles
+
+`tiles --match GLOB --out DIR` writes the DT1 art of every match as indexed PNGs, decoded byte for
+byte as the D2OpenGL renderer decodes it for its textures, so the renderer's keys match these
+images. The tile's orientation picks the path, as in the game: floors (0) and roofs (15) go through
+the ground-tile path and become `DIR/<member>/fNNNN.png`, the 160x80 part of the renderer's 256x128
+floor buffer; everything else (walls, shadows) is drawn block by block and becomes
+`DIR/<member>/wNNNN.png`, the tile's 32x32 blocks assembled at their positions. `manifest.json` lists
+every tile (kind `dt1`) with its image, its key, and for walls each block's rect in the image and
+the key of its own decode. DT1s that are not v7.6 are skipped (1.14d still ships a few v4.1 files
+it never loads).
+
+### hdpack
+
+`hdpack --src DIR --up DIR --scale N --out FILE.hd` keys every frame of a 1x `batch` or `tiles`
+output and files its upscaled copy (same relative path under `--up`) under that key. Floors are one
+entry each; walls one entry per block, cut from the upscaled wall at the block's rect times N.
+Repeat `--src`/`--up` pairs to put sprites and tiles in one pack; a key in several sources is taken
+from the first.
+
+The pack is format 2 by default: each image zlib-compressed (level 6, on every core) unless that
+would not shrink it, and byte-identical images stored once. `--format 1` writes the old raw form.
+The layout is documented in `packages/util/src/hdpack.zig` and `packages/util/include/d2util.h`.
+Offsets are 32-bit, so a pack must stay under 4 GiB; a set that would not fit is refused, and is
+split over several packs. The summary line gives the images' raw and stored sizes.
 
 ### verify
 
