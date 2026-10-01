@@ -18,5 +18,7 @@ test {
     _ = @import("graphic.zig");
     _ = @import("render.zig");
     _ = @import("verify.zig");
+    _ = @import("strings.zig");
+    _ = @import("itemtext.zig");
     _ = @import("lib.zig");
 }

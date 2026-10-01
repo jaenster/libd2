@@ -19,6 +19,8 @@ pub const old_sections = @import("old_sections.zig");
 /// engine selects the item format by save version.
 pub const convert = @import("convert.zig");
 pub const attributes = @import("attributes.zig");
+/// The items of a save as tooltip-ready views.
+pub const describe = @import("describe.zig");
 
 /// The fixed .d2s header (d2-formats `d2s`): the 335-byte struct, signature/version,
 /// checksum + validation, and the fresh-character builder.
@@ -54,5 +56,7 @@ test {
     _ = old_sections;
     _ = convert;
     _ = attributes;
+    _ = describe;
+    _ = @import("golden_items.zig");
     _ = @import("tests.zig");
 }

@@ -30,6 +30,8 @@ pub const item = @import("item.zig");
 pub const dc6 = @import("dc6.zig");
 pub const png = @import("d2-util").png;
 pub const graphic = @import("graphic.zig");
+pub const strings = @import("strings.zig");
+pub const itemtext = @import("itemtext.zig");
 pub const render = @import("render.zig");
 pub const wire = @import("d2-core").wire;
 
