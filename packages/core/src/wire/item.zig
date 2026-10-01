@@ -37,32 +37,87 @@ pub const Quality = enum(u8) {
     _,
 };
 
-pub const Stat = struct { id: u16, value: i32, param: u32 = 0 };
+/// One decoded stat. `list` says which stat list of the item it came from: 0 the item's own, 1..5 the
+/// partial set-bonus lists (list N is the bonus for the Nth set-mask bit), 6 the runeword list.
+pub const Stat = struct { id: u16, value: i32, param: u32 = 0, list: u8 = 0 };
 
-pub const MAX_STATS = 48;
+pub const MAX_STATS = 96;
+
+pub const list_runeword: u8 = 6;
+/// The fixed base stats an armor or weapon record carries ahead of its stat list (defense, durability).
+pub const list_base: u8 = 7;
+
+/// Where an item lives, from the 3-bit mode and the 3-bit page of its record.
+pub const Mode = struct {
+    pub const stored: u8 = 0;
+    pub const equipped: u8 = 1;
+    pub const belt: u8 = 2;
+    pub const ground: u8 = 3;
+    pub const cursor: u8 = 4;
+    pub const dropping: u8 = 5;
+    pub const socketed: u8 = 6;
+};
+
+/// The item page of a grid-stored item (the record keeps it plus one).
+pub const Page = struct {
+    pub const inventory: u8 = 0;
+    pub const cube: u8 = 3;
+    pub const stash: u8 = 4;
+};
 
 pub const Item = struct {
     flags: u32 = 0,
     version: u16 = 0,
+    /// The record's mode (`Mode`): stored in a grid, equipped, belt, ground, cursor, dropping, socketed.
     dest: u8 = 0,
     body_loc: u8 = 0, // eBodyLoc equip slot (only meaningful when dest == 1, "equipped")
     on_ground: bool = false,
+    /// Grid cell (stored/belt) or world position (ground). A stored item's cell is its top left.
     x: u16 = 0,
     y: u16 = 0,
+    /// The raw 3-bit page field: 0 when the item is in no grid, otherwise `Page` + 1.
+    page_raw: u8 = 0,
     code: [4]u8 = [_]u8{0} ** 4,
     code_len: u8 = 0,
     compact: bool = false,
     crude: bool = false,
     ilvl: u8 = 0,
     quality: Quality = .invalid,
+    /// Total sockets (valid when the item has the socketed flag).
     sockets: u8 = 0,
+    /// How many socketed items follow this record in the list.
+    socketed_count: u8 = 0,
     prefix: u16 = 0,
     suffix: u16 = 0,
     set_id: u16 = 0,
     unique_id: u16 = 0,
     runeword_id: u16 = 0,
+    /// Rare / crafted name ids (the two 8-bit words that spell "Beast Hold").
+    rare_name1: u8 = 0,
+    rare_name2: u8 = 0,
+    /// The rare/crafted item's three prefix and three suffix affixes (0 = empty slot).
+    rare_prefixes: [3]u16 = .{ 0, 0, 0 },
+    rare_suffixes: [3]u16 = .{ 0, 0, 0 },
+    /// Automagic affix id (0 = none).
+    automagic: u16 = 0,
+    /// Alternate picture (a 3-bit index), valid when `has_variant`.
+    has_variant: bool = false,
+    variant: u8 = 0,
+    /// The low-quality / superior sub-type (3 bits).
+    file_index: u8 = 0,
+    /// Stack size of a stackable base (arrows, bolts, keys, javelins ...), 0 when not stackable.
+    quantity: u16 = 0,
+    /// The personalised name, NUL-padded (flag `PLAYERNAME`).
+    owner: [16]u8 = [_]u8{0} ** 16,
+    /// An ear's class, level and name.
+    ear_class: u8 = 0,
+    ear_level: u8 = 0,
+    /// Bits the record occupies in the stream, from the start of the parse (including `JM` for a save).
+    bit_len: u32 = 0,
     stats: [MAX_STATS]Stat = undefined,
     n_stats: u8 = 0,
+    /// The stat list being decoded (see `Stat.list`); decoder state, meaningless afterwards.
+    cur_list: u8 = 0,
 
     pub fn ethereal(self: Item) bool {
         return self.flags & flag.ETHEREAL != 0;
@@ -72,6 +127,14 @@ pub const Item = struct {
     }
     pub fn codeSlice(self: *const Item) []const u8 {
         return self.code[0..self.code_len];
+    }
+    pub fn ownerSlice(self: *const Item) []const u8 {
+        return std.mem.sliceTo(&self.owner, 0);
+    }
+    /// The grid page when the item sits in one (`Page.*`), null otherwise.
+    pub fn gridPage(self: Item) ?u8 {
+        if (self.page_raw == 0 or self.dest != Mode.stored) return null;
+        return self.page_raw - 1;
     }
 
     fn addStat(self: *Item, s: Stat) void {
@@ -96,7 +159,7 @@ fn addGeneric(r: *BitReader, it: *Item, id: u16) bool {
     const param: u32 = if (row.save_param_bits > 0) r.read(@intCast(row.save_param_bits)) & 0xFFFF else 0;
     const raw = r.read(@intCast(row.save_bits));
     const value = (@as(i32, @intCast(raw)) -% row.save_add) << @intCast(row.valshift);
-    it.addStat(.{ .id = id, .value = value, .param = param });
+    it.addStat(.{ .id = id, .value = value, .param = param, .list = it.cur_list });
     return true;
 }
 
@@ -148,11 +211,21 @@ pub fn parse(r: *BitReader) Item {
 /// Everything else — version(10), dest(3)+position, code(32), quality/affix block, base-type
 /// fixed stats, sockets, and the shared stat list — is IDENTICAL to the wire form.
 pub fn parseSave(r: *BitReader) Item {
+    const start_bit = r.bit_pos;
     _ = r.read(16); // "JM" magic (0x4D4A); caller has already validated section, we just skip it
-    return parseInner(r, true);
+    var it = parseInner(r, true);
+    it.bit_len = @intCast(r.bit_pos - start_bit);
+    return it;
 }
 
 fn parseInner(r: *BitReader, is_save: bool) Item {
+    const start_bit = r.bit_pos;
+    var it = parseBody(r, is_save);
+    it.bit_len = @intCast(r.bit_pos - start_bit);
+    return it;
+}
+
+fn parseBody(r: *BitReader, is_save: bool) Item {
     var it = Item{};
     it.flags = r.read(32);
     it.compact = it.flags & flag.COMPACT != 0;
@@ -164,33 +237,55 @@ fn parseInner(r: *BitReader, is_save: bool) Item {
         it.y = @intCast(r.read(16));
     } else {
         it.body_loc = @intCast(r.read(4)); // eBodyLoc equip slot
-        _ = r.read(4); // grid col
-        _ = r.read(4); // grid row
-        _ = r.read(3); // inventory page
+        it.x = @intCast(r.read(4)); // grid col
+        it.y = @intCast(r.read(4)); // grid row
+        it.page_raw = @intCast(r.read(3)); // inventory page + 1
     }
     var i: usize = 0;
     while (i < 4) : (i += 1) it.code[i] = @truncate(r.read(8));
     it.code_len = 4;
     while (it.code_len > 0 and (it.code[it.code_len - 1] == ' ' or it.code[it.code_len - 1] == 0)) it.code_len -= 1;
 
-    // Compact "simple" items (gold/potion/scroll/quest) carry no quality/stat block; their
-    // gold-amount / charge / quest-difficulty extras go through a separate header decoder we
-    // don't replicate yet — stop after the shared header.
-    if (it.compact) return it;
+    // An ear has no base code: its class, level and name follow the header.
+    if (it.flags & flag.BODYPART != 0) {
+        it.ear_class = @intCast(r.read(3));
+        it.ear_level = @intCast(r.read(7));
+        var k: usize = 0;
+        while (true) {
+            const ch: u8 = @intCast(r.read(7));
+            if (ch == 0) break;
+            if (k < it.owner.len - 1) {
+                it.owner[k] = ch;
+                k += 1;
+            }
+            if (r.bitsLeft() < 7) break;
+        }
+        return it;
+    }
+
+    // The count of items socketed into this one follows the code: one bit on a compact item, three
+    // on every other. Compact items (gems, runes, potions, keys) carry nothing else here.
+    if (it.compact) {
+        if (is_save) it.socketed_count = @intCast(r.read(1));
+        return it;
+    }
 
     it.crude = it.flags & flag.CRUDE != 0;
     if (it.crude) return it; // CRUDE: nothing past the item code
 
-    _ = r.read(3); // param field, discarded on the ground-drop path
+    it.socketed_count = @intCast(r.read(3));
     if (is_save) _ = r.read(32); // seed (save-only; nInitSeed / sSeed.nSeedLow)
     it.ilvl = @intCast(r.read(7));
     it.quality = @enumFromInt(@as(u8, @intCast(r.read(4))));
-    if (r.readBool()) _ = r.read(3); // variant
-    if (r.readBool()) _ = r.read(11); // automagic
+    if (r.readBool()) {
+        it.has_variant = true;
+        it.variant = @intCast(r.read(3));
+    }
+    if (r.readBool()) it.automagic = @intCast(r.read(11));
 
     const ident = it.identified();
     switch (@intFromEnum(it.quality)) {
-        1, 3 => _ = r.read(3), // low / superior file index
+        1, 3 => it.file_index = @intCast(r.read(3)), // low / superior file index
         2 => {
             if (isCharm(it.codeSlice())) {
                 if (ident) {
@@ -210,21 +305,21 @@ fn parseInner(r: *BitReader, is_save: bool) Item {
         },
         6, 8 => { // rare / crafted
             if (ident) {
-                _ = r.read(8); // name prefix id
-                _ = r.read(8); // name suffix id
+                it.rare_name1 = @intCast(r.read(8)); // name prefix id
+                it.rare_name2 = @intCast(r.read(8)); // name suffix id
             }
             var k: usize = 0;
             while (k < 3) : (k += 1) { // 3 prefix + 3 suffix affix slots, unconditional
-                if (r.readBool()) _ = r.read(11);
-                if (r.readBool()) _ = r.read(11);
+                if (r.readBool()) it.rare_prefixes[k] = @intCast(r.read(11));
+                if (r.readBool()) it.rare_suffixes[k] = @intCast(r.read(11));
             }
         },
         7 => if (ident) {
             it.unique_id = @intCast(r.read(12));
         },
         9 => if (ident) { // tempered
-            _ = r.read(8);
-            _ = r.read(8);
+            it.rare_name1 = @intCast(r.read(8));
+            it.rare_name2 = @intCast(r.read(8));
         },
         else => {},
     }
@@ -234,12 +329,17 @@ fn parseInner(r: *BitReader, is_save: bool) Item {
         it.runeword_id = @intCast(r.read(16));
         extended = true;
     }
-    if (it.flags & flag.BODYPART != 0) { // ear
-        _ = r.read(3); // class
-        _ = r.read(7); // level
-        while (r.read(7) != 0) {} // null-terminated 7-bit name
-    } else if (it.flags & flag.PLAYERNAME != 0) {
-        while (r.read(7) != 0) {} // personalization name
+    if (it.flags & flag.PLAYERNAME != 0) {
+        var k: usize = 0;
+        while (true) {
+            const ch: u8 = @intCast(r.read(7));
+            if (ch == 0) break;
+            if (k < it.owner.len - 1) {
+                it.owner[k] = ch;
+                k += 1;
+            }
+            if (r.bitsLeft() < 7) break;
+        }
     }
 
     // Realm-data block: save-only (nParam1) and version > 0x56. One present-bit, then two 32-bit
@@ -258,13 +358,19 @@ fn parseInner(r: *BitReader, is_save: bool) Item {
     if (types.lookup(it.codeSlice())) |t| {
         switch (t.cat) {
             .armor => {
+                it.cur_list = list_base;
                 _ = addGeneric(r, &it, 31); // armorclass
                 appendDurability(r, &it);
+                it.cur_list = 0;
             },
-            .weapon => appendDurability(r, &it),
+            .weapon => {
+                it.cur_list = list_base;
+                appendDurability(r, &it);
+                it.cur_list = 0;
+            },
             .misc => {},
         }
-        if (t.stackable) _ = r.read(9); // quantity (version >= 0x51)
+        if (t.stackable) it.quantity = @intCast(r.read(9)); // quantity (version >= 0x51)
     }
 
     if (it.flags & flag.SOCKETED != 0) {
@@ -287,8 +393,12 @@ fn parseInner(r: *BitReader, is_save: bool) Item {
         const do_list = idx == -1 or
             (idx >= 0 and idx < 5 and (set_mask & (@as(u32, 1) << @intCast(idx))) != 0) or
             (extended and idx == list_count - 1);
-        if (do_list) decodeStatList(r, &it);
+        if (do_list) {
+            it.cur_list = if (idx == -1) 0 else if (extended and idx == list_count - 1) list_runeword else @intCast(idx + 1);
+            decodeStatList(r, &it);
+        }
     }
+    it.cur_list = 0;
     return it;
 }
 

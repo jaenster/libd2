@@ -128,3 +128,11 @@ pub fn load(gpa: std.mem.Allocator, name: []const u8) !Table {
     const bytes = raw(name) orelse return error.UnknownTable;
     return tsv.parse(gpa, bytes);
 }
+
+/// The English string tables, as the retail files. `string.tbl` is the base, `expansionstring.tbl`
+/// and `patchstring.tbl` override it (patch first, then expansion, then base) when looked up by key.
+pub const strings = struct {
+    pub const base = @embedFile("strings/string.tbl");
+    pub const expansion = @embedFile("strings/expansionstring.tbl");
+    pub const patch = @embedFile("strings/patchstring.tbl");
+};
