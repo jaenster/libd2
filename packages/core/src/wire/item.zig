@@ -762,3 +762,65 @@ test "compact item yields code + position only" {
     try std.testing.expect(it.on_ground and it.x == 10 and it.y == 20);
     try std.testing.expectEqual(Quality.invalid, it.quality); // never read
 }
+
+/// An Item Pouch record in the save form: a normal-quality identified misc item whose stat list is one hidden
+/// count stat per kind held (ids 359.., 9 bit value, no param), ended by the terminator.
+fn writePouch(w: *BitWriter, counts: []const [2]u16) void {
+    w.write(0x4D4A, 16); // "JM"
+    w.write(flag.IDENTIFIED, 32);
+    w.write(0x60, 10);
+    w.write(0, 3); // stored in a grid
+    w.write(0, 4); // body location
+    w.write(0, 4); // col
+    w.write(0, 4); // row
+    w.write(1, 3); // page
+    for ("pch ") |c| w.write(c, 8);
+    w.write(0, 3); // socketed items
+    w.write(0x1234, 32); // seed
+    w.write(1, 7); // ilvl
+    w.write(2, 4); // normal
+    w.write(0, 1); // no variant
+    w.write(0, 1); // no automagic
+    w.write(0, 1); // realm block absent
+    for (counts) |kc| {
+        w.write(359 + kc[0], 9);
+        w.write(kc[1], 9);
+    }
+    w.write(isc.STAT_LIST_TERMINATOR, 9);
+}
+
+test "an Item Pouch's counts decode as stats and the record ends at its terminator" {
+    var buf = [_]u8{0} ** 512;
+    var w = BitWriter.init(&buf);
+    var counts: [68][2]u16 = undefined;
+    for (&counts, 0..) |*c, k| c.* = .{ @intCast(k), @intCast(k + 1) };
+    writePouch(&w, &counts);
+    const total_bits = w.bit_pos;
+    // a second item right behind it must start where the pouch ends
+    w.write(0x4D4A, 16);
+
+    var r = BitReader.init(&buf);
+    const it = parseSave(&r);
+    try std.testing.expectEqualStrings("pch", it.codeSlice());
+    try std.testing.expectEqual(@as(usize, total_bits), r.bit_pos);
+    try std.testing.expectEqual(@as(u8, 68), it.n_stats);
+    for (it.stats[0..it.n_stats], 0..) |s, k| {
+        try std.testing.expectEqual(@as(u16, @intCast(359 + k)), s.id);
+        try std.testing.expectEqual(@as(i32, @intCast(k + 1)), s.value);
+    }
+    try std.testing.expectEqual(@as(u32, 0x4D4A), r.read(16));
+}
+
+test "a pouch holding all 96 kinds decodes every count" {
+    var buf = [_]u8{0} ** 512;
+    var w = BitWriter.init(&buf);
+    var counts: [96][2]u16 = undefined;
+    for (&counts, 0..) |*c, k| c.* = .{ @intCast(k), if (k == 0) 500 - 95 else 1 };
+    writePouch(&w, &counts);
+    var r = BitReader.init(&buf);
+    const it = parseSave(&r);
+    try std.testing.expectEqual(@as(u8, 96), it.n_stats);
+    try std.testing.expectEqual(@as(i32, 405), it.stats[0].value);
+    try std.testing.expectEqual(@as(u16, 454), it.stats[95].id);
+    try std.testing.expectEqual(@as(usize, w.bit_pos), r.bit_pos);
+}
