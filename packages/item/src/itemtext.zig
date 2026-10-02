@@ -116,11 +116,11 @@ pub const Describer = struct {
         errdefer d.t.deinit();
         d.s = try strings.Strings.load(gpa);
         errdefer d.s.deinit();
-        d.char_stats = try txt.Table.parse(gpa, d2data.file("CharStats"));
+        d.char_stats = try txt.Table.parse(gpa, d2data.current("CharStats"));
         errdefer d.char_stats.deinit();
-        d.skill_desc = try txt.Table.parse(gpa, d2data.file("SkillDesc"));
+        d.skill_desc = try txt.Table.parse(gpa, d2data.current("SkillDesc"));
         errdefer d.skill_desc.deinit();
-        d.mon_stats = try txt.Table.parse(gpa, d2data.file("MonStats"));
+        d.mon_stats = try txt.Table.parse(gpa, d2data.current("MonStats"));
         errdefer d.mon_stats.deinit();
         d.arena = std.heap.ArenaAllocator.init(gpa);
         errdefer d.arena.deinit();
