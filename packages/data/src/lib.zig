@@ -104,14 +104,60 @@ pub inline fn file(comptime name: []const u8) []const u8 {
     return @embedFile("excel/" ++ name ++ ".txt");
 }
 
-/// Parse a comptime-named table into an owned Table (the DCE-friendly sibling of `load`).
+/// Parse a comptime-named table into an owned Table (the DCE-friendly sibling of `load`). A table the caller has
+/// supplied (`setOverride`) is parsed instead of the embedded one.
 pub fn open(gpa: std.mem.Allocator, comptime name: []const u8) !Table {
-    return tsv.parse(gpa, file(name));
+    return tsv.parse(gpa, current(name));
+}
+
+// ---- caller-supplied tables -----------------------------------------------------------------------------------
+//
+// The embedded tables are the stock 1.14d ones and stay the default. A program that plays a modified game (rows
+// added to ItemStatCost, Misc, ...) supplies its own copy of a table, in the game's .txt format, once at start,
+// before anything reads tables; every reader that goes through `current`, `open`, `load` or `raw` then sees it.
+// Not thread safe against readers: set them before the first thread that reads tables starts.
+
+const max_overrides = 16;
+var override_names: [max_overrides][]const u8 = undefined;
+var override_bytes: [max_overrides][]const u8 = undefined;
+var override_count: usize = 0;
+
+/// Use `bytes` (a table in the game's .txt format) in place of the embedded table `name` (case-insensitive). The bytes
+/// must outlive every reader; nothing is copied. Supplying a name again replaces it.
+pub fn setOverride(name: []const u8, bytes: []const u8) error{TooManyOverrides}!void {
+    for (override_names[0..override_count], 0..) |n, i| {
+        if (std.ascii.eqlIgnoreCase(n, name)) {
+            override_bytes[i] = bytes;
+            return;
+        }
+    }
+    if (override_count == max_overrides) return error.TooManyOverrides;
+    override_names[override_count] = name;
+    override_bytes[override_count] = bytes;
+    override_count += 1;
+}
+
+/// Back to the embedded tables only.
+pub fn clearOverrides() void {
+    override_count = 0;
+}
+
+fn overrideOf(name: []const u8) ?[]const u8 {
+    for (override_names[0..override_count], 0..) |n, i| {
+        if (std.ascii.eqlIgnoreCase(n, name)) return override_bytes[i];
+    }
+    return null;
+}
+
+/// The bytes of a table by exact file stem: the caller's, when one was supplied, else the embedded one.
+pub fn current(comptime name: []const u8) []const u8 {
+    return overrideOf(name) orelse file(name);
 }
 
 /// Raw file bytes for a table by name (case-insensitive), or null if absent.
-/// The bytes are static (embedded); no allocation, no freeing.
+/// The bytes are static (embedded or supplied); no allocation, no freeing.
 pub fn raw(name: []const u8) ?[]const u8 {
+    if (overrideOf(name)) |b| return b;
     for (tables) |t| {
         if (std.ascii.eqlIgnoreCase(t.name, name)) return t.bytes;
     }
@@ -136,3 +182,19 @@ pub const strings = struct {
     pub const expansion = @embedFile("strings/expansionstring.tbl");
     pub const patch = @embedFile("strings/patchstring.tbl");
 };
+
+test "a supplied table replaces the embedded one until cleared" {
+    defer clearOverrides();
+    var stock_t = try load(std.testing.allocator, "Gems");
+    defer stock_t.deinit();
+    try setOverride("gems", "code\tname\nzzz\tTest Gem\n");
+    var t = try open(std.testing.allocator, "Gems");
+    defer t.deinit();
+    try std.testing.expectEqual(@as(usize, 1), t.rowCount());
+    try std.testing.expectEqualStrings("Test Gem", t.get(0, "name"));
+    try std.testing.expectEqualStrings("code\tname\nzzz\tTest Gem\n", raw("GEMS").?);
+    clearOverrides();
+    var back = try load(std.testing.allocator, "Gems");
+    defer back.deinit();
+    try std.testing.expectEqual(stock_t.rowCount(), back.rowCount());
+}
