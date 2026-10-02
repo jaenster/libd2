@@ -33,7 +33,23 @@
 //!     big-endian) that inflates to exactly `bw*scale * bh*scale` bytes. The writer uses it only
 //!     when it is strictly shorter than the image.
 //!
+//! Version 3 is version 2 with a colour detail plane per entry. `encode` writes it only for a pack in
+//! which at least one image carries a plane; every other pack stays version 1 or 2, byte for byte.
+//!
+//!     "D2HD"  u32 version (3)  u32 scale  u32 count                                  16 bytes
+//!     count x { u64 key, u16 bw, u16 bh, u32 offset, u32 length,
+//!               u32 detail_offset, u32 detail_length }                              28 bytes each
+//!     data
+//!
+//! The index image is stored as in version 2. The detail plane is one signed 4-bit gain code per
+//! pixel of that image, two pixels a byte (the even pixel in the low nibble), row by row, so
+//! `detailLen(n)` = (n + 1) / 2 bytes for n = `bw*scale * bh*scale` pixels. It is stored like an
+//! image: raw when `detail_length` equals that size, otherwise a zlib stream of it. A
+//! `detail_length` of 0 means the entry has no plane (its `detail_offset` is 0). A renderer scales
+//! the pixel's palette colour by 2^(code/16).
+//!
 //! Entries whose images are byte-identical may share one stored copy: the same offset and length.
+//! Detail planes share the same way.
 //! Offsets are u32, so a pack is at most 4 GiB - 1 bytes; a set that would not fit is split into
 //! several packs.
 //!
@@ -49,6 +65,7 @@ pub const version: u32 = 2;
 pub const header_len: usize = 16;
 pub const entry_len_v1: usize = 16;
 pub const entry_len_v2: usize = 20;
+pub const entry_len_v3: usize = 28;
 /// Scales a pack may declare.
 pub const max_scale: u32 = 16;
 /// The largest pack the format can address: offsets and lengths are u32.
@@ -63,7 +80,7 @@ pub const Header = struct {
 };
 
 pub fn entryLen(v: u32) usize {
-    return if (v == 1) entry_len_v1 else entry_len_v2;
+    return if (v == 1) entry_len_v1 else if (v == 2) entry_len_v2 else entry_len_v3;
 }
 
 /// The header alone: magic, a known version, scale, and an entry table that fits in `bytes`.
@@ -71,7 +88,7 @@ pub fn entryLen(v: u32) usize {
 pub fn header(bytes: []const u8) Error!Header {
     if (bytes.len < header_len or !std.mem.eql(u8, bytes[0..4], magic)) return error.NotHdPack;
     const v = rd32(bytes, 4);
-    if (v != 1 and v != 2) return error.UnsupportedVersion;
+    if (v < 1 or v > 3) return error.UnsupportedVersion;
     const scale = rd32(bytes, 8);
     if (scale < 1 or scale > max_scale) return error.BadScale;
     const count = rd32(bytes, 12);
@@ -86,6 +103,9 @@ pub const Entry = struct {
     offset: u32,
     /// The stored byte count. In a version 1 pack, always the image size.
     length: u64,
+    /// The colour detail plane's stored bytes; 0 length: none (always, before version 3).
+    detail_offset: u32 = 0,
+    detail_length: u32 = 0,
 };
 
 /// Entry `i` of the table `h` describes; `i < h.count` and the table inside `bytes` (as `header`
@@ -100,7 +120,14 @@ pub fn entryAt(bytes: []const u8, h: Header, i: usize) Entry {
         .bh = bh,
         .offset = std.mem.readInt(u32, e[12..16], .little),
         .length = if (h.version == 1) imageLen(h.scale, bw, bh) else std.mem.readInt(u32, e[16..20], .little),
+        .detail_offset = if (h.version >= 3) std.mem.readInt(u32, e[20..24], .little) else 0,
+        .detail_length = if (h.version >= 3) std.mem.readInt(u32, e[24..28], .little) else 0,
     };
+}
+
+/// The size of a detail plane for `pixels` image pixels: two 4-bit codes a byte.
+pub fn detailLen(pixels: usize) usize {
+    return (pixels + 1) / 2;
 }
 
 /// The size of an entry's image: `bw*scale * bh*scale`.
@@ -128,6 +155,10 @@ pub fn validate(bytes: []const u8) Error!Header {
         if (e.bw == 0 or e.bh == 0 or e.length == 0) return error.BadEntry;
         if (h.version != 1 and e.offset < data_start) return error.BadEntry;
         if (@as(u64, e.offset) + e.length > bytes.len) return error.Truncated;
+        if (e.detail_length != 0) {
+            if (e.detail_offset < data_start) return error.BadEntry;
+            if (@as(u64, e.detail_offset) + e.detail_length > bytes.len) return error.Truncated;
+        }
         if (prev) |p| if (order(p.key, p.bw, p.bh, e.key, e.bw, e.bh) != .lt) return error.Unsorted;
         prev = e;
     }
@@ -144,6 +175,10 @@ pub const Found = struct {
     stored: []const u8,
     /// The image's size, `bw*scale * bh*scale`: what `decode` needs to be given.
     image_len: usize,
+    /// The colour detail plane as stored (version 3, else null): raw when `detail_len` long, else zlib.
+    detail: ?[]const u8 = null,
+    /// The plane's size once decoded, `detailLen(image_len)`.
+    detail_len: usize = 0,
 
     pub fn isRaw(f: Found) bool {
         return f.stored.len == f.image_len;
@@ -173,6 +208,8 @@ pub fn find(bytes: []const u8, key: u64, bw: u16, bh: u16) ?Found {
                     .bh = e.bh,
                     .stored = bytes[e.offset..][0..@intCast(e.length)],
                     .image_len = @intCast(img),
+                    .detail = if (e.detail_length != 0 and @as(u64, e.detail_offset) + e.detail_length <= bytes.len) bytes[e.detail_offset..][0..e.detail_length] else null,
+                    .detail_len = detailLen(@intCast(img)),
                 };
             },
         }
@@ -241,10 +278,15 @@ pub const Image = struct {
     bw: u16,
     bh: u16,
     pixels: []const u8,
+    /// The colour detail plane, `detailLen(pixels.len)` bytes of packed 4-bit gain codes, or null.
+    /// Any image with one makes the pack version 3.
+    detail: ?[]const u8 = null,
 };
 
 pub const Options = struct {
-    /// 2 stores each image zlib-compressed where that is smaller; 1 writes the old raw form.
+    /// 2 stores each image zlib-compressed where that is smaller; 1 writes the old raw form. A pack
+    /// whose images carry detail planes is written as version 3 whatever is asked here, except that
+    /// version 1 cannot hold them (UnsupportedVersion).
     version: u32 = version,
     /// The deflate effort; zlib's level 6 by default.
     level: flate.Compress.Options = .default,
@@ -271,10 +313,19 @@ pub const EncodeError = std.mem.Allocator.Error || std.Thread.SpawnError || erro
 pub fn encode(gpa: std.mem.Allocator, scale: u32, images: []const Image, opts: Options) EncodeError![]u8 {
     if (scale < 1 or scale > max_scale) return error.BadScale;
     if (opts.version != 1 and opts.version != 2) return error.UnsupportedVersion;
+    var has_detail = false;
+    for (images) |im| {
+        if (im.detail) |d| {
+            if (d.len != detailLen(im.pixels.len)) return error.BadEntry;
+            has_detail = true;
+        }
+    }
+    if (has_detail and opts.version == 1) return error.UnsupportedVersion;
+    const ver: u32 = if (has_detail) 3 else opts.version;
     const idx = try sortedUnique(gpa, scale, images);
     defer gpa.free(idx);
     const n = idx.len;
-    const el = entryLen(opts.version);
+    const el = entryLen(ver);
     const table_end = header_len + @as(u64, n) * el;
     if (table_end > opts.max_len) return error.PackTooLarge;
 
@@ -294,40 +345,54 @@ pub fn encode(gpa: std.mem.Allocator, scale: u32, images: []const Image, opts: O
         }
         return out;
     }
-
-    // Version 2. `slot[j]` is the stored copy entry j uses; `uniq` lists each distinct image once,
-    // in the order its first entry comes in the table.
+    // Version 2 and 3. A stored copy is one distinct byte string; `srcs` lists each once, the images
+    // first in the order their first entry comes in the table, then the detail planes the same way.
+    // `slot[j]` is the copy entry j's image uses, `dslot[j]` the copy of its plane, if it has one.
     const slot = try gpa.alloc(u32, n);
     defer gpa.free(slot);
-    var uniq: std.ArrayListUnmanaged(u32) = .empty;
-    defer uniq.deinit(gpa);
+    const dslot = try gpa.alloc(?u32, n);
+    defer gpa.free(dslot);
+    var srcs: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer srcs.deinit(gpa);
     {
         var seen: std.StringHashMapUnmanaged(u32) = .empty;
         defer seen.deinit(gpa);
         for (idx, 0..) |i, j| {
             const gop = try seen.getOrPut(gpa, images[i].pixels);
             if (!gop.found_existing) {
-                gop.value_ptr.* = @intCast(uniq.items.len);
-                try uniq.append(gpa, i);
+                gop.value_ptr.* = @intCast(srcs.items.len);
+                try srcs.append(gpa, images[i].pixels);
             }
             slot[j] = gop.value_ptr.*;
         }
+        for (idx, 0..) |i, j| {
+            const d = images[i].detail orelse {
+                dslot[j] = null;
+                continue;
+            };
+            const gop = try seen.getOrPut(gpa, d);
+            if (!gop.found_existing) {
+                gop.value_ptr.* = @intCast(srcs.items.len);
+                try srcs.append(gpa, d);
+            }
+            dslot[j] = gop.value_ptr.*;
+        }
     }
 
-    const stored = try gpa.alloc([]u8, uniq.items.len);
+    const stored = try gpa.alloc([]u8, srcs.items.len);
     for (stored) |*s| s.* = &.{};
     defer {
         for (stored) |s| gpa.free(s);
         gpa.free(stored);
     }
-    try compressAll(gpa, images, uniq.items, stored, opts, table_end);
+    try compressAll(gpa, srcs.items, stored, opts, table_end);
 
     var total: u64 = table_end;
     for (stored) |s| total += s.len;
     if (total > opts.max_len) return error.PackTooLarge;
 
     const out = try gpa.alloc(u8, @intCast(total));
-    writeHeader(out, 2, scale, n);
+    writeHeader(out, ver, scale, n);
     const offs = try gpa.alloc(u32, stored.len);
     defer gpa.free(offs);
     var off: usize = @intCast(table_end);
@@ -336,7 +401,14 @@ pub fn encode(gpa: std.mem.Allocator, scale: u32, images: []const Image, opts: O
         @memcpy(out[off..][0..s.len], s);
         off += s.len;
     }
-    for (idx, slot, 0..) |i, u, j| writeEntry(out, 2, j, images[i], offs[u], stored[u].len);
+    for (idx, slot, dslot, 0..) |i, u, d, j| {
+        writeEntry(out, ver, j, images[i], offs[u], stored[u].len);
+        if (ver >= 3) {
+            const e = out[header_len + j * entry_len_v3 ..][0..entry_len_v3];
+            wr32(e, 20, if (d) |k| offs[k] else 0);
+            wr32(e, 24, if (d) |k| @intCast(stored[k].len) else 0);
+        }
+    }
     return out;
 }
 
@@ -418,12 +490,11 @@ pub const Compressor = struct {
     }
 };
 
-/// `stored[k]` = the stored form of `images[uniq[k]]`, over `opts.threads` workers. Stops early,
+/// `stored[k]` = the stored form of `srcs[k]`, over `opts.threads` workers. Stops early,
 /// with PackTooLarge, once the stored bytes alone pass `opts.max_len`.
-fn compressAll(gpa: std.mem.Allocator, images: []const Image, uniq: []const u32, stored: [][]u8, opts: Options, table_end: u64) EncodeError!void {
+fn compressAll(gpa: std.mem.Allocator, srcs: []const []const u8, stored: [][]u8, opts: Options, table_end: u64) EncodeError!void {
     const Shared = struct {
-        images: []const Image,
-        uniq: []const u32,
+        srcs: []const []const u8,
         stored: [][]u8,
         next: std.atomic.Value(usize) = .init(0),
         total: std.atomic.Value(u64),
@@ -433,8 +504,8 @@ fn compressAll(gpa: std.mem.Allocator, images: []const Image, uniq: []const u32,
         fn work(s: *@This(), c: *Compressor) void {
             while (s.failed.load(.monotonic) == 0) {
                 const k = s.next.fetchAdd(1, .monotonic);
-                if (k >= s.uniq.len) return;
-                const bytes = c.store(s.images[s.uniq[k]].pixels) catch {
+                if (k >= s.srcs.len) return;
+                const bytes = c.store(s.srcs[k]) catch {
                     s.failed.store(1, .monotonic);
                     return;
                 };
@@ -446,11 +517,11 @@ fn compressAll(gpa: std.mem.Allocator, images: []const Image, uniq: []const u32,
             }
         }
     };
-    var shared: Shared = .{ .images = images, .uniq = uniq, .stored = stored, .total = .init(table_end), .max_len = opts.max_len };
+    var shared: Shared = .{ .srcs = srcs, .stored = stored, .total = .init(table_end), .max_len = opts.max_len };
 
     const cpus = if (builtin.single_threaded) 1 else std.Thread.getCpuCount() catch 1;
     const want = if (opts.threads == 0) cpus else opts.threads;
-    const nthreads = @max(1, @min(want, uniq.len));
+    const nthreads = @max(1, @min(want, srcs.len));
     const comps = try gpa.alloc(Compressor, nthreads);
     defer gpa.free(comps);
     var made: usize = 0;
@@ -789,7 +860,7 @@ test "damaged packs are refused, and lookups on them stay in bounds" {
 
         var bad = try gpa.dupe(u8, pack);
         defer gpa.free(bad);
-        bad[4] = 3;
+        bad[4] = 4;
         try testing.expectError(error.UnsupportedVersion, validate(bad));
         bad[4] = @intCast(v);
         bad[8] = 0;
@@ -809,7 +880,7 @@ test "damaged packs are refused, and lookups on them stay in bounds" {
 
     try testing.expectError(error.BadEntry, encode(gpa, 2, &.{.{ .key = 1, .bw = 1, .bh = 1, .pixels = a[0..3] }}, .{}));
     try testing.expectError(error.BadScale, encode(gpa, 0, &.{}, .{}));
-    try testing.expectError(error.UnsupportedVersion, encode(gpa, 2, &.{}, .{ .version = 3 }));
+    try testing.expectError(error.UnsupportedVersion, encode(gpa, 2, &.{}, .{ .version = 4 }));
 }
 
 test "an out-of-order table is refused" {
@@ -826,4 +897,80 @@ test "an out-of-order table is refused" {
         bad[16] = 3; // first key 1 -> 3, after the second
         try testing.expectError(error.Unsorted, validate(bad));
     }
+}
+
+test "v3: a plane per entry that has one, round trip, and the planes share like images" {
+    const gpa = testing.allocator;
+    const a = [_]u8{5} ** (8 * 8 * 4); // 8x8 at 1x, scale 2 -> 16x16 = 256 px
+    var b = [_]u8{6} ** (8 * 8 * 4);
+    b[3] = 9;
+    var plane: [detailLen(256)]u8 = undefined;
+    for (&plane, 0..) |*p, i| p.* = @truncate(i *% 37 +% 11); // noise: stays raw
+    const flat = [_]u8{0} ** detailLen(256); // all gain 0: deflates
+    const imgs = [_]Image{
+        .{ .key = 3, .bw = 8, .bh = 8, .pixels = &a, .detail = &plane },
+        .{ .key = 1, .bw = 8, .bh = 8, .pixels = &b },
+        .{ .key = 2, .bw = 8, .bh = 8, .pixels = &b, .detail = &flat },
+        .{ .key = 4, .bw = 8, .bh = 8, .pixels = &a, .detail = &plane },
+    };
+    const pack = try encode(gpa, 2, &imgs, .{});
+    defer gpa.free(pack);
+    const h = try validate(pack);
+    try testing.expectEqual(Header{ .version = 3, .scale = 2, .count = 4 }, h);
+    try expectImage(pack, 1, 8, 8, &b);
+    try expectImage(pack, 3, 8, 8, &a);
+
+    try testing.expect(find(pack, 1, 8, 8).?.detail == null);
+    for ([_]struct { u64, []const u8 }{ .{ 3, &plane }, .{ 4, &plane }, .{ 2, &flat } }) |c| {
+        const f = find(pack, c[0], 8, 8).?;
+        try testing.expectEqual(@as(usize, 128), f.detail_len);
+        const got = try testing.allocator.alloc(u8, f.detail_len);
+        defer testing.allocator.free(got);
+        try decode(f.detail.?, got);
+        try testing.expectEqualSlices(u8, c[1], got);
+    }
+    try testing.expectEqual(@as(usize, 128), find(pack, 3, 8, 8).?.detail.?.len); // raw
+    try testing.expect(find(pack, 2, 8, 8).?.detail.?.len < 128); // zlib
+    // Keys 3 and 4 share both their image and their plane.
+    const e3 = entryAt(pack, h, 2);
+    const e4 = entryAt(pack, h, 3);
+    try testing.expectEqual(e3.offset, e4.offset);
+    try testing.expectEqual(e3.detail_offset, e4.detail_offset);
+    try testing.expectEqual(@as(u32, 0), entryAt(pack, h, 0).detail_length);
+}
+
+test "v3 is chosen only by a plane; packs without one are the same bytes as before" {
+    const gpa = testing.allocator;
+    const a = [_]u8{1} ** (2 * 2 * 4);
+    const plain = [_]Image{.{ .key = 1, .bw = 2, .bh = 2, .pixels = &a }};
+    const p2 = try encode(gpa, 2, &plain, .{});
+    defer gpa.free(p2);
+    try testing.expectEqual(@as(u32, 2), (try validate(p2)).version);
+    const p1 = try encode(gpa, 2, &plain, .{ .version = 1 });
+    defer gpa.free(p1);
+    try testing.expectEqual(@as(u32, 1), (try validate(p1)).version);
+    try testing.expect(find(p2, 1, 2, 2).?.detail == null);
+
+    const pl = [_]u8{0} ** detailLen(16);
+    const withd = [_]Image{.{ .key = 1, .bw = 2, .bh = 2, .pixels = &a, .detail = &pl }};
+    try testing.expectError(error.UnsupportedVersion, encode(gpa, 2, &withd, .{ .version = 1 }));
+    const wrong = [_]Image{.{ .key = 1, .bw = 2, .bh = 2, .pixels = &a, .detail = pl[0..7] }};
+    try testing.expectError(error.BadEntry, encode(gpa, 2, &wrong, .{}));
+}
+
+test "v3: a plane outside the file or inside the table is refused" {
+    const gpa = testing.allocator;
+    const a = [_]u8{1} ** (2 * 2 * 4);
+    const pl = [_]u8{0x21} ** detailLen(16);
+    const pack = try encode(gpa, 2, &.{.{ .key = 1, .bw = 2, .bh = 2, .pixels = &a, .detail = &pl }}, .{});
+    defer gpa.free(pack);
+    _ = try validate(pack);
+    const bad = try gpa.dupe(u8, pack);
+    defer gpa.free(bad);
+    wr32(bad, 16 + 20, 20); // plane offset into the table
+    try testing.expectError(error.BadEntry, validate(bad));
+    @memcpy(bad, pack);
+    wr32(bad, 16 + 24, 1000); // plane longer than the file
+    try testing.expectError(error.Truncated, validate(bad));
+    try testing.expect(find(bad, 1, 2, 2).?.detail == null);
 }

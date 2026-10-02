@@ -120,12 +120,12 @@ export fn d2_frame_key(src: ?[*]const u8, w: i32, h: i32, pitch: i32, key_out: ?
 
 /// Checks a whole HD pack of `len` bytes (header, table order, every entry in bounds) and reports
 /// its scale and entry count. Linear in the entry count: call it once when the pack is loaded.
-/// Accepts both versions; d2_hdpack_info2 also reports which. Returns 0, ERR_ARGS or ERR_PACK.
+/// Accepts versions 1 to 3 (the image of a version 3 entry; its detail plane is not exposed here); d2_hdpack_info2 also reports which. Returns 0, ERR_ARGS or ERR_PACK.
 export fn d2_hdpack_info(pack: ?[*]const u8, len: usize, scale_out: ?*u32, count_out: ?*u32) i32 {
     return d2_hdpack_info2(pack, len, null, scale_out, count_out);
 }
 
-/// As d2_hdpack_info, also reporting the pack's version (1 or 2).
+/// As d2_hdpack_info, also reporting the pack's version (1, 2 or 3).
 export fn d2_hdpack_info2(pack: ?[*]const u8, len: usize, version_out: ?*u32, scale_out: ?*u32, count_out: ?*u32) i32 {
     const p = pack orelse return ERR_ARGS;
     const h = hdpack.validate(p[0..len]) catch return ERR_PACK;
