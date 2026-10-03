@@ -588,6 +588,29 @@ test "writeItem round-trips a magic ring through parse" {
     try std.testing.expectEqual(@as(i32, 10), got.stats[0].value);
 }
 
+test "a stored item keeps any cell of the stash's grid, the rows below the Classic stash's fourth too" {
+    // x and y are four bits each and the page three: a 10 by 10 grid fits, and the parser ties the cell to no game
+    for ([_][2]u8{ .{ 0, 0 }, .{ 5, 3 }, .{ 5, 7 }, .{ 9, 9 }, .{ 15, 15 } }) |c| {
+        var buf = [_]u8{0} ** 32;
+        var w = BitWriter.init(&buf);
+        w.write(flag.COMPACT, 32);
+        w.write(0x60, 10);
+        w.write(0, 3); // stored
+        w.write(0, 4); // body location
+        w.write(c[0], 4);
+        w.write(c[1], 4);
+        w.write(5, 3); // the stash's page + 1
+        for ("jew ") |ch| w.write(ch, 8);
+        var r = BitReader.init(&buf);
+        const got = parse(&r);
+        try std.testing.expect(!got.on_ground);
+        try std.testing.expectEqual(c[0], got.x);
+        try std.testing.expectEqual(c[1], got.y);
+        try std.testing.expectEqual(@as(u8, 5), got.page_raw);
+        try std.testing.expectEqualStrings("jew", got.codeSlice());
+    }
+}
+
 test "writeItem round-trips a unique amulet (equipped) with two stats" {
     var buf = [_]u8{0} ** 64;
     var it = Item{ .flags = flag.IDENTIFIED, .version = 0x60, .dest = 1, .body_loc = 2, .ilvl = 80, .quality = .unique, .unique_id = 123 };
