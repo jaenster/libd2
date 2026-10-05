@@ -243,6 +243,31 @@ pub fn renderTileAlloc(
     return .{ .rgba = rgba, .w = @intCast(w), .h = @intCast(h), .ox = bb.x0, .oy = bb.y0 };
 }
 
+/// The three draw passes of the client's world drawing (ViewDraw2 0x476BC0): ground tiles
+/// (floors), wall tiles (orientations 1-14 and 16-19) and roof tiles (orientation 15).
+pub const Pass = enum { floor, wall, roof };
+
+/// Screen position, in pixels from the room's origin, that a tile of cell (tx, ty) is drawn at; the
+/// tile's own block offsets (`Rendered.ox`/`oy`) go on top of it.
+///
+/// A tile's record holds one screen point, GameTileToClientCoords of (tx, ty+1) with 40 added to y
+/// (D2DrlgTileDataStrc nWidth/nHeight, D2MOO DRLGROOMTILE_InitTileDataDefaults):
+/// (tx-ty)*80-80, (tx+ty)*40+80. The wall pass (dWallPass 0x4DF1C0) draws at that point as it is.
+/// The ground pass (DrawFloorByViewAndFloor 0x4DE730) and the roof pass (dRoofDraw 0x4DEA70) draw at
+/// it plus the view offset (+0x50, -0x50), and DrawGroundTile 0x6C95D0 takes the 0x50 off x again,
+/// so a ground or roof tile lands 80 above a wall tile of its own cell: a floor's top corner is the
+/// cell's top corner, and a wall's art (negative block y) is anchored at the cell's bottom corner.
+/// A roof tile is then lifted by the tile's roofY.
+pub fn cellOrigin(pass: Pass, tx: i32, ty: i32, roof_y: i32) [2]i32 {
+    const x = (tx - ty) * 80 - 80;
+    const y = (tx + ty) * 40;
+    return switch (pass) {
+        .floor => .{ x, y },
+        .wall => .{ x, y + 80 },
+        .roof => .{ x, y - roof_y },
+    };
+}
+
 const testing = std.testing;
 
 // Build a minimal in-memory DT1 with one iso block and one RLE block so the
@@ -343,4 +368,18 @@ test "parse a real-shaped header-only fixture without pixels" {
     const r = try renderTileAlloc(testing.allocator, &d, &d.tiles[0], &pal);
     defer testing.allocator.free(r.rgba);
     try testing.expect(r.w >= 1 and r.h >= 1);
+}
+
+test "cellOrigin: ground tiles sit 80 above the walls of their cell, a roof is lifted by roofY" {
+    const f = cellOrigin(.floor, 3, 1, 0);
+    const w = cellOrigin(.wall, 3, 1, 0);
+    const r = cellOrigin(.roof, 3, 1, 190);
+    try testing.expectEqual([2]i32{ 2 * 80 - 80, 4 * 40 }, f);
+    try testing.expectEqual([2]i32{ f[0], f[1] + 80 }, w);
+    try testing.expectEqual([2]i32{ f[0], f[1] - 190 }, r);
+    // a floor's top corner is the cell's top corner: (tx-ty)*80 is the floor's centre line
+    try testing.expectEqual(@as(i32, (3 - 1) * 80), f[0] + 80);
+    // neighbouring cells step by the iso lattice
+    try testing.expectEqual([2]i32{ f[0] + 80, f[1] + 40 }, cellOrigin(.floor, 4, 1, 0));
+    try testing.expectEqual([2]i32{ f[0] - 80, f[1] + 40 }, cellOrigin(.floor, 3, 2, 0));
 }
