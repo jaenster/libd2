@@ -374,19 +374,9 @@ pub fn generateActAutomap(
 // sprite abstraction). Additive; shares generateActAutomap's room-window logic.
 // ---------------------------------------------------------------------------
 
-/// RE-derived per-tile screen anchor. The engine computes a tile's screen origin
-/// (D2DrlgTileDataStrc.nScreenX/nScreenY) IDENTICALLY for floors and walls via
-/// DRLGROOMTILE_FillTileData 0x66dde0 / DRLGROOMTILE_CreateWallTileData 0x66dc50,
-/// both calling CoordsMiniMapToScreen 0x643310 with (wx, wy+1):
-///   nScreenX = (wx - (wy+1))*80        = (tx-ty)*80 - 80
-///   nScreenY = ((wx + wy+1)*80 >> 1)+40 = (tx+ty)*40 + 80
-/// then blits each DT1 block at (nScreenX + block.x, nScreenY + block.y). Floors
-/// and walls SHARE this anchor — a wall rises purely via its negative block.y, so
-/// no per-type Y offset exists (verified: DrawFloorByViewAndFloor 0x4de730 vs the
-/// WALL2 pass both add pTile->nScreenY). We fold the block origin (bb.x0,bb.y0)
-/// into placement, so the anchor here is just the -80 / +80 constants. (The absolute
-/// value is cosmetically irrelevant — the web reframes via min/max — but matching
-/// the engine keeps floor/wall/roof vertically consistent.)
+/// The tile record's own screen point, which the wall pass draws walls at, block offsets on
+/// top: GameTileToClientCoords of (tx, ty+1) with 40 on y. `dt1pix.cellOrigin` has the three
+/// passes' anchors and where the ground and roof passes differ from it.
 pub const TILE_ANCHOR_X: i32 = -80;
 pub const TILE_ANCHOR_Y: i32 = 80;
 
@@ -402,30 +392,14 @@ const PASS_FLOOR: u8 = 0;
 const PASS_WALL: u8 = 1;
 const PASS_ROOF: u8 = 2;
 
-// Floor-only draw offsets. FLOOR_X_FIX stays 0: the engine's DrawGroundTile
-// (0x5132c0) blits floors at nScreenX-0x50 INSTEAD of folding the tile's block
-// bounding box, whereas here we already fold each tile's own block origin (bb.x0)
-// into off[0] for every class uniformly. Re-applying -0x50 on top double-counts
-// and skews floors one 80px iso tile-step west of the walls on the same cell; with
-// 0, floors and walls share the identical anchor and line up by construction.
-// FLOOR_Y_NUDGE stays 0: the engine draws floors at nScreenY directly (no floor-only
-// Y term; walls add their block.y on top, roofs add roofY). Any nonzero nudge lifts
-// floors off the wall bases + the collision grid — floors must share the anchor.
-const FLOOR_X_FIX: i32 = 0;
-const FLOOR_Y_NUDGE: i32 = 0;
-
-/// Screen (sx,sy) for one placed tile — the single source of truth for tile
-/// placement, shared by generateActTiles / generateActTilesAll / renderDs1Tiles
-/// (was duplicated). roof-pass tiles get the roofY vertical-Z lift; floors get
-/// the ground-tile X fix + the up-nudge.
+/// Screen (sx,sy) for one placed tile - the single source of truth for tile placement, shared by
+/// generateActTiles / generateActTilesAll / renderDs1Tiles. `off` is the tile's block origin
+/// (Rendered.ox/oy). Floors and roofs are drawn 80 above the walls of their cell, and a roof is
+/// lifted by roofY; see dt1pix.cellOrigin.
 fn tileScreenXY(pass: u8, roof: bool, roofy: i32, tx: i32, ty: i32, off: [2]i32) [2]i32 {
-    const fx: i32 = if (pass == PASS_FLOOR) FLOOR_X_FIX else 0;
-    const fy: i32 = if (pass == PASS_FLOOR) FLOOR_Y_NUDGE else 0;
-    const roof_lift: i32 = if (roof) roofy else 0;
-    return .{
-        (tx - ty) * 80 + TILE_ANCHOR_X + fx + off[0],
-        (tx + ty) * 40 + TILE_ANCHOR_Y + fy + off[1] - roof_lift,
-    };
+    const kind: dt1pix.Pass = if (roof or pass == PASS_ROOF) .roof else if (pass == PASS_FLOOR) .floor else .wall;
+    const o = dt1pix.cellOrigin(kind, tx, ty, if (kind == .roof) roofy else 0);
+    return .{ o[0] + off[0], o[1] + off[1] };
 }
 
 pub const TilePixel = struct { rgba: []u8, w: u32, h: u32 };
@@ -1248,10 +1222,9 @@ pub fn generateActTilesAll(
     for (places.items, 0..) |pl, i| {
         const off = tile_off.items[pl.tile_id];
         const t = tiles.items[pl.tile_id];
-        const sx = (pl.tx - pl.ty) * 80 + TILE_ANCHOR_X + off[0];
-        // Only roof-pass tiles (orient 15) get the roofY vertical lift; walls/floors never do.
-        const roof_lift: i32 = if (pl.roof) tile_roofy.items[pl.tile_id] else 0;
-        const sy = (pl.tx + pl.ty) * 40 + TILE_ANCHOR_Y + off[1] - roof_lift;
+        const xy = tileScreenXY(pl.pass, pl.roof, tile_roofy.items[pl.tile_id], pl.tx, pl.ty, off);
+        const sx = xy[0];
+        const sy = xy[1];
         // World SUBTILE center of the tile cell (tile*5 + half), for light sampling.
         placements[i] = .{ .tile_id = pl.tile_id, .sx = sx, .sy = sy, .level_id = pl.level_id, .wall = pl.pass == PASS_WALL, .roof = pl.roof, .depth = pl.depth, .sub_x = pl.tx * SUB + 2, .sub_y = pl.ty * SUB + 2 };
         min_x = @min(min_x, sx);
