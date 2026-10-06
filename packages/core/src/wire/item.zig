@@ -11,6 +11,11 @@ const BitReader = @import("bitreader.zig").BitReader;
 const isc = @import("itemstatcost.zig");
 const types = @import("itemtypes.zig");
 
+/// The version of the stream this decoder reads and writes (the save version 0x60 of 1.14d). The game's layout depends on
+/// this and never on the item's own version (the 10-bit field after the flags, 0 for a legacy item, 2 for a Classic
+/// one, 101 for an Expansion one): the set partial-list mask, the realm block and the stat encodings are gated on it.
+pub const stream_version: u32 = 0x60;
+
 pub const flag = struct {
     pub const IDENTIFIED: u32 = 0x10;
     pub const SOCKETED: u32 = 0x800;
@@ -382,7 +387,7 @@ fn parseBody(r: *BitReader, is_save: bool) Item {
 
     var list_count: i32 = 0;
     var set_mask: u32 = 0;
-    if (it.version > 0x54 and it.quality == .set) {
+    if (stream_version > 0x54 and it.quality == .set) {
         set_mask = r.read(5);
         list_count += 5;
     }
@@ -509,7 +514,7 @@ pub fn writeItem(w: *BitWriter, it: *const Item) void {
 
     if (!ident) return;
 
-    if (it.version > 0x54 and it.quality == .set) w.write(0, 5); // set partial-list mask (no partials)
+    if (stream_version > 0x54 and it.quality == .set) w.write(0, 5); // set partial-list mask (no partials)
 
     var s: usize = 0;
     while (s < it.n_stats) : (s += 1) {
@@ -674,6 +679,69 @@ test "writeItem round-trips a set item (the 5-bit set mask path)" {
     try std.testing.expectEqual(@as(u16, 55), got.set_id);
     try std.testing.expectEqual(@as(u8, 1), got.n_stats);
     try std.testing.expectEqual(@as(i32, 5), got.stats[0].value);
+}
+
+fn roundTripRare(version: u16, flags: u32) !void {
+    var buf = [_]u8{0} ** 64;
+    var it = Item{ .flags = flags, .version = version, .dest = 3, .on_ground = true, .x = 9, .y = 11, .ilvl = 61, .quality = .rare };
+    it.code = .{ 'x', 'a', 'r', 0 };
+    it.code_len = 3;
+    it.stats[0] = .{ .id = 31, .value = 140 }; // base defense
+    it.stats[1] = .{ .id = 0, .value = 12 };
+    it.n_stats = 2;
+    var w = BitWriter.init(&buf);
+    writeItem(&w, &it);
+    var r = BitReader.init(&buf);
+    const got = parse(&r);
+    try std.testing.expectEqual(version, got.version);
+    try std.testing.expectEqual(Quality.rare, got.quality);
+    try std.testing.expectEqual(@as(u8, 61), got.ilvl);
+    try std.testing.expectEqualStrings("xar", got.codeSlice());
+    try std.testing.expectEqual(@as(u32, @intCast(w.bit_pos)), @as(u32, @intCast(r.bit_pos)));
+    if (flags & flag.IDENTIFIED != 0) {
+        try std.testing.expectEqual(@as(i32, 140), statOf(&got, 31));
+        try std.testing.expectEqual(@as(i32, 12), statOf(&got, 0));
+    }
+}
+
+fn statOf(it: *const Item, id: u16) i32 {
+    var i: usize = 0;
+    while (i < it.n_stats) : (i += 1) if (it.stats[i].id == id) return it.stats[i].value;
+    return -1;
+}
+
+test "a rare reads the same at item version 0, 2 and 101, identified or not" {
+    for ([_]u16{ 0, 1, 2, 100, 101 }) |v| {
+        try roundTripRare(v, flag.IDENTIFIED);
+        try roundTripRare(v, 0);
+    }
+}
+
+test "a set item has its partial-list mask at every item version: the layout follows the stream, not the item" {
+    // written as an Expansion item (the mask is there), then the item's version field is changed in the bytes: the same bits
+    // are what the game's stream holds for a Classic or a legacy item, and the decoder has to read them the same
+    for ([_]u16{ 0, 2, 101 }) |v| {
+        var buf = [_]u8{0} ** 64;
+        var it = Item{ .flags = flag.IDENTIFIED, .version = 101, .dest = 3, .on_ground = true, .x = 1, .y = 2, .ilvl = 40, .quality = .set, .set_id = 55 };
+        it.code = .{ 'r', 'i', 'n', 0 };
+        it.code_len = 3;
+        it.stats[0] = .{ .id = 0, .value = 7 };
+        it.n_stats = 1;
+        var w = BitWriter.init(&buf);
+        writeItem(&w, &it);
+        var bit: usize = 0;
+        while (bit < 10) : (bit += 1) { // bits 32..41 of the stream: the version, least significant bit first
+            const at = 32 + bit;
+            const on = (v >> @intCast(bit)) & 1 != 0;
+            if (on) buf[at / 8] |= @as(u8, 1) << @intCast(at % 8) else buf[at / 8] &= ~(@as(u8, 1) << @intCast(at % 8));
+        }
+        var r = BitReader.init(&buf);
+        const got = parse(&r);
+        try std.testing.expectEqual(v, got.version);
+        try std.testing.expectEqual(@as(u16, 55), got.set_id);
+        try std.testing.expectEqual(@as(u8, 1), got.n_stats);
+        try std.testing.expectEqual(@as(i32, 7), got.stats[0].value);
+    }
 }
 
 test "parse identified magic ring with a stat" {
