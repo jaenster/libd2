@@ -103,7 +103,7 @@ jobs:
       # `using` statement reaches V8 verbatim and is a syntax error before 24. What ships is tsc
       # output at target es2023, where `using` is downlevelled away — so the floor is about the
       # emitted package and this number is about the test command. `npm-floor` below proves it.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: '24' }
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
@@ -142,14 +142,14 @@ jobs:
         with: { version: 0.16.0 }
 
       # The pack runs the source suite on its way through, so building the tarball still needs 24.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: '24' }
       - name: Pack the tarball
         run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh 0.0.0-ci
 
       # Then drop to the version `engines` promises and install what a consumer would install.
       # Nothing else in this workflow can catch a floor that has quietly stopped being true.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: '22.12' }
       - name: Use the tarball on Node 22.12
         run: |
