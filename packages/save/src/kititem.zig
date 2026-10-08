@@ -802,13 +802,13 @@ pub const Maker = struct {
 
     /// What the engine's generation rules out, checked on every made item. Ethereal (ITEMS_MakeEthereal, and the
     /// Ethereal property): only a weapon or armor that ITEMS_HasDurability, which is false for an item whose base has no
-    /// durability or that carries the Indestructible stat (Crown of Ages, a runeword with it); never an Inferior or Set
+    /// durability or that carries the Indestructible stat among its own generation mods (Crown of Ages). A runeword's mods and what is socketed come after the ethereal base exists, so they never block it; never an Inferior or Set
     /// item, never a quest item.
     fn validate(m: *Maker, it: *const wire.Item, code: []const u8) Error!void {
         if (it.flags & wire.flag.ETHEREAL == 0) return;
         if (it.quality == .set) return error.Impossible;
         if (!m.hasDurability(code)) return error.Impossible;
-        for (it.stats[0..it.n_stats]) |s| if (s.id == 152 and s.value > 0) return error.Impossible;
+        for (it.stats[0..it.n_stats]) |s| if (s.id == 152 and s.list == 0 and s.value > 0) return error.Impossible;
         var types = item.itemtype.typesForItem(m.gpa, &m.t, code) catch return error.OutOfMemory;
         defer types.deinit(m.gpa);
         if (types.has("ques")) return error.Impossible;
@@ -1414,4 +1414,16 @@ test "validation: what the engine never makes ethereal is refused" {
     // an ordinary unique with durability is fine
     var s = try m.makeKit("unique:Skin of the Flayerd One;base=uul;eth");
     s.deinit(testing.allocator);
+}
+
+test "validation: a runeword's or a socketed rune's Indestructible does not block an ethereal base" {
+    var m = try Maker.init(testing.allocator, .expansion, 80);
+    defer m.deinit();
+    // the eth base exists first; Eternity (Indestructible) and a Zod rune come after it
+    var eternity = try m.makeKit("base:7wa;runeword=Eternity;eth");
+    eternity.deinit(testing.allocator);
+    var zod = try m.makeKit("base:7wa;eth;sockets=1;fill=r33");
+    zod.deinit(testing.allocator);
+    // the item's own generation mods still block it
+    try testing.expectError(error.Impossible, m.makeKit("unique:Crown of Ages;eth"));
 }
