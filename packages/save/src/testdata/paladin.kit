@@ -1,0 +1,51 @@
+# fudd3r's beta paladin: level 99 Hammerdin, Enigma / Heart of the Oak, every quest of Acts I-V done.
+#
+# Rebuild and load (see docs/beta-character-kits.md):
+#   zig build charkit -- build tools/char-kit/specs/fudd3r-paladin.kit out.d2s --name <name> --seed 0x5eed
+#   tools/char-kit/load.sh fudd3r <name> out.d2s --ledger <dir> --apply
+class paladin
+level 99
+
+# 505 stat points: the strength the gear asks for (the eth Berserker Axe on the switch is the heaviest), the
+# dexterity asked for, everything else vitality
+stats str=auto dex=80 vit=rest
+
+# 110 skill points: the requested build plus the two spare points in Blessed Hammer
+skills prayer=1, cleansing=1, defiance=1, vigor=20, might=1, blessed aim=20, concentration=20, sacrifice=1, smite=1, holy bolt=1, charge=1, blessed hammer=22, holy shield=20
+skill-left blessed hammer
+skill-right concentration
+
+quests complete
+waypoints all
+
+merc act=2 difficulty=nightmare style=defensive level=98
+
+# worn
+item head     | unique:Harlequin Crest;sockets=1;fill=r30
+item body     | base:xtp;runeword=Enigma
+item rhand    | base:fla;runeword=Heart of the Oak;eth
+item lhand    | base:pab;runeword=Spirit
+item belt     | unique:Arachnid Mesh
+item gloves   | set:Trang-Oul's Claws;base=umg
+item boots    | unique:Wartraveler
+item rring    | unique:Bul Katho's Wedding Band
+item lring    | unique:Wisp
+item amulet   | rare:amu;prefix=Priest's,Great Wyrm's,Ruby;suffix=of the Apprentice,of Perfection,of the Colosuss
+
+# the weapon switch
+item swap-rhand | base:7wa;runeword=Call to Arms;eth
+item swap-lhand | base:pad;runeword=Spirit;eth
+
+# the inventory, as in the picture: key, Annihilus, Torch in the first column of the right block, the two tomes
+# above, the cube below them
+item inv 7,0 | item:key
+item inv 7,1 | unique:Annihilus
+item inv 7,2 | unique:Hellfire Torch;class=paladin
+item inv 8,0 | item:ibk
+item inv 9,0 | item:tbk
+item inv 8,2 | item:box
+
+# the mercenary: Act II Holy Freeze, Nightmare defensive
+merc-item rhand | base:7wc;runeword=Insight;eth
+merc-item head  | unique:Crown of Ages;eth
+merc-item body  | unique:Skin of the Flayerd One;base=uul;eth;sockets=1;fill=r32

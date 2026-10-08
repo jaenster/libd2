@@ -21,9 +21,10 @@ pub const convert = @import("convert.zig");
 pub const attributes = @import("attributes.zig");
 /// The items of a save as tooltip-ready views.
 pub const describe = @import("describe.zig");
+/// A whole character save from a text spec: stats, skills, quests, waypoints, mercenary and items.
+pub const charkit = @import("charkit.zig");
 /// The save-form item writer: the inverse of `wire.parseSave`.
 pub const itemwrite = @import("itemwrite.zig");
-/// The items of a character kit made from a line of text: uniques, set items, runewords, affixed items, tomes.
 pub const kititem = @import("kititem.zig");
 
 /// The fixed .d2s header (d2-formats `d2s`): the 335-byte struct, signature/version,
@@ -61,6 +62,7 @@ test {
     _ = convert;
     _ = attributes;
     _ = describe;
+    _ = charkit;
     _ = itemwrite;
     _ = kititem;
     _ = @import("golden_items.zig");

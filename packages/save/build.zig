@@ -33,6 +33,22 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addImport("d2-data", data.module("d2-data"));
     tests.root_module.addImport("d2-item", items.module("d2-item"));
     tests.root_module.addImport("d2-formats", formats.module("d2-formats"));
+    // charkit: a character save from a text spec (zig build charkit -- build spec.kit out.d2s --name Name)
+    const charkit_exe = b.addExecutable(.{
+        .name = "charkit",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/charkit.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    charkit_exe.root_module.addImport("d2-save", mod);
+    b.installArtifact(charkit_exe);
+    const charkit_run = b.addRunArtifact(charkit_exe);
+    if (b.args) |args| charkit_run.addArgs(args);
+    b.step("charkit", "Build a character save from a spec").dependOn(&charkit_run.step);
+
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
