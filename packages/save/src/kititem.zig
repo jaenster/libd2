@@ -19,6 +19,7 @@
 //!   suffix=<name>,...
 //!   variant=N           the inventory picture of a ring, amulet, charm or jewel
 //!   ilvl=N              the item level (99)
+//!   automod=<Name>      on a `base:` item, the AutoMagic.txt row of that name (`Chromatic`: all resistances 35-45), at its best
 //!   qty=N               a stack's size (a tome holds 20 scrolls)
 //!   nomax               roll the values like a drop does instead of taking every one at its best
 //!
@@ -49,6 +50,7 @@ pub const Error = error{
     BadSockets,
     BadRuneword,
     BadAffix,
+    NoTable,
     NoRoll,
     Unsupported,
     OutOfMemory,
@@ -107,6 +109,7 @@ const Kit = struct {
     prefix: []const u8 = "",
     suffix: []const u8 = "",
     qty: ?u16 = null,
+    automod: []const u8 = "",
 };
 
 pub const class_names = [_][]const u8{ "amazon", "sorceress", "necromancer", "paladin", "barbarian", "druid", "assassin" };
@@ -152,10 +155,13 @@ fn parseKit(line: []const u8) Error!Kit {
         } else if (std.mem.eql(u8, key, "ilvl")) {
             k.ilvl = std.fmt.parseInt(u8, val, 10) catch return error.BadSpec;
             if (k.ilvl.? == 0 or k.ilvl.? > 99) return error.BadSpec;
+        } else if (std.mem.eql(u8, key, "automod")) {
+            k.automod = val;
         } else if (std.mem.eql(u8, key, "qty")) {
             k.qty = std.fmt.parseInt(u16, val, 10) catch return error.BadSpec;
         } else return error.BadSpec;
     }
+    if (k.automod.len != 0 and k.kind != .base) return error.BadSpec;
     if (k.runeword.len != 0 and k.kind != .base) return error.BadSpec;
     if (k.base.len != 0 and k.kind != .unique and k.kind != .set) return error.BadSpec;
     if ((k.prefix.len != 0 or k.suffix.len != 0) and k.kind != .rare and k.kind != .magic) return error.BadSpec;
@@ -354,6 +360,7 @@ pub const Maker = struct {
         var b = try m.begin(code, .normal, ilvl, k);
         defer b.deinit(m.gpa);
         try m.baseStats(&b.it, code, k);
+        if (k.automod.len != 0) try m.automod(&b.it, code, ilvl, k);
         var rw: ?Runeword = null;
         if (k.runeword.len != 0) rw = try m.runeword(code, k.runeword);
         if (rw) |r| {
@@ -569,6 +576,47 @@ pub const Maker = struct {
             const hi: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&b4, "mod{d}max", .{n}) catch unreachable));
             try m.applyProp(out, code, p, lo, hi, ctx, k);
         }
+    }
+
+    /// The automod of a base (AutoMagic.txt, picked by its `Name`, `Chromatic`): the item keeps the row's number and its
+    /// properties, each at the top of its range. The row has to fit the base's types and the item level, as the engine's
+    /// own pick of one does.
+    fn automod(m: *Maker, it: *wire.Item, code: []const u8, ilvl: u8, k: Kit) Error!void {
+        var t = d2data.load(m.gpa, "AutoMagic") catch return error.NoTable;
+        defer t.deinit();
+        var row: ?usize = null;
+        for (0..t.rowCount()) |r| if (std.ascii.eqlIgnoreCase(t.get(r, "Name"), k.automod)) {
+            row = r;
+        };
+        const r = row orelse return error.BadSpec;
+        if (!m.scope.isExpansion() and (t.getInt(i32, r, "version") orelse 0) >= 100) return error.NotInScope;
+        if ((t.getInt(i32, r, "level") orelse 0) > ilvl) return error.BadSpec;
+        var types = item.itemtype.typesForItem(m.gpa, &m.t, code) catch return error.OutOfMemory;
+        defer types.deinit(m.gpa);
+        var itypes: [7][]const u8 = undefined;
+        var etypes: [4][]const u8 = undefined;
+        var nb: [8]u8 = undefined;
+        inline for (0..7) |i| itypes[i] = t.get(r, std.fmt.bufPrint(&nb, "itype{d}", .{i + 1}) catch unreachable);
+        inline for (0..4) |i| etypes[i] = t.get(r, std.fmt.bufPrint(&nb, "etype{d}", .{i + 1}) catch unreachable);
+        if (!item.itemtype.affixMatchesTypes(&types, &itypes, &etypes)) return error.BadSpec;
+        const ctx = item.properties.PropContext{ .code = code, .item_level = ilvl, .is_expansion = m.scope.isExpansion() };
+        var list: std.ArrayListUnmanaged(item.properties.RolledStat) = .empty;
+        defer list.deinit(m.gpa);
+        var n: usize = 1;
+        while (n <= 3) : (n += 1) {
+            var b1: [16]u8 = undefined;
+            var b2: [16]u8 = undefined;
+            var b3: [16]u8 = undefined;
+            var b4: [16]u8 = undefined;
+            const mod = t.get(r, std.fmt.bufPrint(&b1, "mod{d}code", .{n}) catch unreachable);
+            if (mod.len == 0) break;
+            const par: i32 = t.getInt(i32, r, std.fmt.bufPrint(&b2, "mod{d}param", .{n}) catch unreachable) orelse 0;
+            const lo: i32 = t.getInt(i32, r, std.fmt.bufPrint(&b3, "mod{d}min", .{n}) catch unreachable) orelse 0;
+            const hi: i32 = t.getInt(i32, r, std.fmt.bufPrint(&b4, "mod{d}max", .{n}) catch unreachable) orelse 0;
+            try m.applyProp(&list, mod, par, lo, hi, ctx, k);
+        }
+        it.automagic = @intCast(r + 1);
+        try m.pushRolled(it, list.items, 0, k);
     }
 
     /// Put rolled stats on the item, in list `list` (0 its own, 1..5 a set tier, 6 the runeword's).
@@ -1279,4 +1327,58 @@ test "every form of a kit is written back exactly as it parses" {
             return e;
         };
     }
+}
+
+test "automod: a Sacred Targe with the best all-resistance automod, under Spirit" {
+    var m = try Maker.init(testing.allocator, .expansion, 77);
+    defer m.deinit();
+    var made = try m.makeKit("base:pab;runeword=Spirit;automod=Chromatic");
+    defer made.deinit(testing.allocator);
+    var ar = std.heap.ArenaAllocator.init(testing.allocator);
+    defer ar.deinit();
+    const recs = try itemtext.parseRecords(ar.allocator(), made.rec, 8);
+    const it = recs[0];
+    // Chromatic is the 27th row of the 1.14d AutoMagic.txt: all resistances 35 to 45
+    try testing.expectEqual(@as(u16, 27), it.automagic);
+    for ([_]u16{ 39, 41, 43, 45 }) |id| try testing.expectEqual(@as(i32, 45), statOf(&it, 0, id).?.value);
+    // the shield keeps its runeword, four sockets and the top of its defense range
+    try testing.expect(it.flags & wire.flag.RUNEWORD != 0);
+    try testing.expectEqual(@as(u8, 4), it.sockets);
+    try testing.expectEqual(@as(i32, 158), baseOf(&it, 31));
+    // a row that does not fit the base, and one that is none
+    try testing.expectError(error.BadSpec, m.makeKit("base:pab;automod=Nonesuch"));
+    try testing.expectError(error.BadSpec, parseKit("unique:Wisp;automod=Chromatic"));
+}
+
+test "ethereal: the engine's rule, ITEMMODS_ApplyEthereality and ITEMS_MakeEthereal" {
+    var m = try Maker.init(testing.allocator, .expansion, 78);
+    defer m.deinit();
+    var ar = std.heap.ArenaAllocator.init(testing.allocator);
+    defer ar.deinit();
+    // armor: the rolled defense times 3 / 2 (integer), at the top of the base range 446 to 557; maximum durability
+    // half the base's plus one; a weapon stores no damage (the game applies the 3 / 2 when it loads the save)
+    var plain = try m.makeKit("base:uul");
+    defer plain.deinit(testing.allocator);
+    var eth = try m.makeKit("base:uul;eth");
+    defer eth.deinit(testing.allocator);
+    const p = (try itemtext.parseRecords(ar.allocator(), plain.rec, 8))[0];
+    const e = (try itemtext.parseRecords(ar.allocator(), eth.rec, 8))[0];
+    try testing.expectEqual(@as(i32, 557), baseOf(&p, 31));
+    try testing.expectEqual(@as(i32, 557 * 3 / 2), baseOf(&e, 31));
+    try testing.expectEqual(@as(i32, 70), baseOf(&p, 73));
+    try testing.expectEqual(@as(i32, 70 / 2 + 1), baseOf(&e, 73));
+    try testing.expectEqual(baseOf(&e, 73), baseOf(&e, 72));
+    // an upgraded unique is a fresh roll on the elite base, then made ethereal: the elite base's top, times 3 / 2,
+    // and the enhanced defense the unique carries is a separate stat that the engine adds on top of it
+    var up = try m.makeKit("unique:Skin of the Flayerd One;base=uul;eth");
+    defer up.deinit(testing.allocator);
+    const u = (try itemtext.parseRecords(ar.allocator(), up.rec, 8))[0];
+    try testing.expectEqual(@as(i32, 557 * 3 / 2), baseOf(&u, 31));
+    try testing.expectEqual(@as(i32, 190), statOf(&u, 0, 16).?.value);
+    // a weapon: no damage stats in the record, durability halved plus one
+    var axe = try m.makeKit("base:7wa;eth");
+    defer axe.deinit(testing.allocator);
+    const a = (try itemtext.parseRecords(ar.allocator(), axe.rec, 8))[0];
+    for (a.stats[0..a.n_stats]) |s| try testing.expect(s.id != 21 and s.id != 22);
+    try testing.expectEqual(@as(i32, @divTrunc(@as(i32, @intCast(m.t.weapons.int(m.t.itemRef("7wa").?.row, "durability"))), 2) + 1), baseOf(&a, 73));
 }

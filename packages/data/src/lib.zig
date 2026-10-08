@@ -21,6 +21,7 @@ const Embedded = struct { name: []const u8, bytes: []const u8 };
 /// Names are matched case-insensitively by `raw`/`load`.
 pub const tables = [_]Embedded{
     .{ .name = "Armor", .bytes = @embedFile("excel/Armor.txt") },
+    .{ .name = "AutoMagic", .bytes = @embedFile("excel/AutoMagic.txt") },
     .{ .name = "AutoMap", .bytes = @embedFile("excel/AutoMap.txt") },
     .{ .name = "Belts", .bytes = @embedFile("excel/Belts.txt") },
     .{ .name = "BodyLocs", .bytes = @embedFile("excel/BodyLocs.txt") },
