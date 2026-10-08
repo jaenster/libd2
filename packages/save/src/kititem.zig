@@ -51,6 +51,8 @@ pub const Error = error{
     BadRuneword,
     BadAffix,
     NoTable,
+    /// an item the generation code can never make (see `validate`)
+    Impossible,
     NoRoll,
     Unsupported,
     OutOfMemory,
@@ -798,7 +800,22 @@ pub const Maker = struct {
         return m.finishWith(b, ex, code, name);
     }
 
+    /// What the engine's generation rules out, checked on every made item. Ethereal (ITEMS_MakeEthereal, and the
+    /// Ethereal property): only a weapon or armor that ITEMS_HasDurability, which is false for an item whose base has no
+    /// durability or that carries the Indestructible stat (Crown of Ages, a runeword with it); never an Inferior or Set
+    /// item, never a quest item.
+    fn validate(m: *Maker, it: *const wire.Item, code: []const u8) Error!void {
+        if (it.flags & wire.flag.ETHEREAL == 0) return;
+        if (it.quality == .set) return error.Impossible;
+        if (!m.hasDurability(code)) return error.Impossible;
+        for (it.stats[0..it.n_stats]) |s| if (s.id == 152 and s.value > 0) return error.Impossible;
+        var types = item.itemtype.typesForItem(m.gpa, &m.t, code) catch return error.OutOfMemory;
+        defer types.deinit(m.gpa);
+        if (types.has("ques")) return error.Impossible;
+    }
+
     fn finishWith(m: *Maker, b: *Build, ex: record.Extra, code: []const u8, name: []const u8) Error!Made {
+        try m.validate(&b.it, code);
         var buf: [record.max_record]u8 = undefined;
         const n = record.encode(&buf, &b.it, ex) catch |e| return switch (e) {
             error.Unsupported => error.Unsupported,
@@ -1381,4 +1398,20 @@ test "ethereal: the engine's rule, ITEMMODS_ApplyEthereality and ITEMS_MakeEther
     const a = (try itemtext.parseRecords(ar.allocator(), axe.rec, 8))[0];
     for (a.stats[0..a.n_stats]) |s| try testing.expect(s.id != 21 and s.id != 22);
     try testing.expectEqual(@as(i32, @divTrunc(@as(i32, @intCast(m.t.weapons.int(m.t.itemRef("7wa").?.row, "durability"))), 2) + 1), baseOf(&a, 73));
+}
+
+test "validation: what the engine never makes ethereal is refused" {
+    var m = try Maker.init(testing.allocator, .expansion, 79);
+    defer m.deinit();
+    // Crown of Ages is indestructible, so ITEMS_HasDurability is false and ITEMS_MakeEthereal returns early
+    try testing.expectError(error.Impossible, m.makeKit("unique:Crown of Ages;eth"));
+    var ok = try m.makeKit("unique:Crown of Ages");
+    ok.deinit(testing.allocator);
+    // a set item is never ethereal
+    try testing.expectError(error.Impossible, m.makeKit("set:Trang-Oul's Claws;eth"));
+    // a ring has no durability
+    try testing.expectError(error.Unsupported, m.makeKit("unique:Wisp;eth"));
+    // an ordinary unique with durability is fine
+    var s = try m.makeKit("unique:Skin of the Flayerd One;base=uul;eth");
+    s.deinit(testing.allocator);
 }
