@@ -288,7 +288,8 @@ fn parseBody(r: *BitReader, is_save: bool) Item {
     }
     if (r.readBool()) it.automagic = @intCast(r.read(11));
 
-    const ident = it.identified();
+    // the save form (nParam1) always carries the quality block and the stat list, identified or not
+    const ident = it.identified() or is_save;
     switch (@intFromEnum(it.quality)) {
         1, 3 => it.file_index = @intCast(r.read(3)), // low / superior file index
         2 => {
