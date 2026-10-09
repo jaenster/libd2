@@ -104,9 +104,10 @@ pub const Items = struct {
         return std.mem.readInt(u16, self.bytes[2..4], .little);
     }
 
-    /// Walk the player's item list. Each record is byte-aligned and starts with "JM", so the
-    /// iterator resyncs to the next marker after every decode (the decoder consumes exactly one
-    /// record but nested socketed items follow their host).
+    /// Walk the player's item list: the header counts the items the character carries, and each of those is
+    /// followed by the records of the items socketed into it, as many as its own socket-item field says (as the
+    /// engine loads it). Records are byte-aligned and start with "JM"; the iterator resyncs to the next marker after
+    /// every decode.
     pub fn iterator(self: *const Items) Iterator {
         return .{ .bytes = self.bytes, .remaining = self.playerCount(), .pos = 4 };
     }
@@ -114,10 +115,11 @@ pub const Items = struct {
     pub const Iterator = struct {
         bytes: []const u8,
         remaining: u16,
+        kids: u8 = 0,
         pos: usize,
 
         pub fn next(self: *Iterator) ?wire.Item {
-            if (self.remaining == 0) return null;
+            if (self.remaining == 0 and self.kids == 0) return null;
             while (self.pos + item_marker.len <= self.bytes.len and
                 !std.mem.eql(u8, self.bytes[self.pos..][0..item_marker.len], item_marker)) : (self.pos += 1)
             {}
@@ -125,7 +127,12 @@ pub const Items = struct {
             var r = core.bitreader.BitReader.init(self.bytes[self.pos..]);
             const it = wire.parseSave(&r);
             self.pos += (r.bit_pos + 7) / 8;
-            self.remaining -= 1;
+            if (self.kids > 0) {
+                self.kids -= 1;
+            } else {
+                self.remaining -= 1;
+                if (!it.compact and !it.crude) self.kids = it.socketed_count;
+            }
             return it;
         }
     };

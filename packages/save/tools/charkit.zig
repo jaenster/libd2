@@ -88,6 +88,9 @@ fn report(bytes: []const u8) !void {
     if (save.sections.d2s.parseHeader(bytes)) |h| {
         const nm = h.name[0 .. std.mem.indexOfScalar(u8, &h.name, 0) orelse h.name.len];
         if (charkit.engineRefusal(bytes, nm)) |code| say("engine load check: REFUSED, code {d}\n", .{code}) else say("engine load check: ok\n", .{});
+    if (save.parse(bytes)) |sv| {
+        if (charkit.itemListFault(sv.items.bytes)) |f| say("engine item load: REFUSED at top-level item {d}, byte {d} of the item section: {s}\n", .{ f.index, f.at, f.reason }) else say("engine item load: ok\n", .{});
+    } else |_| {}
     }
 }
 

@@ -431,7 +431,8 @@ const ItemList = struct {
 
     fn add(l: *ItemList, gpa: std.mem.Allocator, r: ItemRec) Error!void {
         l.bytes.appendSlice(gpa, r.rec) catch return error.OutOfMemory;
-        l.count += r.n_records;
+        // the header counts the items the character carries; the items socketed into one are not counted
+        l.count += 1;
     }
 };
 
@@ -673,6 +674,67 @@ pub const Readback = struct {
     checksum_ok: bool,
 };
 
+/// Where the engine's player item load (PLRSAVE_LoadItemListFromStream @0x5335e0) would stop with its error.
+pub const ItemFault = struct {
+    /// the 0-based top-level item whose record (or whose socketed children) the engine rejects
+    index: usize,
+    /// the byte offset of the offending record inside the item section
+    at: usize,
+    reason: []const u8,
+};
+
+/// Walks the player's item list the way the engine does: the header count is the number of top-level items; every
+/// record starts with "JM"; an item is followed by as many records as its own socket-item field says; a record whose
+/// code the item tables do not know, or whose quality is not 1..9, fails the load. Null when the whole list loads and
+/// ends where the corpse list begins ("JM", then a count of at most one).
+fn walkList(items: []const u8, start: usize, end: *usize) ?ItemFault {
+    if (start + 4 > items.len or !std.mem.eql(u8, items[start..][0..2], "JM")) return .{ .index = 0, .at = start, .reason = "list header is not JM" };
+    const count = std.mem.readInt(u16, items[start + 2 ..][0..2], .little);
+    var pos: usize = start + 4;
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        var children: usize = 0;
+        var k: usize = 0;
+        while (k <= children) : (k += 1) {
+            const at = pos;
+            if (pos + 2 > items.len or !std.mem.eql(u8, items[pos..][0..2], "JM")) return .{ .index = i, .at = at, .reason = if (k == 0) "record does not start with JM" else "socketed record does not start with JM" };
+            var r = core.bitreader.BitReader.init(items[pos..]);
+            const it = core.wire.parseSave(&r);
+            if (r.bit_pos > (items.len - pos) * 8) return .{ .index = i, .at = at, .reason = "record runs past the end of the save" };
+            if (it.flags & core.wire.flag.BODYPART == 0 and core.itemtypes.lookup(it.codeSlice()) == null) return .{ .index = i, .at = at, .reason = "item code unknown to the item tables" };
+            if (!it.compact and !it.crude) {
+                const q = @intFromEnum(it.quality);
+                if (q < 1 or q > 9) return .{ .index = i, .at = at, .reason = "quality is not 1..9" };
+            }
+            if (k == 0 and !it.compact and !it.crude) children = it.socketed_count;
+            pos += (r.bit_pos + 7) / 8;
+        }
+    }
+    end.* = pos;
+    return null;
+}
+
+/// Walks the whole item section the way the engine loads it: the player's list, the corpse list (at most one corpse),
+/// then in an expansion save "jf" and the mercenary's list and "kf" and the golem flag. Null when it all loads and
+/// ends at the end of the file.
+pub fn itemListFault(items: []const u8) ?ItemFault {
+    var pos: usize = 0;
+    if (walkList(items, 0, &pos)) |f| return f;
+    if (pos + 4 > items.len or !std.mem.eql(u8, items[pos..][0..2], "JM")) return .{ .index = 0, .at = pos, .reason = "no corpse list after the player list" };
+    if (std.mem.readInt(u16, items[pos + 2 ..][0..2], .little) > 1) return .{ .index = 0, .at = pos, .reason = "corpse count above one" };
+    if (std.mem.readInt(u16, items[pos + 2 ..][0..2], .little) == 1) return null; // a corpse's items are not walked here
+    pos += 4;
+    if (pos + 2 > items.len or !std.mem.eql(u8, items[pos..][0..2], "jf")) return .{ .index = 0, .at = pos, .reason = "no mercenary section (jf)" };
+    pos += 2;
+    var end: usize = 0;
+    if (walkList(items, pos, &end)) |f| return f;
+    pos = end;
+    if (pos + 3 > items.len or !std.mem.eql(u8, items[pos..][0..2], "kf")) return .{ .index = 0, .at = pos, .reason = "no golem section (kf)" };
+    if (pos + 3 > items.len) return .{ .index = 0, .at = pos, .reason = "golem flag missing" };
+    if (items[pos + 2] == 0 and pos + 3 != items.len) return .{ .index = 0, .at = pos, .reason = "bytes after the golem flag" };
+    return null;
+}
+
 /// The engine's own refusals of a save at join, in its numbering (PLAYERSAVE_ParseHeaderAndCreateUnit @0x56a090,
 /// as 1.14d runs it): 4 truncated or class above 7, 5 size field differs from the length, 6 checksum, 7 version
 /// outside 0x5c..0x60 or name differs from the client's, and 2 for status bit 0, which makes the engine return before
@@ -894,6 +956,9 @@ test "the example spec makes a level 99 paladin with its gear, and the same byte
     try testing.expectEqual(@as(u32, 0), r.act6_quest_words);
     try testing.expectEqual(@as(u16, 10), r.merc_type);
     try testing.expectEqual(@as(?u8, null), engineRefusal(out, "FuddrPally"));
+    const parsed = try sections.parse(out);
+    try testing.expectEqual(@as(?ItemFault, null), itemListFault(parsed.items.bytes));
+    try testing.expectEqual(@as(u16, 18), parsed.items.playerCount()); // twelve worn, six in the grid; the sockets are not counted
     try testing.expectEqual(@as(?u8, 7), engineRefusal(out, "Other"));
     const bad = try testing.allocator.dupe(u8, out);
     defer testing.allocator.free(bad);
@@ -901,6 +966,11 @@ test "the example spec makes a level 99 paladin with its gear, and the same byte
     std.mem.writeInt(u32, bad[0xc..0x10], 0, .little);
     std.mem.writeInt(u32, bad[0xc..0x10], d2s.checksum(bad), .little);
     try testing.expectEqual(@as(?u8, 2), engineRefusal(bad, "FuddrPally"));
+    // a count that includes the socketed items (what the writer used to put) runs the engine's loop into the corpse list
+    const swollen = try testing.allocator.dupe(u8, parsed.items.bytes);
+    defer testing.allocator.free(swollen);
+    std.mem.writeInt(u16, swollen[2..4], 39, .little);
+    try testing.expect(itemListFault(swollen) != null);
 
     // every record of both lists parses back, in the places the spec names
     const s = try sections.parse(out);
@@ -922,7 +992,7 @@ test "the example spec makes a level 99 paladin with its gear, and the same byte
     try testing.expectEqual(@as(u32, 6), grid);
     try testing.expectEqual(@as(u32, 3), eth);
     try testing.expectEqual(@as(u32, 5), runewords);
-    try testing.expectEqual(@as(u16, 8), r.merc_items);
+    try testing.expectEqual(@as(u16, 3), r.merc_items); // carried: the socketed ones are not counted
 
     // the same spec, name, time and seed: the same bytes
     var maker2 = try kititem.Maker.init(testing.allocator, .expansion, 0x5eed);

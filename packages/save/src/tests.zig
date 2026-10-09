@@ -46,7 +46,10 @@ test "parse decodes every section of a real save" {
     var it = s.items.iterator();
     var seen: usize = 0;
     while (it.next()) |_| seen += 1;
-    try std.testing.expectEqual(@as(usize, s.items.playerCount()), seen);
+    // the header counts the 70 carried items; the 19 gems and runes socketed into them follow their hosts
+    try std.testing.expectEqual(@as(usize, 70), s.items.playerCount());
+    try std.testing.expectEqual(@as(usize, 89), seen);
+    try std.testing.expectEqual(@as(?save.charkit.ItemFault, null), save.charkit.itemListFault(s.items.bytes));
 }
 
 test "parse then write is byte-identical to the source save" {
