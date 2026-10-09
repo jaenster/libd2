@@ -110,6 +110,33 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
         return;
     }
+    if (std.mem.eql(u8, cmd, "patch")) {
+        // charkit patch <played.d2s> <spec> <out.d2s> [--seed n]: the spec's mercenary items, and the spec's version of a
+        // unique or set item that sits on another base in the save, written into a save that has been played
+        const cur_path = args.next() orelse fatal("patch needs the save", .{});
+        const spec_path = args.next() orelse fatal("patch needs a spec", .{});
+        const out_path = args.next() orelse fatal("patch needs an output file", .{});
+        var seed: u32 = 0x5eed;
+        while (args.next()) |a| {
+            if (std.mem.eql(u8, a, "--seed")) seed = std.fmt.parseInt(u32, args.next() orelse fatal("--seed needs a value", .{}), 0) catch fatal("bad --seed", .{}) else fatal("unknown option {s}", .{a});
+        }
+        const cur = readFile(cur_path) catch fatal("cannot read {s}", .{cur_path});
+        const text = readFile(spec_path) catch fatal("cannot read {s}", .{spec_path});
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        const spec = charkit.parseSpec(arena.allocator(), text) catch |e| fatal("spec: {s}", .{@errorName(e)});
+        var maker = try kititem.Maker.init(gpa, .expansion, seed);
+        defer maker.deinit();
+        var diag = charkit.Diag{};
+        const out = charkit.patchItems(gpa, cur, spec, .{ .diag = &diag }, charkit.kitSource(&maker)) catch |e| {
+            if (diag.line.len != 0) fatal("item `{s}`: {s}", .{ diag.line, diag.err });
+            fatal("patch: {s}", .{@errorName(e)});
+        };
+        try writeFile(out_path, out);
+        say("wrote {s} ({d} bytes)\n", .{ out_path, out.len });
+        try report(out);
+        return;
+    }
     if (!std.mem.eql(u8, cmd, "build")) fatal("unknown command {s}", .{cmd});
     const spec_path = args.next() orelse fatal("build needs a spec", .{});
     const out_path = args.next() orelse fatal("build needs an output file", .{});

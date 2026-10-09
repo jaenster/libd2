@@ -51,6 +51,7 @@ pub const Error = error{
     TooManySkillPoints,
     ItemFailed,
     TooLarge,
+    BadSave,
     OutOfMemory,
     NoTable,
 };
@@ -623,6 +624,101 @@ pub fn compose(gpa: std.mem.Allocator, spec: Spec, name: []const u8, opts: Optio
     return out;
 }
 
+const Span = struct { start: usize, end: usize, host: wire.Item };
+
+/// The byte spans of a list's top-level items, each with the records socketed into it, from the list header at `start`.
+/// `end` is where the list ends.
+fn listSpans(gpa: std.mem.Allocator, items: []const u8, start: usize, end: *usize) Error![]Span {
+    var spans: std.ArrayList(Span) = .empty;
+    errdefer spans.deinit(gpa);
+    if (start + 4 > items.len or !std.mem.eql(u8, items[start..][0..2], "JM")) return error.BadSave;
+    const count = std.mem.readInt(u16, items[start + 2 ..][0..2], .little);
+    var pos = start + 4;
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        const s = pos;
+        var host: wire.Item = undefined;
+        var children: usize = 0;
+        var k: usize = 0;
+        while (k <= children) : (k += 1) {
+            if (pos + 2 > items.len or !std.mem.eql(u8, items[pos..][0..2], "JM")) return error.BadSave;
+            var r = core.bitreader.BitReader.init(items[pos..]);
+            const it = wire.parseSave(&r);
+            if (k == 0) {
+                host = it;
+                if (!it.compact and !it.crude) children = it.socketed_count;
+            }
+            pos += (r.bit_pos + 7) / 8;
+            if (pos > items.len) return error.BadSave;
+        }
+        spans.append(gpa, .{ .start = s, .end = pos, .host = host }) catch return error.OutOfMemory;
+    }
+    end.* = pos;
+    return spans.toOwnedSlice(gpa);
+}
+
+/// Rewrites the items of a character that has been played, leaving everything else in the save as it is (the stats,
+/// the quests, the stash of the inventory the player has moved things in). The mercenary's items are taken from the
+/// spec whole. A player item that the spec names and that is in the save on another base (the same unique or set item
+/// by quality and id) is replaced by the spec's, in the place the save has it.
+pub fn patchItems(gpa: std.mem.Allocator, cur: []const u8, spec: Spec, opts: Options, source: ItemSource) Error![]u8 {
+    var sv = sections.parse(cur) catch return error.BadSave;
+    const items = sv.items.bytes;
+    var pl_end: usize = 0;
+    const spans = try listSpans(gpa, items, 0, &pl_end);
+    defer gpa.free(spans);
+
+    var player: std.ArrayList(u8) = .empty;
+    defer player.deinit(gpa);
+    for (spans) |sp| {
+        var rec_used: ?[]u8 = null;
+        defer if (rec_used) |r| gpa.free(r);
+        const h = sp.host;
+        if (!h.compact and !h.crude and (h.quality == .unique or h.quality == .set)) {
+            for (spec.items) |il| {
+                const place: Place = .{ .dest = h.dest, .body_loc = h.body_loc, .x = @intCast(h.x), .y = @intCast(h.y), .page_raw = h.page_raw };
+                const made = source.make(source.ctx, gpa, il.kit, place) catch continue;
+                const mh = itemOf(made.rec);
+                const same = mh.quality == h.quality and (if (h.quality == .unique) mh.unique_id == h.unique_id else mh.set_id == h.set_id);
+                if (same and !std.mem.eql(u8, mh.codeSlice(), h.codeSlice())) {
+                    rec_used = made.rec;
+                    break;
+                }
+                gpa.free(made.rec);
+            }
+        }
+        player.appendSlice(gpa, rec_used orelse items[sp.start..sp.end]) catch return error.OutOfMemory;
+    }
+
+    // the corpse list up to the mercenary section, then the spec's mercenary items, then the old golem section
+    const jf = std.mem.indexOfPos(u8, items, pl_end, "jf") orelse return error.BadSave;
+    var old_merc_end: usize = jf + 2;
+    const old_merc = try listSpans(gpa, items, jf + 2, &old_merc_end);
+    gpa.free(old_merc);
+    var merc = ItemList{};
+    defer merc.bytes.deinit(gpa);
+    for (spec.merc_items) |il| {
+        const place: Place = .{ .dest = 1, .body_loc = bodyLoc(il.slot), .x = bodyLoc(il.slot) };
+        const made = source.make(source.ctx, gpa, il.kit, place) catch |e| return failItem(opts, il.kit, e);
+        defer gpa.free(made.rec);
+        try merc.add(gpa, made);
+    }
+    var tail: std.ArrayList(u8) = .empty;
+    defer tail.deinit(gpa);
+    tail.appendSlice(gpa, items[0..4]) catch return error.OutOfMemory;
+    tail.appendSlice(gpa, player.items) catch return error.OutOfMemory;
+    tail.appendSlice(gpa, items[pl_end .. jf + 2]) catch return error.OutOfMemory;
+    tail.appendSlice(gpa, "JM") catch return error.OutOfMemory;
+    tail.appendSlice(gpa, &std.mem.toBytes(@as(u16, @intCast(merc.count)))) catch return error.OutOfMemory;
+    tail.appendSlice(gpa, merc.bytes.items) catch return error.OutOfMemory;
+    tail.appendSlice(gpa, items[old_merc_end..]) catch return error.OutOfMemory;
+    sv.items = .{ .bytes = tail.items };
+    const out = gpa.alloc(u8, sv.byteLen()) catch return error.OutOfMemory;
+    errdefer gpa.free(out);
+    _ = sv.writeInto(out) catch return error.TooLarge;
+    return out;
+}
+
 const HirelingRow = struct { id: u32, exp_per_level: u32 };
 
 /// The Hireling.txt row a spec names (the expansion's, version 100): the Id the header stores.
@@ -687,6 +783,11 @@ pub const ItemFault = struct {
 /// record starts with "JM"; an item is followed by as many records as its own socket-item field says; a record whose
 /// code the item tables do not know, or whose quality is not 1..9, fails the load. Null when the whole list loads and
 /// ends where the corpse list begins ("JM", then a count of at most one).
+/// The Misc.txt rows d2up adds to the game: the engine loads them from the mod's tables, which libd2's stock ones lack.
+fn isModItem(code: []const u8) bool {
+    return std.mem.eql(u8, code, "pch");
+}
+
 fn walkList(items: []const u8, start: usize, end: *usize) ?ItemFault {
     if (start + 4 > items.len or !std.mem.eql(u8, items[start..][0..2], "JM")) return .{ .index = 0, .at = start, .reason = "list header is not JM" };
     const count = std.mem.readInt(u16, items[start + 2 ..][0..2], .little);
@@ -701,7 +802,7 @@ fn walkList(items: []const u8, start: usize, end: *usize) ?ItemFault {
             var r = core.bitreader.BitReader.init(items[pos..]);
             const it = core.wire.parseSave(&r);
             if (r.bit_pos > (items.len - pos) * 8) return .{ .index = i, .at = at, .reason = "record runs past the end of the save" };
-            if (it.flags & core.wire.flag.BODYPART == 0 and core.itemtypes.lookup(it.codeSlice()) == null) return .{ .index = i, .at = at, .reason = "item code unknown to the item tables" };
+            if (it.flags & core.wire.flag.BODYPART == 0 and core.itemtypes.lookup(it.codeSlice()) == null and !isModItem(it.codeSlice())) return .{ .index = i, .at = at, .reason = "item code unknown to the item tables" };
             if (!it.compact and !it.crude) {
                 const q = @intFromEnum(it.quality);
                 if (q < 1 or q > 9) return .{ .index = i, .at = at, .reason = "quality is not 1..9" };
@@ -1000,4 +1101,75 @@ test "the example spec makes a level 99 paladin with its gear, and the same byte
     const again = try compose(testing.allocator, spec, "FuddrPally", .{ .created = 1_790_000_000 }, kitSource(&maker2));
     defer testing.allocator.free(again);
     try testing.expectEqualSlices(u8, out, again);
+}
+
+fn setCodeBits(rec: []u8, code: []const u8) void {
+    // flags 32, version 10, destination 3, body location 4, x 4, y 4, page 3 follow the 16 bits of "JM"
+    const bit: usize = 16 + 60;
+    for (0..4) |i| {
+        const ch: u8 = if (i < code.len) code[i] else ' ';
+        for (0..8) |b| {
+            const v: u8 = (ch >> @intCast(b)) & 1;
+            const at = bit + i * 8 + b;
+            rec[at >> 3] = (rec[at >> 3] & ~(@as(u8, 1) << @intCast(at & 7))) | (v << @intCast(at & 7));
+        }
+    }
+}
+
+test "patching a played save rewrites the mercenary's items and a wrong-base item and leaves the rest alone" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const text = @embedFile("testdata/paladin.kit");
+    const spec = try parseSpec(arena.allocator(), text);
+    var maker = try kititem.Maker.init(testing.allocator, .expansion, 0x5eed);
+    defer maker.deinit();
+    const out = try compose(testing.allocator, spec, "FuddrPally", .{ .created = 1_790_000_000 }, kitSource(&maker));
+    defer testing.allocator.free(out);
+
+    // a save as it was played before: the gloves on the Vambraces and the merc in the Crown of Ages
+    const old_text = try std.mem.replaceOwned(u8, arena.allocator(), text, "unique:Giantskull;eth;sockets=2", "unique:Crown of Ages");
+    const old_spec = try parseSpec(arena.allocator(), old_text);
+    var m2 = try kititem.Maker.init(testing.allocator, .expansion, 0x5eed);
+    defer m2.deinit();
+    const old = try compose(testing.allocator, old_spec, "FuddrPally", .{ .created = 1_790_000_000 }, kitSource(&m2));
+    defer testing.allocator.free(old);
+    var os = try sections.parse(old);
+    var end: usize = 0;
+    const spans = try listSpans(testing.allocator, os.items.bytes, 0, &end);
+    defer testing.allocator.free(spans);
+    const claws = for (spans) |sp| {
+        if (std.mem.eql(u8, sp.host.codeSlice(), "xmg")) break sp;
+    } else return error.TestUnexpectedResult;
+    const bytes = try testing.allocator.dupe(u8, os.items.bytes);
+    defer testing.allocator.free(bytes);
+    setCodeBits(bytes[claws.start..claws.end], "umg");
+    os.items = .{ .bytes = bytes };
+    const played = try testing.allocator.alloc(u8, os.byteLen());
+    defer testing.allocator.free(played);
+    _ = try os.writeInto(played);
+
+    var m3 = try kititem.Maker.init(testing.allocator, .expansion, 0x5eed);
+    defer m3.deinit();
+    const patched = try patchItems(testing.allocator, played, spec, .{}, kitSource(&m3));
+    defer testing.allocator.free(patched);
+    try testing.expectEqual(@as(?u8, null), engineRefusal(patched, "FuddrPally"));
+    const ps = try sections.parse(patched);
+    try testing.expectEqual(@as(?ItemFault, null), itemListFault(ps.items.bytes));
+    // the gloves are on their own base again, and the merc wears the Giant Skull with two empty sockets
+    var codes: std.ArrayList(u8) = .empty;
+    defer codes.deinit(testing.allocator);
+    var it = ps.items.iterator();
+    while (it.next()) |r| try codes.appendSlice(testing.allocator, r.codeSlice());
+    try testing.expect(std.mem.indexOf(u8, codes.items, "umg") == null and std.mem.indexOf(u8, codes.items, "xmg") != null);
+    const r = try readback(patched);
+    try testing.expectEqual(@as(u16, 3), r.merc_items);
+    var sock2 = false;
+    const mat = std.mem.indexOf(u8, ps.items.bytes, "jf").?;
+    var mi = (sections.Items{ .bytes = ps.items.bytes[mat + 2 ..] }).iterator();
+    while (mi.next()) |w| if (std.mem.eql(u8, w.codeSlice(), "uh9")) {
+        sock2 = w.sockets == 2 and w.socketed_count == 0 and w.flags & wire.flag.ETHEREAL != 0;
+    };
+    try testing.expect(sock2);
+    // everything before the item section is the played save's own, apart from the size and the checksum
+    try testing.expectEqualSlices(u8, played[16 .. played.len - os.items.bytes.len], patched[16 .. patched.len - ps.items.bytes.len]);
 }

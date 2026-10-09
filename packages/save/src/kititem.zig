@@ -10,7 +10,9 @@
 //! options:
 //!   eth                 ethereal: the engine's own rule (ITEMMOD_ApplyEtherealBonus, ITEM_ApplyEthereal): defense x3/2,
 //!                       maximum durability halved plus one; a weapon's damage follows from the flag when it is loaded
-//!   base=<code>         a unique or set item on another base of the same kind (the cube's upgrade keeps quality and mods)
+//!   upgrade=exceptional|elite   a unique put through the cube: the same item on the next tier of its OWN base line, read from
+//!                       Armor.txt / Weapons.txt (a Normal base goes to its ubercode, an Exceptional one to its ultracode).
+//!                       The quality and the mods stay. Set items cannot be upgraded in the cube, so this refuses them
 //!   sockets=N           N sockets (a Larzuk socket: limited by the base's own sockets and its item level band)
 //!   fill=<code>,...     what sits in them: a gem or a rune per socket
 //!   runeword=<name>     a runeword (Runes.txt `Rune Name`) on a `base:` item: sockets and runes follow from the table
@@ -47,6 +49,8 @@ pub const Error = error{
     BadSpec,
     UnknownItem,
     NotInScope,
+    /// an upgrade the cube cannot do: a set item, or a base with no tier above it
+    NotUpgradable,
     BadSockets,
     BadRuneword,
     BadAffix,
@@ -96,11 +100,13 @@ pub const Made = struct {
 
 const Kind = enum { unique, set, rare, magic, base, plain };
 
+const Upgrade = enum { none, exceptional, elite };
+
 const Kit = struct {
     kind: Kind,
     name: []const u8,
     eth: bool = false,
-    base: []const u8 = "",
+    upgrade: Upgrade = .none,
     sockets: u8 = 0,
     fill: []const u8 = "",
     runeword: []const u8 = "",
@@ -134,8 +140,8 @@ fn parseKit(line: []const u8) Error!Kit {
             k.eth = true;
         } else if (std.mem.eql(u8, key, "nomax")) {
             k.nomax = true;
-        } else if (std.mem.eql(u8, key, "base")) {
-            k.base = val;
+        } else if (std.mem.eql(u8, key, "upgrade")) {
+            k.upgrade = if (std.mem.eql(u8, val, "exceptional")) .exceptional else if (std.mem.eql(u8, val, "elite")) .elite else return error.BadSpec;
         } else if (std.mem.eql(u8, key, "sockets")) {
             k.sockets = std.fmt.parseInt(u8, val, 10) catch return error.BadSpec;
             if (k.sockets == 0 or k.sockets > 6) return error.BadSpec;
@@ -165,7 +171,7 @@ fn parseKit(line: []const u8) Error!Kit {
     }
     if (k.automod.len != 0 and k.kind != .base) return error.BadSpec;
     if (k.runeword.len != 0 and k.kind != .base) return error.BadSpec;
-    if (k.base.len != 0 and k.kind != .unique and k.kind != .set) return error.BadSpec;
+    if (k.upgrade != .none and k.kind != .unique and k.kind != .set) return error.BadSpec;
     if ((k.prefix.len != 0 or k.suffix.len != 0) and k.kind != .rare and k.kind != .magic) return error.BadSpec;
     if (k.fill.len != 0 and k.sockets == 0 and k.runeword.len == 0) return error.BadSpec;
     return k;
@@ -244,8 +250,8 @@ pub const Maker = struct {
         const ut = &m.t.unique_items;
         if (!m.scope.isExpansion() and ut.int(row, "version") >= 100) return error.NotInScope;
         const own = ut.str(row, "code");
-        const code = if (k.base.len != 0) k.base else own;
-        try m.checkBase(code, own, k.base.len != 0);
+        const code = try m.upgraded(own, k.upgrade);
+        try m.checkBase(code, own, k.upgrade != .none);
         const ilvl = m.ilvlOf(k, @intCast(ut.int(row, "lvl")));
         var b = try m.begin(code, .unique, ilvl, k);
         defer b.deinit(m.gpa);
@@ -271,8 +277,9 @@ pub const Maker = struct {
         }
         if (row == st.rowCount()) return error.UnknownItem;
         const own = st.str(row, "item");
-        const code = if (k.base.len != 0) k.base else own;
-        try m.checkBase(code, own, k.base.len != 0);
+        if (k.upgrade != .none) return error.NotUpgradable; // no cube recipe takes a set item
+        const code = own;
+        try m.checkBase(code, own, false);
         const ilvl = m.ilvlOf(k, @intCast(st.int(row, "lvl")));
         var b = try m.begin(code, .set, ilvl, k);
         defer b.deinit(m.gpa);
@@ -468,6 +475,26 @@ pub const Maker = struct {
     }
 
     /// `own` is the row's base; a replacement must be a base of the same kind (the cube keeps the item's type).
+    /// The base a cube upgrade puts a unique on: the next tier of the unique's own base line, from the Armor.txt /
+    /// Weapons.txt columns normcode, ubercode and ultracode. Exceptional takes a Normal base to its ubercode, Elite takes
+    /// an Exceptional base to its ultracode; a base already at the top, or in the wrong tier, cannot be upgraded.
+    fn upgraded(m: *Maker, own: []const u8, up: Upgrade) Error![]const u8 {
+        if (up == .none) return own;
+        const ref = m.t.itemRef(own) orelse return error.UnknownItem;
+        if (ref.table == .misc) return error.NotUpgradable;
+        const tbl = m.t.itemTable(ref.table);
+        const norm = tbl.str(ref.row, "normcode");
+        const uber = tbl.str(ref.row, "ubercode");
+        const ultra = tbl.str(ref.row, "ultracode");
+        const to = switch (up) {
+            .exceptional => if (std.mem.eql(u8, own, norm)) uber else return error.NotUpgradable,
+            .elite => if (std.mem.eql(u8, own, uber) and !std.mem.eql(u8, own, ultra)) ultra else return error.NotUpgradable,
+            .none => unreachable,
+        };
+        if (to.len == 0 or std.mem.eql(u8, to, own)) return error.NotUpgradable;
+        return to;
+    }
+
     fn checkBase(m: *Maker, code: []const u8, own: []const u8, replaced: bool) Error!void {
         const ref = m.t.itemRef(code) orelse return error.UnknownItem;
         if (!m.scope.isExpansion() and m.t.itemTable(ref.table).int(ref.row, "version") >= 100) return error.NotInScope;
@@ -970,18 +997,18 @@ fn hasLine(v: itemtext.ItemView, needle: []const u8) bool {
 }
 
 test "kit lines: the kinds, the options and what is refused" {
-    const k = try parseKit("unique:Skin of the Flayerd One;base=uul;eth;sockets=1;fill=r32");
+    const k = try parseKit("unique:Skin of the Flayerd One;upgrade=elite;eth;sockets=1;fill=r32");
     try testing.expectEqual(Kind.unique, k.kind);
     try testing.expectEqualStrings("Skin of the Flayerd One", k.name);
     try testing.expect(k.eth);
-    try testing.expectEqualStrings("uul", k.base);
+    try testing.expectEqual(Upgrade.elite, k.upgrade);
     try testing.expectEqual(@as(u8, 1), k.sockets);
     try testing.expectEqual(@as(u8, 3), (try parseKit("unique:Hellfire Torch;class=Paladin")).class.?);
     try testing.expectError(error.BadSpec, parseKit("unique"));
     try testing.expectError(error.BadSpec, parseKit("gizmo:abc"));
     try testing.expectError(error.BadSpec, parseKit("unique:Wisp;shiny"));
     try testing.expectError(error.BadSpec, parseKit("unique:Wisp;runeword=Enigma"));
-    try testing.expectError(error.BadSpec, parseKit("rare:amu;base=amu"));
+    try testing.expectError(error.BadSpec, parseKit("rare:amu;upgrade=elite"));
     try testing.expectError(error.BadSpec, parseKit("unique:Wisp;fill=r30"));
     try testing.expectError(error.BadSpec, parseKit("unique:Wisp;sockets=7"));
 }
@@ -1105,19 +1132,24 @@ test "a unique with a rune in it, on another base, ethereal" {
     try testing.expect(hb.recs[0].flags & wire.flag.SOCKETED != 0);
 
     // the cube's upgrade keeps the quality and the mods on the elite base; the defense is the base's best, x3/2
-    var sk = try m.makeKit("unique:Skin of the Flayerd One;base=uul;eth;sockets=1;fill=r32");
+    var sk = try m.makeKit("unique:Skin of the Flayerd One;upgrade=elite;eth;sockets=1;fill=r32");
     defer sk.deinit(testing.allocator);
     var sb = try back(&d, sk);
     defer sb.deinit();
     try testing.expectEqualStrings("Skin of the Flayed One", sb.view.name);
-    try testing.expectEqualStrings("Shadow Plate", sb.view.base_name);
+    try testing.expectEqualStrings("Scarab Husk", sb.view.base_name); // Demonhide Armor is the unique's own base; the elite tier of that line
     try testing.expect(sb.view.ethereal);
-    const ref = m.t.itemRef("uul").?;
+    const ref = m.t.itemRef("ula").?;
     const best: i32 = @intCast(m.t.armor.int(ref.row, "maxac"));
     try testing.expectEqual(@divTrunc(best * 3, 2), baseOf(&sb.recs[0], 31));
     // a base of another kind is refused
-    try testing.expectError(error.UnknownItem, m.makeKit("unique:Skin of the Flayerd One;base=zzzz"));
-    try testing.expectError(error.BadSpec, m.makeKit("unique:Skin of the Flayerd One;base=cap"));
+    // there is no hand-picked base any more, and only the next tier of the unique's own line exists
+    try testing.expectError(error.BadSpec, m.makeKit("unique:Skin of the Flayerd One;base=ula"));
+    try testing.expectError(error.BadSpec, m.makeKit("unique:Skin of the Flayerd One;upgrade=ultra"));
+    try testing.expectError(error.NotUpgradable, m.makeKit("unique:Skin of the Flayerd One;upgrade=exceptional")); // already exceptional
+    try testing.expectError(error.NotUpgradable, m.makeKit("unique:Crown of Ages;upgrade=elite")); // already elite
+    try testing.expectError(error.NotUpgradable, m.makeKit("set:Trang-Oul's Claws;upgrade=elite")); // no cube recipe takes a set item
+    try testing.expectError(error.NotUpgradable, m.makeKit("unique:Wisp;upgrade=elite"));
     // a ring cannot be ethereal
     try testing.expectError(error.Unsupported, m.makeKit("unique:Wisp;eth"));
 }
@@ -1161,15 +1193,15 @@ test "a set item on an upgraded base carries its partial bonuses in lists of the
     defer m.deinit();
     var d = try itemtext.Describer.init(testing.allocator);
     defer d.deinit();
-    var made = try m.makeKit("set:Trang-Oul's Claws;base=umg");
+    var made = try m.makeKit("set:Trang-Oul's Claws");
     defer made.deinit(testing.allocator);
     var b = try back(&d, made);
     defer b.deinit();
     const it = b.recs[0];
     try testing.expectEqual(wire.Quality.set, it.quality);
     try testing.expectEqualStrings("Trang-Oul's Claws", b.view.name);
-    try testing.expectEqualStrings("Vambraces", b.view.base_name);
-    try testing.expectEqualStrings("umg", it.codeSlice());
+    try testing.expectEqualStrings("Heavy Bracers", b.view.base_name); // a set item stays on its own base
+    try testing.expectEqualStrings("xmg", it.codeSlice());
     // the partial lists that are present are tiers of the row
     var lists: u8 = 0;
     for (it.stats[0..it.n_stats]) |s| if (s.list >= 1 and s.list <= 5) {
@@ -1186,7 +1218,7 @@ test "a set item on an upgraded base carries its partial bonuses in lists of the
     var cb = try back(&d, cm);
     defer cb.deinit();
     for (cb.recs[0].stats[0..cb.recs[0].n_stats]) |s| try testing.expect(s.list == 0 or s.list == wire.list_base);
-    try testing.expectError(error.NotInScope, c.makeKit("set:Trang-Oul's Claws;base=umg"));
+    try testing.expectError(error.NotInScope, c.makeKit("unique:Skullcollector")); // an Expansion item
 }
 
 test "the Hellfire Torch is for the class asked for, Annihilus at its best" {
@@ -1323,8 +1355,8 @@ test "every form of a kit is written back exactly as it parses" {
         "base:pab;runeword=Spirit",
         "base:pad;runeword=Spirit;eth",
         "unique:Harlequin Crest;sockets=1;fill=r30",
-        "unique:Skin of the Flayerd One;base=uul;eth;sockets=1;fill=r32",
-        "set:Trang-Oul's Claws;base=umg",
+        "unique:Skin of the Flayerd One;upgrade=elite;eth;sockets=1;fill=r32",
+        "set:Trang-Oul's Claws",
         "unique:Hellfire Torch;class=paladin",
         "unique:Annihilus",
         "unique:Wisp",
@@ -1387,10 +1419,10 @@ test "ethereal: the engine's rule, ITEMMODS_ApplyEthereality and ITEMS_MakeEther
     try testing.expectEqual(baseOf(&e, 73), baseOf(&e, 72));
     // an upgraded unique is a fresh roll on the elite base, then made ethereal: the elite base's top, times 3 / 2,
     // and the enhanced defense the unique carries is a separate stat that the engine adds on top of it
-    var up = try m.makeKit("unique:Skin of the Flayerd One;base=uul;eth");
+    var up = try m.makeKit("unique:Skin of the Flayerd One;upgrade=elite;eth");
     defer up.deinit(testing.allocator);
     const u = (try itemtext.parseRecords(ar.allocator(), up.rec, 8))[0];
-    try testing.expectEqual(@as(i32, 557 * 3 / 2), baseOf(&u, 31));
+    try testing.expectEqual(@as(i32, @divTrunc(@as(i32, @intCast(m.t.armor.int(m.t.itemRef("ula").?.row, "maxac"))) * 3, 2)), baseOf(&u, 31));
     try testing.expectEqual(@as(i32, 190), statOf(&u, 0, 16).?.value);
     // a weapon: no damage stats in the record, durability halved plus one
     var axe = try m.makeKit("base:7wa;eth");
@@ -1412,7 +1444,7 @@ test "validation: what the engine never makes ethereal is refused" {
     // a ring has no durability
     try testing.expectError(error.Unsupported, m.makeKit("unique:Wisp;eth"));
     // an ordinary unique with durability is fine
-    var s = try m.makeKit("unique:Skin of the Flayerd One;base=uul;eth");
+    var s = try m.makeKit("unique:Skin of the Flayerd One;upgrade=elite;eth");
     s.deinit(testing.allocator);
 }
 
@@ -1426,4 +1458,29 @@ test "validation: a runeword's or a socketed rune's Indestructible does not bloc
     zod.deinit(testing.allocator);
     // the item's own generation mods still block it
     try testing.expectError(error.Impossible, m.makeKit("unique:Crown of Ages;eth"));
+}
+
+test "an upgrade is the next tier of the unique's own base line, read from the table columns" {
+    var m = try Maker.init(testing.allocator, .expansion, 21);
+    defer m.deinit();
+    // every unique that sits on an Exceptional armour or weapon base goes to that row's ultracode, and nowhere else
+    var checked: usize = 0;
+    const ut = &m.t.unique_items;
+    for (0..ut.rowCount()) |r| {
+        const own = ut.str(r, "code");
+        const ref = m.t.itemRef(own) orelse continue;
+        if (ref.table == .misc) continue;
+        const tbl = m.t.itemTable(ref.table);
+        const uber = tbl.str(ref.row, "ubercode");
+        const ultra = tbl.str(ref.row, "ultracode");
+        if (uber.len == 0 or ultra.len == 0 or !std.mem.eql(u8, own, uber) or std.mem.eql(u8, own, ultra)) continue;
+        try testing.expectEqualStrings(ultra, try m.upgraded(own, .elite));
+        try testing.expectError(error.NotUpgradable, m.upgraded(own, .exceptional));
+        checked += 1;
+    }
+    try testing.expect(checked > 20);
+    // a Normal unique goes to its ubercode
+    try testing.expectEqualStrings("xh9", try m.upgraded("bhm", .exceptional));
+    // the case that was got wrong by hand: Skin of the Flayed One sits on Demonhide Armor, its elite is the Scarab Husk
+    try testing.expectEqualStrings("ula", try m.upgraded("xla", .elite));
 }
