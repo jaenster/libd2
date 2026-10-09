@@ -85,6 +85,10 @@ fn report(bytes: []const u8) !void {
     say("waypoints per difficulty: {d} {d} {d}\n", .{ r.waypoints[0], r.waypoints[1], r.waypoints[2] });
     say("items: player {d}, mercenary {d}; mercenary type {d}\n", .{ r.player_items, r.merc_items, r.merc_type });
     say("checksum ok: {}\n", .{r.checksum_ok});
+    if (save.sections.d2s.parseHeader(bytes)) |h| {
+        const nm = h.name[0 .. std.mem.indexOfScalar(u8, &h.name, 0) orelse h.name.len];
+        if (charkit.engineRefusal(bytes, nm)) |code| say("engine load check: REFUSED, code {d}\n", .{code}) else say("engine load check: ok\n", .{});
+    }
 }
 
 pub fn main(init: std.process.Init.Minimal) !void {

@@ -419,9 +419,10 @@ pub const Options = struct {
     diag: ?*Diag = null,
     /// creation time, seconds since the epoch
     created: u32 = 1_790_000_000,
-    /// the header's status byte: the expansion bit, and the mandatory one the realm sets. Hardcore and ladder are
+    /// the header's status byte: the expansion bit only. Bit 0 must stay clear: the engine's save parser treats it as
+    /// a header-only file and returns before it creates the player unit, so the join fails. Hardcore and ladder are
     /// the realm's to give when the save is loaded into an account.
-    status: u8 = 0x21,
+    status: u8 = 0x20,
 };
 
 const ItemList = struct {
@@ -672,6 +673,22 @@ pub const Readback = struct {
     checksum_ok: bool,
 };
 
+/// The engine's own refusals of a save at join, in its numbering (PLAYERSAVE_ParseHeaderAndCreateUnit @0x56a090,
+/// as 1.14d runs it): 4 truncated or class above 7, 5 size field differs from the length, 6 checksum, 7 version
+/// outside 0x5c..0x60 or name differs from the client's, and 2 for status bit 0, which makes the engine return before
+/// it creates the unit (the client then reports a bad header). Null when the engine would load it.
+pub fn engineRefusal(bytes: []const u8, client_name: []const u8) ?u8 {
+    const h = d2s.parseHeader(bytes) orelse return 4;
+    if (!d2s.verifyChecksum(bytes)) return 6;
+    if (h.file_size != bytes.len) return 5;
+    if (!(h.version > 0x5b and h.version < 0x61)) return 7;
+    const n = std.mem.indexOfScalar(u8, h.name[0..15], 0) orelse 15;
+    if (!std.ascii.eqlIgnoreCase(h.name[0..n], client_name)) return 7;
+    if (h.class > 7) return 4;
+    if (h.status & 1 != 0) return 2;
+    return null;
+}
+
 /// Parse a save written here back into the numbers a spec states.
 pub fn readback(bytes: []const u8) !Readback {
     const s = try sections.parse(bytes);
@@ -876,6 +893,14 @@ test "the example spec makes a level 99 paladin with its gear, and the same byte
     try testing.expectEqual(@as(u32, 110), r.skill_points_spent);
     try testing.expectEqual(@as(u32, 0), r.act6_quest_words);
     try testing.expectEqual(@as(u16, 10), r.merc_type);
+    try testing.expectEqual(@as(?u8, null), engineRefusal(out, "FuddrPally"));
+    try testing.expectEqual(@as(?u8, 7), engineRefusal(out, "Other"));
+    const bad = try testing.allocator.dupe(u8, out);
+    defer testing.allocator.free(bad);
+    bad[0x24] |= 1;
+    std.mem.writeInt(u32, bad[0xc..0x10], 0, .little);
+    std.mem.writeInt(u32, bad[0xc..0x10], d2s.checksum(bad), .little);
+    try testing.expectEqual(@as(?u8, 2), engineRefusal(bad, "FuddrPally"));
 
     // every record of both lists parses back, in the places the spec names
     const s = try sections.parse(out);
