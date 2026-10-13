@@ -1,9 +1,0 @@
-{8}Zod Rune
-{0}Can be Inserted into Socketed Items
-
-{0}Weapons: Indestructible
-{0}Armor: Indestructible
-{0}Helms: Indestructible
-{0}Shields: Indestructible
-
-{0}Required Level: 69

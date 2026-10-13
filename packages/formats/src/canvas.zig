@@ -384,3 +384,46 @@ test "a screen's grid is recovered from its blocks" {
     try testing.expectEqual(@as(u32, 800), size.w);
     try testing.expectEqual(@as(u32, 600), size.h);
 }
+
+/// Index-space drawing, for images kept as palette indices (a sprite sheet, a scaled frame) rather
+/// than RGBA: indices with their top-left at (x, y) into a `w` x `h` index buffer, through `shift` (a
+/// colour shift table) when given. Index 0, before or after the shift, is a hole.
+pub fn drawIndexed(dst: []u8, w: u32, h: u32, px: []const u8, pw: u32, ph: u32, x: i32, y: i32, shift: ?*const [256]u8) void {
+    for (0..ph) |row| {
+        const yy = y + @as(i32, @intCast(row));
+        if (yy < 0 or yy >= h) continue;
+        for (0..pw) |col| {
+            const raw = px[row * pw + col];
+            if (raw == 0) continue;
+            const idx = if (shift) |t| t[raw] else raw;
+            if (idx == 0) continue;
+            const xx = x + @as(i32, @intCast(col));
+            if (xx < 0 or xx >= w) continue;
+            dst[@as(usize, @intCast(yy)) * w + @as(usize, @intCast(xx))] = idx;
+        }
+    }
+}
+
+/// `px` (w*h indices) repeated k x k times into `out` ((w*k)*(h*k)): nearest-neighbour scaling that
+/// keeps every index, so the result still draws through any palette, colour map or blend table.
+pub fn scaleIndicesNearest(px: []const u8, w: u32, h: u32, k: u32, out: []u8) void {
+    const ow = w * k;
+    for (0..h * k) |yy| for (0..ow) |xx| {
+        out[yy * ow + xx] = px[(yy / k) * w + xx / k];
+    };
+}
+
+test "index-space draw and nearest scale" {
+    var dst = [_]u8{0} ** 9;
+    const shift = blk: {
+        var t: [256]u8 = undefined;
+        for (&t, 0..) |*v, i| v.* = @intCast(i);
+        t[2] = 0;
+        break :blk t;
+    };
+    drawIndexed(&dst, 3, 3, &.{ 1, 2, 0, 3 }, 2, 2, 1, 1, &shift);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0, 1, 0, 0, 0, 3 }, &dst);
+    var out: [16]u8 = undefined;
+    scaleIndicesNearest(&.{ 1, 2, 3, 4 }, 2, 2, 2, &out);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4 }, &out);
+}
