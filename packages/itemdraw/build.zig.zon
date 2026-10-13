@@ -1,0 +1,20 @@
+.{
+    .name = .d2_itemdraw,
+    .version = "0.6.5",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xf5c9885a0ba78b18,
+
+    // The text comes from d2-item, the art formats from d2-formats, PNG from d2-util. The art itself is
+    // never part of the package: the caller supplies archives or files.
+    .dependencies = .{
+        .d2_core = .{ .path = "../core" },
+        .d2_data = .{ .path = "../data" },
+        .d2_item = .{ .path = "../item" },
+        .d2_formats = .{ .path = "../formats" },
+        .d2_util = .{ .path = "../util" },
+        // only the CLI and the golden tests read saves
+        .d2_save = .{ .path = "../save" },
+    },
+
+    .paths = .{ "build.zig", "build.zig.zon", "src", "include" },
+}

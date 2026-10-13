@@ -1,0 +1,2150 @@
+== EpicSorc 00 toa
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+-- as the EpicSorc's level 99 character
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+== EpicSorc 01 toa
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+-- as the EpicSorc's level 99 character
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+== EpicSorc 02 toa
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+-- as the EpicSorc's level 99 character
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+== EpicSorc 03 jew
+  {4}Rainbow Facet
+  {4}Jewel
+  {0}Can be Inserted into Socketed Items
+  {0}Required Level: 49
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}Adds 17-45 fire damage
+  {3}-5% to Enemy Fire Resistance
+  {3}+5% to Fire Skill Damage
+-- as the EpicSorc's level 99 character
+  {4}Rainbow Facet
+  {4}Jewel
+  {0}Can be Inserted into Socketed Items
+  {0}Required Level: 49
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}Adds 17-45 fire damage
+  {3}-5% to Enemy Fire Resistance
+  {3}+5% to Fire Skill Damage
+== EpicSorc 04 jew
+  {4}Rainbow Facet
+  {4}Jewel
+  {0}Can be Inserted into Socketed Items
+  {0}Required Level: 49
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}Adds 17-45 fire damage
+  {3}-5% to Enemy Fire Resistance
+  {3}+5% to Fire Skill Damage
+-- as the EpicSorc's level 99 character
+  {4}Rainbow Facet
+  {4}Jewel
+  {0}Can be Inserted into Socketed Items
+  {0}Required Level: 49
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}Adds 17-45 fire damage
+  {3}-5% to Enemy Fire Resistance
+  {3}+5% to Fire Skill Damage
+== EpicSorc 05 box
+  {4}Horadric Cube
+  {4}Right Click to Open
+-- as the EpicSorc's level 99 character
+  {4}Horadric Cube
+  {4}Right Click to Open
+== EpicSorc 06 toa
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+-- as the EpicSorc's level 99 character
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+== EpicSorc 07 toa
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+-- as the EpicSorc's level 99 character
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+== EpicSorc 08 toa
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+-- as the EpicSorc's level 99 character
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+== EpicSorc 09 tbk
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 0
+-- as the EpicSorc's level 99 character
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 0
+== EpicSorc 10 tbk
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 0
+-- as the EpicSorc's level 99 character
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 0
+== EpicSorc 11 tbk
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 0
+-- as the EpicSorc's level 99 character
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 0
+== EpicSorc 12 cm3
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+34 to Life
+-- as the EpicSorc's level 99 character
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+34 to Life
+== EpicSorc 13 cm3
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+32 to Life
+-- as the EpicSorc's level 99 character
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+32 to Life
+== EpicSorc 14 cm1
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}Lightning Resist +11%
+-- as the EpicSorc's level 99 character
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}Lightning Resist +11%
+== EpicSorc 15 cm1
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}+18 to Life
+  {3}Fire Resist +11%
+-- as the EpicSorc's level 99 character
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}+18 to Life
+  {3}Fire Resist +11%
+== EpicSorc 16 utp
+  {4}Enigma
+  {5}SilverDeth-II's Archon Plate
+  {4}'JahIthBer'
+  {0}Defense: {3}1373
+  {0}Durability: 70 of {3}72
+  {0}Required Strength: 103
+  {0}Required Level: 65
+  {3}+2 to All Skills
+  {3}+45% Faster Run/Walk
+  {3}+1 to Teleport
+  {3}+15% Enhanced Defense
+  {3}+775 Defense
+  {3}+74 to Strength (Based on Character Level)
+  {3}Increase Maximum Life 5%
+  {3}Damage Reduced by 8%
+  {3}+14 Life after each Kill
+  {3}15% Damage Taken Goes To Mana
+  {3}99% Better Chance of Getting Magic Items (Based on Character Level)
+  {3}Increase Maximum Durability 10%
+  {3}Socketed (3)
+-- as the EpicSorc's level 99 character
+  {4}Enigma
+  {5}SilverDeth-II's Archon Plate
+  {4}'JahIthBer'
+  {0}Defense: {3}1373
+  {0}Durability: 70 of {3}72
+  {1}Required Strength: 103
+  {0}Required Level: 65
+  {3}+2 to All Skills
+  {3}+45% Faster Run/Walk
+  {3}+1 to Teleport
+  {3}+15% Enhanced Defense
+  {3}+775 Defense
+  {3}+74 to Strength (Based on Character Level)
+  {3}Increase Maximum Life 5%
+  {3}Damage Reduced by 8%
+  {3}+14 Life after each Kill
+  {3}15% Damage Taken Goes To Mana
+  {3}99% Better Chance of Getting Magic Items (Based on Character Level)
+  {3}Increase Maximum Durability 10%
+  {3}Socketed (3)
+== EpicSorc 17 cm1
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}+17 to Life
+  {3}Fire Resist +11%
+-- as the EpicSorc's level 99 character
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}+17 to Life
+  {3}Fire Resist +11%
+== EpicSorc 18 cm3
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+36 to Life
+-- as the EpicSorc's level 99 character
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+36 to Life
+== EpicSorc 19 cm1
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}All Resistances +5
+-- as the EpicSorc's level 99 character
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}All Resistances +5
+== EpicSorc 20 cm3
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+33 to Life
+-- as the EpicSorc's level 99 character
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+33 to Life
+== EpicSorc 21 cm3
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+32 to Life
+-- as the EpicSorc's level 99 character
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+32 to Life
+== EpicSorc 22 cm3
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+29 to Life
+-- as the EpicSorc's level 99 character
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+29 to Life
+== EpicSorc 23 cm1
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}All Resistances +5
+-- as the EpicSorc's level 99 character
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}All Resistances +5
+== EpicSorc 24 cm2
+  {4}Hellfire Torch
+  {4}Large Charm
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 75
+  {3}25% Chance to cast level 10 Firestorm on striking
+  {3}+3 to Sorceress Skill Levels
+  {3}+20 to all Attributes
+  {3}All Resistances +18
+  {3}+8 to Light Radius
+  {3}Level 30 Hydra (0/10 Charges)
+-- as the EpicSorc's level 99 character
+  {4}Hellfire Torch
+  {4}Large Charm
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 75
+  {3}25% Chance to cast level 10 Firestorm on striking
+  {3}+3 to Sorceress Skill Levels
+  {3}+20 to all Attributes
+  {3}All Resistances +18
+  {3}+8 to Light Radius
+  {3}Level 30 Hydra (0/10 Charges)
+== EpicSorc 25 tbk
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 1
+-- as the EpicSorc's level 99 character
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 1
+== EpicSorc 26 cm1
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}Fire Resist +11%
+-- as the EpicSorc's level 99 character
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}Fire Resist +11%
+== EpicSorc 27 cm1
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}+3% Faster Run/Walk
+  {3}Poison Resist +11%
+-- as the EpicSorc's level 99 character
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}+3% Faster Run/Walk
+  {3}Poison Resist +11%
+== EpicSorc 28 cm1
+  {4}Annihilus
+  {4}Small Charm
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 70
+  {3}+1 to All Skills
+  {3}+20 to all Attributes
+  {3}All Resistances +20
+  {3}+10% to Experience Gained
+-- as the EpicSorc's level 99 character
+  {4}Annihilus
+  {4}Small Charm
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 70
+  {3}+1 to All Skills
+  {3}+20 to all Attributes
+  {3}All Resistances +20
+  {3}+10% to Experience Gained
+== EpicSorc 29 cm1
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}+17 to Life
+  {3}Fire Resist +11%
+-- as the EpicSorc's level 99 character
+  {3}Shimmering Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 25
+  {3}+17 to Life
+  {3}Fire Resist +11%
+== EpicSorc 30 ci3
+  {4}Griffon's Eye
+  {4}Diadem
+  {0}Defense: {3}250
+  {0}Durability: 19 of 20
+  {0}Required Level: 76
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}+1 to All Skills
+  {3}+25% Faster Cast Rate
+  {3}Adds 17-45 fire damage
+  {3}-15% to Enemy Lightning Resistance
+  {3}-5% to Enemy Fire Resistance
+  {3}+20% to Lightning Skill Damage
+  {3}+5% to Fire Skill Damage
+  {3}+200 Defense
+  {3}Socketed (1)
+-- as the EpicSorc's level 99 character
+  {4}Griffon's Eye
+  {4}Diadem
+  {0}Defense: {3}250
+  {0}Durability: 19 of 20
+  {0}Required Level: 76
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}+1 to All Skills
+  {3}+25% Faster Cast Rate
+  {3}Adds 17-45 fire damage
+  {3}-15% to Enemy Lightning Resistance
+  {3}-5% to Enemy Fire Resistance
+  {3}+20% to Lightning Skill Damage
+  {3}+5% to Fire Skill Damage
+  {3}+200 Defense
+  {3}Socketed (1)
+== EpicSorc 31 amu
+  {8}Shadow Wing
+  {8}Amulet
+  {0}Required Level: 73
+  {3}+2 to Sorceress Skill Levels
+  {3}+20% Faster Cast Rate
+  {3}2% Life stolen per hit
+  {3}+16 to Life
+  {3}Replenish Life +5
+  {3}+19 to Mana
+  {3}Regenerate Mana 6%
+-- as the EpicSorc's level 99 character
+  {8}Shadow Wing
+  {8}Amulet
+  {0}Required Level: 73
+  {3}+2 to Sorceress Skill Levels
+  {3}+20% Faster Cast Rate
+  {3}2% Life stolen per hit
+  {3}+16 to Life
+  {3}Replenish Life +5
+  {3}+19 to Mana
+  {3}Regenerate Mana 6%
+== EpicSorc 32 uui
+  {4}Ormus' Robes
+  {4}Dusk Shroud
+  {0}Defense: {3}482
+  {0}Durability: 17 of 20
+  {0}Required Strength: 77
+  {0}Required Level: 75
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}+20% Faster Cast Rate
+  {3}Adds 17-45 fire damage
+  {3}-5% to Enemy Fire Resistance
+  {3}+15% to Cold Skill Damage
+  {3}+15% to Lightning Skill Damage
+  {3}+20% to Fire Skill Damage
+  {3}+3 to Nova (Sorceress Only)
+  {3}+20 Defense
+  {3}Regenerate Mana 15%
+  {3}Socketed (1)
+-- as the EpicSorc's level 99 character
+  {4}Ormus' Robes
+  {4}Dusk Shroud
+  {0}Defense: {3}482
+  {0}Durability: 17 of 20
+  {0}Required Strength: 77
+  {0}Required Level: 75
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}+20% Faster Cast Rate
+  {3}Adds 17-45 fire damage
+  {3}-5% to Enemy Fire Resistance
+  {3}+15% to Cold Skill Damage
+  {3}+15% to Lightning Skill Damage
+  {3}+20% to Fire Skill Damage
+  {3}+3 to Nova (Sorceress Only)
+  {3}+20 Defense
+  {3}Regenerate Mana 15%
+  {3}Socketed (1)
+== EpicSorc 33 rin
+  {8}Ghoul Master
+  {8}Ring
+  {0}Required Level: 10
+  {3}+10% Faster Cast Rate
+  {3}+19 to Attack Rating
+  {3}3% Life stolen per hit
+  {3}+5 to Strength
+  {3}+16 to Life
+  {3}Cold Resist +24%
+  {3}Poison Resist +26%
+-- as the EpicSorc's level 99 character
+  {8}Ghoul Master
+  {8}Ring
+  {0}Required Level: 10
+  {3}+10% Faster Cast Rate
+  {3}+19 to Attack Rating
+  {3}3% Life stolen per hit
+  {3}+5 to Strength
+  {3}+16 to Life
+  {3}Cold Resist +24%
+  {3}Poison Resist +26%
+== EpicSorc 34 rin
+  {8}Shadow Hold
+  {8}Ring
+  {0}Required Level: 10
+  {3}+10% Faster Cast Rate
+  {3}7% Life stolen per hit
+  {3}+23 to Strength
+  {3}+14 to Life
+  {3}Lightning Resist +28%
+-- as the EpicSorc's level 99 character
+  {8}Shadow Hold
+  {8}Ring
+  {0}Required Level: 10
+  {3}+10% Faster Cast Rate
+  {3}7% Life stolen per hit
+  {3}+23 to Strength
+  {3}+14 to Life
+  {3}Lightning Resist +28%
+== EpicSorc 35 ulc
+  {4}Arachnid Mesh
+  {4}Spiderweb Sash
+  {0}Defense: {3}126
+  {0}Durability: 12 of 12
+  {0}Required Strength: 50
+  {0}Required Level: 80
+  {3}+1 to All Skills
+  {3}+20% Faster Cast Rate
+  {3}Slows Target by 10%
+  {3}+108% Enhanced Defense
+  {3}Increase Maximum Mana 5%
+  {3}Level 3 Venom (10/11 Charges)
+-- as the EpicSorc's level 99 character
+  {4}Arachnid Mesh
+  {4}Spiderweb Sash
+  {0}Defense: {3}126
+  {0}Durability: 12 of 12
+  {0}Required Strength: 50
+  {0}Required Level: 80
+  {3}+1 to All Skills
+  {3}+20% Faster Cast Rate
+  {3}Slows Target by 10%
+  {3}+108% Enhanced Defense
+  {3}Increase Maximum Mana 5%
+  {3}Level 3 Venom (10/11 Charges)
+== EpicSorc 36 uvb
+  {9}Spirit Greaves
+  {9}Scarabshell Boots
+  {0}Defense: 65
+  {0}Durability: 14 of 14
+  {0}Required Strength: 91
+  {0}Required Level: 49
+  {3}14% Chance to cast level 5 Nova when struck
+  {3}Cold Resist +39%
+  {3}Lightning Resist +37%
+  {3}Fire Resist +39%
+  {3}Repairs 1 durability in 20 seconds
+-- as the EpicSorc's level 99 character
+  {9}Spirit Greaves
+  {9}Scarabshell Boots
+  {0}Defense: 65
+  {0}Durability: 14 of 14
+  {1}Required Strength: 91
+  {0}Required Level: 49
+  {3}14% Chance to cast level 5 Nova when struck
+  {3}Cold Resist +39%
+  {3}Lightning Resist +37%
+  {3}Fire Resist +39%
+  {3}Repairs 1 durability in 20 seconds
+== EpicSorc 37 xtg
+  {4}Magefist
+  {4}Battle Gauntlets
+  {0}Defense: {3}69
+  {0}Durability: 18 of 18
+  {0}Required Strength: 88
+  {0}Required Level: 30
+  {3}+1 to Fire Skills
+  {3}+20% Faster Cast Rate
+  {3}Adds 1-6 fire damage
+  {3}+29% Enhanced Defense
+  {3}+10 Defense
+  {3}Regenerate Mana 25%
+-- as the EpicSorc's level 99 character
+  {4}Magefist
+  {4}Battle Gauntlets
+  {0}Defense: {3}69
+  {0}Durability: 18 of 18
+  {0}Required Strength: 88
+  {0}Required Level: 30
+  {3}+1 to Fire Skills
+  {3}+20% Faster Cast Rate
+  {3}Adds 1-6 fire damage
+  {3}+29% Enhanced Defense
+  {3}+10 Defense
+  {3}Regenerate Mana 25%
+== EpicSorc 38 ibk
+  {0}Tome of Identify
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 20
+-- as the EpicSorc's level 99 character
+  {0}Tome of Identify
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 20
+== EpicSorc 39 toa
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+-- as the EpicSorc's level 99 character
+  {8}Token of Absolution
+  {8}Right-click to reset Stat/Skill Points
+== EpicSorc 40 cm3
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+33 to Life
+-- as the EpicSorc's level 99 character
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+33 to Life
+== EpicSorc 41 cm3
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+29 to Life
+-- as the EpicSorc's level 99 character
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+29 to Life
+== EpicSorc 42 cm3
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+20 to Life
+-- as the EpicSorc's level 99 character
+  {3}Sparking Grand Charm of Sustenance
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 53
+  {3}+1 to Lightning Skills (Sorceress Only)
+  {3}+20 to Life
+== EpicSorc 43 rvl
+  {0}Full Rejuvenation Potion
+  {0}Heals 100% Life and Mana
+-- as the EpicSorc's level 99 character
+  {0}Full Rejuvenation Potion
+  {0}Heals 100% Life and Mana
+== EpicSorc 44 rvs
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+-- as the EpicSorc's level 99 character
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+== EpicSorc 45 rvs
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+-- as the EpicSorc's level 99 character
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+== EpicSorc 46 mp5
+  {0}Super Mana Potion
+  {0}Points: 250
+-- as the EpicSorc's level 99 character
+  {0}Super Mana Potion
+  {0}Points: 250
+== EpicSorc 47 mp5
+  {0}Super Mana Potion
+  {0}Points: 250
+-- as the EpicSorc's level 99 character
+  {0}Super Mana Potion
+  {0}Points: 250
+== EpicSorc 48 gsy
+  {0}Topaz
+  {0}Can be Inserted into Socketed Items
+  
+  {0}Weapons: Adds 1-22 lightning damage
+  {0}Armor: 16% Better Chance of Getting Magic Items
+  {0}Helms: 16% Better Chance of Getting Magic Items
+  {0}Shields: Lightning Resist +22%
+  
+  {0}Required Level: 12
+-- as the EpicSorc's level 99 character
+  {0}Topaz
+  {0}Can be Inserted into Socketed Items
+  
+  {0}Weapons: Adds 1-22 lightning damage
+  {0}Armor: 16% Better Chance of Getting Magic Items
+  {0}Helms: 16% Better Chance of Getting Magic Items
+  {0}Shields: Lightning Resist +22%
+  
+  {0}Required Level: 12
+== EpicSorc 49 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicSorc's level 99 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicSorc 50 hp4
+  {0}Greater Healing Potion
+  {0}Points: 180
+-- as the EpicSorc's level 99 character
+  {0}Greater Healing Potion
+  {0}Points: 180
+== EpicSorc 51 rvs
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+-- as the EpicSorc's level 99 character
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+== EpicSorc 52 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicSorc's level 99 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicSorc 53 hp4
+  {0}Greater Healing Potion
+  {0}Points: 180
+-- as the EpicSorc's level 99 character
+  {0}Greater Healing Potion
+  {0}Points: 180
+== EpicSorc 54 mp5
+  {0}Super Mana Potion
+  {0}Points: 250
+-- as the EpicSorc's level 99 character
+  {0}Super Mana Potion
+  {0}Points: 250
+== EpicSorc 55 mp5
+  {0}Super Mana Potion
+  {0}Points: 250
+-- as the EpicSorc's level 99 character
+  {0}Super Mana Potion
+  {0}Points: 250
+== EpicSorc 56 mp5
+  {0}Super Mana Potion
+  {0}Points: 250
+-- as the EpicSorc's level 99 character
+  {0}Super Mana Potion
+  {0}Points: 250
+== EpicSorc 57 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicSorc's level 99 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicSorc 58 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicSorc's level 99 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicSorc 59 rvs
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+-- as the EpicSorc's level 99 character
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+== EpicSorc 60 fla
+  {4}Call to Arms
+  {5}Flail
+  {4}'AmnRalMalIstOhm'
+  {0}One-Hand Damage: {3}3 to 93
+  {0}Durability: 30 of 30
+  {0}Required Dexterity: 35
+  {0}Required Strength: 41
+  {0}Required Level: 57
+  {3}+1 to All Skills
+  {3}+40% Increased Attack Speed
+  {3}+290% Enhanced Damage
+  {3}Adds 5-30 fire damage
+  {3}7% Life stolen per hit
+  {3}+6 to Battle Command
+  {3}+6 to Battle Orders
+  {3}+4 to Battle Cry
+  {3}Prevent Monster Heal
+  {3}Replenish Life +12
+  {3}30% Better Chance of Getting Magic Items
+  {3}+50% Damage to Undead
+  {3}Socketed (5)
+-- as the EpicSorc's level 99 character
+  {4}Call to Arms
+  {5}Flail
+  {4}'AmnRalMalIstOhm'
+  {0}One-Hand Damage: {3}3 to 93
+  {0}Durability: 30 of 30
+  {1}Required Dexterity: 35
+  {0}Required Strength: 41
+  {0}Required Level: 57
+  {3}+1 to All Skills
+  {3}+40% Increased Attack Speed
+  {3}+290% Enhanced Damage
+  {3}Adds 5-30 fire damage
+  {3}7% Life stolen per hit
+  {3}+6 to Battle Command
+  {3}+6 to Battle Orders
+  {3}+4 to Battle Cry
+  {3}Prevent Monster Heal
+  {3}Replenish Life +12
+  {3}30% Better Chance of Getting Magic Items
+  {3}+50% Damage to Undead
+  {3}Socketed (5)
+== EpicSorc 61 uit
+  {4}Spirit
+  {5}Monarch
+  {4}'TalThulOrtAmn'
+  {0}Defense: 139
+  {0}Chance to Block: 22%
+  {0}Durability: 98 of {3}98
+  {0}Required Strength: 156
+  {0}Required Level: 54
+  {3}+2 to All Skills
+  {3}+35% Faster Cast Rate
+  {3}+55% Faster Hit Recovery
+  {3}+250 Defense vs. Missile
+  {3}+22 to Vitality
+  {3}+110 to Mana
+  {3}Cold Resist +35%
+  {3}Lightning Resist +35%
+  {3}Poison Resist +35%
+  {3}+8 Magic Absorb
+  {3}Attacker Takes Damage of 14
+  {3}Increase Maximum Durability 15%
+  {3}Socketed (1)
+-- as the EpicSorc's level 99 character
+  {4}Spirit
+  {5}Monarch
+  {4}'TalThulOrtAmn'
+  {0}Defense: 139
+  {0}Chance to Block: {3}42%
+  {0}Durability: 98 of {3}98
+  {1}Required Strength: 156
+  {0}Required Level: 54
+  {3}+2 to All Skills
+  {3}+35% Faster Cast Rate
+  {3}+55% Faster Hit Recovery
+  {3}+250 Defense vs. Missile
+  {3}+22 to Vitality
+  {3}+110 to Mana
+  {3}Cold Resist +35%
+  {3}Lightning Resist +35%
+  {3}Poison Resist +35%
+  {3}+8 Magic Absorb
+  {3}Attacker Takes Damage of 14
+  {3}Increase Maximum Durability 15%
+  {3}Socketed (1)
+== EpicSorc 62 obc
+  {4}Eschuta's Temper
+  {4}Eldritch Orb
+  {0}One-Hand Damage: 18 to 50
+  {0}Durability: 30 of 30
+  {0}(Sorceress Only)
+  {0}Required Level: 72
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}+3 to Sorceress Skill Levels
+  {3}+40% Faster Cast Rate
+  {3}Adds 17-45 fire damage
+  {3}-5% to Enemy Fire Resistance
+  {3}+20% to Lightning Skill Damage
+  {3}+25% to Fire Skill Damage
+  {3}+30 to Energy
+  {3}Socketed (1)
+-- as the EpicSorc's level 99 character
+  {4}Eschuta's Temper
+  {4}Eldritch Orb
+  {0}One-Hand Damage: 18 to 50
+  {0}Durability: 30 of 30
+  {0}(Sorceress Only)
+  {0}Required Level: 72
+  {3}100% Chance to cast level 29 Blaze when you Level-Up
+  {3}+3 to Sorceress Skill Levels
+  {3}+40% Faster Cast Rate
+  {3}Adds 17-45 fire damage
+  {3}-5% to Enemy Fire Resistance
+  {3}+20% to Lightning Skill Damage
+  {3}+25% to Fire Skill Damage
+  {3}+30 to Energy
+  {3}Socketed (1)
+== EpicSorc 63 uit
+  {4}Spirit
+  {5}Monarch
+  {4}'TalThulOrtAmn'
+  {0}Defense: {3}152
+  {0}Chance to Block: 22%
+  {0}Durability: 98 of {3}98
+  {0}Required Strength: 156
+  {0}Required Level: 54
+  {3}+2 to All Skills
+  {3}+35% Faster Cast Rate
+  {3}+55% Faster Hit Recovery
+  {3}+15% Enhanced Defense
+  {3}+250 Defense vs. Missile
+  {3}+22 to Vitality
+  {3}+103 to Mana
+  {3}Cold Resist +35%
+  {3}Lightning Resist +35%
+  {3}Poison Resist +35%
+  {3}+8 Magic Absorb
+  {3}Attacker Takes Damage of 14
+  {3}Increase Maximum Durability 15%
+  {3}Socketed (1)
+-- as the EpicSorc's level 99 character
+  {4}Spirit
+  {5}Monarch
+  {4}'TalThulOrtAmn'
+  {0}Defense: {3}152
+  {0}Chance to Block: {3}42%
+  {0}Durability: 98 of {3}98
+  {1}Required Strength: 156
+  {0}Required Level: 54
+  {3}+2 to All Skills
+  {3}+35% Faster Cast Rate
+  {3}+55% Faster Hit Recovery
+  {3}+15% Enhanced Defense
+  {3}+250 Defense vs. Missile
+  {3}+22 to Vitality
+  {3}+103 to Mana
+  {3}Cold Resist +35%
+  {3}Lightning Resist +35%
+  {3}Poison Resist +35%
+  {3}+8 Magic Absorb
+  {3}Attacker Takes Damage of 14
+  {3}Increase Maximum Durability 15%
+  {3}Socketed (1)
+== EpicAma 00 cm1
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+-- as the EpicAma's level 91 character
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+== EpicAma 01 cm3
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+-- as the EpicAma's level 91 character
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+== EpicAma 02 cm3
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+-- as the EpicAma's level 91 character
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+== EpicAma 03 cm3
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+-- as the EpicAma's level 91 character
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+== EpicAma 04 cm3
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+-- as the EpicAma's level 91 character
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+== EpicAma 05 cm3
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+-- as the EpicAma's level 91 character
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+== EpicAma 06 cm1
+  {4}Annihilus
+  {4}Small Charm
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 70
+  {3}+1 to All Skills
+  {3}+20 to all Attributes
+  {3}All Resistances +20
+  {3}+10% to Experience Gained
+-- as the EpicAma's level 91 character
+  {4}Annihilus
+  {4}Small Charm
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 70
+  {3}+1 to All Skills
+  {3}+20 to all Attributes
+  {3}All Resistances +20
+  {3}+10% to Experience Gained
+== EpicAma 07 tbk
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 4
+-- as the EpicAma's level 91 character
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 4
+== EpicAma 08 amf
+  {4}Thunderstroke
+  {4}Matriarchal Javelin
+  {0}Throw Damage: {3}105 to {3}198
+  {0}One-Hand Damage: {3}90 to 162
+  {0}Quantity: 44
+  {0}(Amazon Only)
+  {0}Required Dexterity: 151
+  {0}Required Strength: 107
+  {0}Required Level: 69
+  {3}20% Chance to cast level 14 Lightning on striking
+  {3}+4 to Javelin and Spear Skills (Amazon Only)
+  {3}+15% Increased Attack Speed
+  {3}+200% Enhanced Damage
+  {3}Adds 1-511 lightning damage
+  {3}-15% to Enemy Lightning Resistance
+  {3}+3 to Lightning Bolt (Amazon Only)
+-- as the EpicAma's level 91 character
+  {4}Thunderstroke
+  {4}Matriarchal Javelin
+  {0}Throw Damage: {3}105 to {3}198
+  {0}One-Hand Damage: {3}90 to 162
+  {0}Quantity: 44
+  {0}(Amazon Only)
+  {1}Required Dexterity: 151
+  {1}Required Strength: 107
+  {0}Required Level: 69
+  {3}20% Chance to cast level 14 Lightning on striking
+  {3}+4 to Javelin and Spear Skills (Amazon Only)
+  {3}+15% Increased Attack Speed
+  {3}+200% Enhanced Damage
+  {3}Adds 1-511 lightning damage
+  {3}-15% to Enemy Lightning Resistance
+  {3}+3 to Lightning Bolt (Amazon Only)
+== EpicAma 09 cm1
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+-- as the EpicAma's level 91 character
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+== EpicAma 10 cm1
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+-- as the EpicAma's level 91 character
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+== EpicAma 11 cm1
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+-- as the EpicAma's level 91 character
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+== EpicAma 12 cm1
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+-- as the EpicAma's level 91 character
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+== EpicAma 13 cm3
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+-- as the EpicAma's level 91 character
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+== EpicAma 14 cm1
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+-- as the EpicAma's level 91 character
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+== EpicAma 15 cm3
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+-- as the EpicAma's level 91 character
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+== EpicAma 16 cm3
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+-- as the EpicAma's level 91 character
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+== EpicAma 17 cm3
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+-- as the EpicAma's level 91 character
+  {3}Harpoonist's Grand Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 69
+  {3}+1 to Javelin and Spear Skills (Amazon Only)
+  {3}+40 to Life
+== EpicAma 18 cm1
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+-- as the EpicAma's level 91 character
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+== EpicAma 19 cm1
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+-- as the EpicAma's level 91 character
+  {3}Scintillating Small Charm of Vita
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 59
+  {3}+20 to Life
+  {3}All Resistances +5
+== EpicAma 20 ci3
+  {4}Griffon's Eye
+  {4}Diadem
+  {0}Defense: {3}250
+  {0}Durability: 20 of 20
+  {0}Required Level: 76
+  {3}100% Chance to cast level 47 Chain Lightning when you Die
+  {3}+1 to All Skills
+  {3}+25% Faster Cast Rate
+  {3}Adds 1-74 lightning damage
+  {3}-25% to Enemy Lightning Resistance
+  {3}+25% to Lightning Skill Damage
+  {3}+200 Defense
+  {3}Socketed (1)
+-- as the EpicAma's level 91 character
+  {4}Griffon's Eye
+  {4}Diadem
+  {0}Defense: {3}250
+  {0}Durability: 20 of 20
+  {0}Required Level: 76
+  {3}100% Chance to cast level 47 Chain Lightning when you Die
+  {3}+1 to All Skills
+  {3}+25% Faster Cast Rate
+  {3}Adds 1-74 lightning damage
+  {3}-25% to Enemy Lightning Resistance
+  {3}+25% to Lightning Skill Damage
+  {3}+200 Defense
+  {3}Socketed (1)
+== EpicAma 21 rin
+  {4}Bul-Kathos' Wedding Band
+  {4}Ring
+  {0}Required Level: 58
+  {3}+1 to All Skills
+  {3}5% Life stolen per hit
+  {3}+49 to Life (Based on Character Level)
+  {3}+50 Maximum Stamina
+-- as the EpicAma's level 91 character
+  {4}Bul-Kathos' Wedding Band
+  {4}Ring
+  {0}Required Level: 58
+  {3}+1 to All Skills
+  {3}5% Life stolen per hit
+  {3}+45 to Life (Based on Character Level)
+  {3}+50 Maximum Stamina
+== EpicAma 22 rin
+  {4}Bul-Kathos' Wedding Band
+  {4}Ring
+  {0}Required Level: 58
+  {3}+1 to All Skills
+  {3}5% Life stolen per hit
+  {3}+49 to Life (Based on Character Level)
+  {3}+50 Maximum Stamina
+-- as the EpicAma's level 91 character
+  {4}Bul-Kathos' Wedding Band
+  {4}Ring
+  {0}Required Level: 58
+  {3}+1 to All Skills
+  {3}5% Life stolen per hit
+  {3}+45 to Life (Based on Character Level)
+  {3}+50 Maximum Stamina
+== EpicAma 23 uvc
+  {4}Nosferatu's Coil
+  {4}Vampirefang Belt
+  {0}Defense: 37
+  {0}Durability: 14 of 14
+  {0}Required Strength: 50
+  {0}Required Level: 51
+  {3}+1 to All Skills
+  {3}+10% Increased Attack Speed
+  {3}Piercing Attack
+  {3}5% Mana stolen per hit
+  {3}5% Life stolen per hit
+  {3}Slows Target by 10%
+  {3}+15 to Strength
+  {3}+25 to Dexterity
+  {3}All Resistances +20
+  {3}Damage Reduced by 20%
+  {3}-3 to Light Radius
+-- as the EpicAma's level 91 character
+  {4}Nosferatu's Coil
+  {4}Vampirefang Belt
+  {0}Defense: 37
+  {0}Durability: 14 of 14
+  {1}Required Strength: 50
+  {0}Required Level: 51
+  {3}+1 to All Skills
+  {3}+10% Increased Attack Speed
+  {3}Piercing Attack
+  {3}5% Mana stolen per hit
+  {3}5% Life stolen per hit
+  {3}Slows Target by 10%
+  {3}+15 to Strength
+  {3}+25 to Dexterity
+  {3}All Resistances +20
+  {3}Damage Reduced by 20%
+  {3}-3 to Light Radius
+== EpicAma 24 uvb
+  {4}Sandstorm Trek
+  {4}Scarabshell Boots
+  {0}Defense: {3}267
+  {0}Durability: 14 of 14
+  {0}Required Strength: 81
+  {0}Required Level: 64
+  {3}+20% Faster Run/Walk
+  {3}+20% Faster Hit Recovery
+  {3}+170% Enhanced Defense
+  {3}+15 to Strength
+  {3}+15 to Vitality
+  {3}+99 Maximum Stamina (Based on Character Level)
+  {3}50% Slower Stamina Drain
+  {3}Poison Resist +70%
+  {3}Repairs 1 durability in 20 seconds
+  {3}Ethereal (Cannot be Repaired)
+-- as the EpicAma's level 91 character
+  {4}Sandstorm Trek
+  {4}Scarabshell Boots
+  {0}Defense: {3}267
+  {0}Durability: 14 of 14
+  {1}Required Strength: 81
+  {0}Required Level: 64
+  {3}+20% Faster Run/Walk
+  {3}+20% Faster Hit Recovery
+  {3}+170% Enhanced Defense
+  {3}+15 to Strength
+  {3}+15 to Vitality
+  {3}+91 Maximum Stamina (Based on Character Level)
+  {3}50% Slower Stamina Drain
+  {3}Poison Resist +70%
+  {3}Repairs 1 durability in 20 seconds
+  {3}Ethereal (Cannot be Repaired)
+== EpicAma 25 xlg
+  {3}Lancer's Demonhide Gloves of Alacrity
+  {0}Defense: 68
+  {0}Durability: 18 of 18
+  {0}Required Strength: 20
+  {0}Required Level: 45
+  {3}+3 to Javelin and Spear Skills (Amazon Only)
+  {3}+20% Increased Attack Speed
+-- as the EpicAma's level 91 character
+  {3}Lancer's Demonhide Gloves of Alacrity
+  {0}Defense: 68
+  {0}Durability: 18 of 18
+  {0}Required Strength: 20
+  {0}Required Level: 45
+  {3}+3 to Javelin and Spear Skills (Amazon Only)
+  {3}+20% Increased Attack Speed
+== EpicAma 26 utp
+  {4}Duress
+  {5}Archon Plate
+  {4}'ShaelUmThul'
+  {0}Defense: {3}1377
+  {0}Durability: 59 of 60
+  {0}Required Strength: 103
+  {0}Required Level: 63
+  {3}+2 to All Skills
+  {3}+45% Faster Run/Walk
+  {3}+20% Faster Hit Recovery
+  {3}+1 to Teleport
+  {3}+15% Enhanced Defense
+  {3}+775 Defense
+  {3}+74 to Strength (Based on Character Level)
+  {3}Cold Resist +45%
+  {3}Lightning Resist +15%
+  {3}Fire Resist +15%
+  {3}Poison Resist +15%
+  {3}+14 Life after each Kill
+  {3}99% Better Chance of Getting Magic Items (Based on Character Level)
+  {3}Socketed (3)
+-- as the EpicAma's level 91 character
+  {4}Duress
+  {5}Archon Plate
+  {4}'ShaelUmThul'
+  {0}Defense: {3}1377
+  {0}Durability: 59 of 60
+  {1}Required Strength: 103
+  {0}Required Level: 63
+  {3}+2 to All Skills
+  {3}+45% Faster Run/Walk
+  {3}+20% Faster Hit Recovery
+  {3}+1 to Teleport
+  {3}+15% Enhanced Defense
+  {3}+775 Defense
+  {3}+68 to Strength (Based on Character Level)
+  {3}Cold Resist +45%
+  {3}Lightning Resist +15%
+  {3}Fire Resist +15%
+  {3}Poison Resist +15%
+  {3}+14 Life after each Kill
+  {3}91% Better Chance of Getting Magic Items (Based on Character Level)
+  {3}Socketed (3)
+== EpicAma 27 amu
+  {4}Mara's Kaleidoscope
+  {4}Amulet
+  {0}Required Level: 67
+  {3}+2 to All Skills
+  {3}+5 to all Attributes
+  {3}All Resistances +30
+-- as the EpicAma's level 91 character
+  {4}Mara's Kaleidoscope
+  {4}Amulet
+  {0}Required Level: 67
+  {3}+2 to All Skills
+  {3}+5 to all Attributes
+  {3}All Resistances +30
+== EpicAma 28 uit
+  {3}Jeweler's Monarch of Deflecting
+  {0}Defense: 138
+  {0}Chance to Block: {3}42%
+  {0}Durability: 86 of 86
+  {0}Required Strength: 156
+  {0}Required Level: 54
+  {3}400% Chance to cast level 47 Chain Lightning when you Die
+  {3}+30% Faster Block Rate
+  {3}20% Increased Chance of Blocking
+  {3}Adds 4-296 lightning damage
+  {3}-20% to Enemy Lightning Resistance
+  {3}+20% to Lightning Skill Damage
+  {3}Socketed (4)
+-- as the EpicAma's level 91 character
+  {3}Jeweler's Monarch of Deflecting
+  {0}Defense: 138
+  {0}Chance to Block: {3}67%
+  {0}Durability: 86 of 86
+  {1}Required Strength: 156
+  {0}Required Level: 54
+  {3}400% Chance to cast level 47 Chain Lightning when you Die
+  {3}+30% Faster Block Rate
+  {3}20% Increased Chance of Blocking
+  {3}Adds 4-296 lightning damage
+  {3}-20% to Enemy Lightning Resistance
+  {3}+20% to Lightning Skill Damage
+  {3}Socketed (4)
+== EpicAma 29 cm2
+  {4}Hellfire Torch
+  {4}Large Charm
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 75
+  {3}25% Chance to cast level 10 Firestorm on striking
+  {3}+3 to Amazon Skill Levels
+  {3}+20 to all Attributes
+  {3}All Resistances +20
+  {3}+8 to Light Radius
+  {3}Level 30 Hydra (10/10 Charges)
+-- as the EpicAma's level 91 character
+  {4}Hellfire Torch
+  {4}Large Charm
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 75
+  {3}25% Chance to cast level 10 Firestorm on striking
+  {3}+3 to Amazon Skill Levels
+  {3}+20 to all Attributes
+  {3}All Resistances +20
+  {3}+8 to Light Radius
+  {3}Level 30 Hydra (10/10 Charges)
+== EpicAma 30 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicAma's level 91 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicAma 31 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicAma's level 91 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicAma 32 rvl
+  {0}Full Rejuvenation Potion
+  {0}Heals 100% Life and Mana
+-- as the EpicAma's level 91 character
+  {0}Full Rejuvenation Potion
+  {0}Heals 100% Life and Mana
+== EpicAma 33 hp4
+  {0}Greater Healing Potion
+  {0}Points: 180
+-- as the EpicAma's level 91 character
+  {0}Greater Healing Potion
+  {0}Points: 180
+== EpicAma 34 rvl
+  {0}Full Rejuvenation Potion
+  {0}Heals 100% Life and Mana
+-- as the EpicAma's level 91 character
+  {0}Full Rejuvenation Potion
+  {0}Heals 100% Life and Mana
+== EpicAma 35 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicAma's level 91 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicAma 36 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicAma's level 91 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicAma 37 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicAma's level 91 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicAma 38 rvl
+  {0}Full Rejuvenation Potion
+  {0}Heals 100% Life and Mana
+-- as the EpicAma's level 91 character
+  {0}Full Rejuvenation Potion
+  {0}Heals 100% Life and Mana
+== EpicAma 39 hp4
+  {0}Greater Healing Potion
+  {0}Points: 180
+-- as the EpicAma's level 91 character
+  {0}Greater Healing Potion
+  {0}Points: 180
+== EpicAma 40 rvs
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+-- as the EpicAma's level 91 character
+  {0}Rejuvenation Potion
+  {0}Heals 35% Life and Mana
+== EpicAma 41 fla
+  {4}Call to Arms
+  {5}Flail
+  {4}'AmnRalMalIstOhm'
+  {0}One-Hand Damage: {3}3 to 93
+  {0}Durability: 30 of 30
+  {0}Required Dexterity: 35
+  {0}Required Strength: 41
+  {0}Required Level: 57
+  {3}+1 to All Skills
+  {3}+40% Increased Attack Speed
+  {3}+290% Enhanced Damage
+  {3}Adds 5-30 fire damage
+  {3}7% Life stolen per hit
+  {3}+6 to Battle Command
+  {3}+6 to Battle Orders
+  {3}+4 to Battle Cry
+  {3}Prevent Monster Heal
+  {3}Replenish Life +12
+  {3}30% Better Chance of Getting Magic Items
+  {3}+50% Damage to Undead
+  {3}Socketed (5)
+-- as the EpicAma's level 91 character
+  {4}Call to Arms
+  {5}Flail
+  {4}'AmnRalMalIstOhm'
+  {0}One-Hand Damage: {3}3 to 93
+  {0}Durability: 30 of 30
+  {0}Required Dexterity: 35
+  {1}Required Strength: 41
+  {0}Required Level: 57
+  {3}+1 to All Skills
+  {3}+40% Increased Attack Speed
+  {3}+290% Enhanced Damage
+  {3}Adds 5-30 fire damage
+  {3}7% Life stolen per hit
+  {3}+6 to Battle Command
+  {3}+6 to Battle Orders
+  {3}+4 to Battle Cry
+  {3}Prevent Monster Heal
+  {3}Replenish Life +12
+  {3}30% Better Chance of Getting Magic Items
+  {3}+50% Damage to Undead
+  {3}Socketed (5)
+== EpicAma 42 uit
+  {4}Spirit
+  {5}Monarch
+  {4}'TalThulOrtAmn'
+  {0}Defense: {3}170
+  {0}Chance to Block: {3}37%
+  {0}Durability: 98 of {3}98
+  {0}Required Strength: 156
+  {0}Required Level: 54
+  {3}+2 to All Skills
+  {3}+35% Faster Cast Rate
+  {3}+55% Faster Hit Recovery
+  {3}+15% Faster Block Rate
+  {3}15% Increased Chance of Blocking
+  {3}+15% Enhanced Defense
+  {3}+250 Defense vs. Missile
+  {3}+22 to Vitality
+  {3}+112 to Mana
+  {3}Cold Resist +35%
+  {3}Lightning Resist +35%
+  {3}Poison Resist +35%
+  {3}+8 Magic Absorb
+  {3}Attacker Takes Damage of 14
+  {3}Increase Maximum Durability 15%
+  {3}Socketed (4)
+-- as the EpicAma's level 91 character
+  {4}Spirit
+  {5}Monarch
+  {4}'TalThulOrtAmn'
+  {0}Defense: {3}170
+  {0}Chance to Block: {3}62%
+  {0}Durability: 98 of {3}98
+  {1}Required Strength: 156
+  {0}Required Level: 54
+  {3}+2 to All Skills
+  {3}+35% Faster Cast Rate
+  {3}+55% Faster Hit Recovery
+  {3}+15% Faster Block Rate
+  {3}15% Increased Chance of Blocking
+  {3}+15% Enhanced Defense
+  {3}+250 Defense vs. Missile
+  {3}+22 to Vitality
+  {3}+112 to Mana
+  {3}Cold Resist +35%
+  {3}Lightning Resist +35%
+  {3}Poison Resist +35%
+  {3}+8 Magic Absorb
+  {3}Attacker Takes Damage of 14
+  {3}Increase Maximum Durability 15%
+  {3}Socketed (4)
+== EpicAma 43 hp5
+  {0}Super Healing Potion
+  {0}Points: 320
+-- as the EpicAma's level 91 character
+  {0}Super Healing Potion
+  {0}Points: 320
+== EpicAma 44 mp5
+  {0}Super Mana Potion
+  {0}Points: 250
+-- as the EpicAma's level 91 character
+  {0}Super Mana Potion
+  {0}Points: 250
+== EpicAma 45 mp5
+  {0}Super Mana Potion
+  {0}Points: 250
+-- as the EpicAma's level 91 character
+  {0}Super Mana Potion
+  {0}Points: 250
+== EpicAma 46 amf
+  {3}Lancer's Matriarchal Javelin of Quickness
+  {0}Throw Damage: {0}35 to {0}66
+  {0}One-Hand Damage: 30 to 54
+  {0}Quantity: 80
+  {0}(Amazon Only)
+  {0}Required Dexterity: 151
+  {0}Required Strength: 107
+  {0}Required Level: 48
+  {3}+6 to Javelin and Spear Skills (Amazon Only)
+  {3}+40% Increased Attack Speed
+-- as the EpicAma's level 91 character
+  {3}Lancer's Matriarchal Javelin of Quickness
+  {0}Throw Damage: {0}35 to {0}66
+  {0}One-Hand Damage: 30 to 54
+  {0}Quantity: 80
+  {0}(Amazon Only)
+  {1}Required Dexterity: 151
+  {1}Required Strength: 107
+  {0}Required Level: 48
+  {3}+6 to Javelin and Spear Skills (Amazon Only)
+  {3}+40% Increased Attack Speed
+== EpicAma 47 uit
+  {4}Stormshield
+  {4}Monarch
+  {4}'Um'
+  {0}Defense: {3}509
+  {0}Chance to Block: {3}47%
+  {0}Durability: 65 of 86
+  {0}Required Strength: 156
+  {0}Required Level: 73
+  {3}Indestructible
+  {3}+35% Faster Block Rate
+  {3}25% Increased Chance of Blocking
+  {3}+371 Defense (Based on Character Level)
+  {3}+30 to Strength
+  {3}Cold Resist +82%
+  {3}Lightning Resist +47%
+  {3}Fire Resist +22%
+  {3}Poison Resist +22%
+  {3}Damage Reduced by 35%
+  {3}Attacker Takes Lightning Damage of 10
+  {3}Socketed (1)
+-- as the EpicAma's level 91 character
+  {4}Stormshield
+  {4}Monarch
+  {4}'Um'
+  {0}Defense: {3}479
+  {0}Chance to Block: {3}72%
+  {0}Durability: 65 of 86
+  {1}Required Strength: 156
+  {0}Required Level: 73
+  {3}Indestructible
+  {3}+35% Faster Block Rate
+  {3}25% Increased Chance of Blocking
+  {3}+341 Defense (Based on Character Level)
+  {3}+30 to Strength
+  {3}Cold Resist +82%
+  {3}Lightning Resist +47%
+  {3}Fire Resist +22%
+  {3}Poison Resist +22%
+  {3}Damage Reduced by 35%
+  {3}Attacker Takes Lightning Damage of 10
+  {3}Socketed (1)
+== golden 00 xsk
+  {2}Tal Rasha's Horadric Crest
+  {2}Death Mask
+  {0}Defense: {3}131
+  {0}Durability: 20 of 20
+  {0}Required Strength: 55
+  {0}Required Level: 66
+  {3}10% Mana stolen per hit
+  {3}10% Life stolen per hit
+  {3}+45 Defense
+  {3}+60 to Life
+  {3}+30 to Mana
+  {3}All Resistances +15
+  
+  {4}Tal Rasha's Wrappings
+  {1}Tal Rasha's Horadric Crest
+  {1}Tal Rasha's Guardianship
+  {1}Tal Rasha's Lidless Eye
+  {1}Tal Rasha's Adjudication
+  {1}Tal Rasha's Fine-Spun Cloth
+-- as the golden's level 90 character
+  {2}Tal Rasha's Horadric Crest
+  {2}Death Mask
+  {0}Defense: {3}131
+  {0}Durability: 20 of 20
+  {0}Required Strength: 55
+  {0}Required Level: 66
+  {3}10% Mana stolen per hit
+  {3}10% Life stolen per hit
+  {3}+45 Defense
+  {3}+60 to Life
+  {3}+30 to Mana
+  {3}All Resistances +15
+  
+  {4}Tal Rasha's Wrappings
+  {2}Tal Rasha's Horadric Crest
+  {2}Tal Rasha's Guardianship
+  {2}Tal Rasha's Lidless Eye
+  {2}Tal Rasha's Adjudication
+  {2}Tal Rasha's Fine-Spun Cloth
+== golden 01 uth
+  {2}Tal Rasha's Guardianship
+  {2}Lacquered Plate
+  {0}Defense: {3}941
+  {0}Durability: 55 of 55
+  {0}Required Strength: 84
+  {0}Required Level: 71
+  {3}+400 Defense
+  {3}Cold Resist +40%
+  {3}Lightning Resist +40%
+  {3}Fire Resist +40%
+  {3}Magic Damage Reduced by 15
+  {3}88% Better Chance of Getting Magic Items
+  {3}Requirements -60%
+  
+  {4}Tal Rasha's Wrappings
+  {1}Tal Rasha's Horadric Crest
+  {1}Tal Rasha's Guardianship
+  {1}Tal Rasha's Lidless Eye
+  {1}Tal Rasha's Adjudication
+  {1}Tal Rasha's Fine-Spun Cloth
+-- as the golden's level 90 character
+  {2}Tal Rasha's Guardianship
+  {2}Lacquered Plate
+  {0}Defense: {3}941
+  {0}Durability: 55 of 55
+  {0}Required Strength: 84
+  {0}Required Level: 71
+  {3}+400 Defense
+  {3}Cold Resist +40%
+  {3}Lightning Resist +40%
+  {3}Fire Resist +40%
+  {3}Magic Damage Reduced by 15
+  {3}88% Better Chance of Getting Magic Items
+  {3}Requirements -60%
+  {2}+10% Faster Cast Rate
+  
+  {4}Tal Rasha's Wrappings
+  {2}Tal Rasha's Horadric Crest
+  {2}Tal Rasha's Guardianship
+  {2}Tal Rasha's Lidless Eye
+  {2}Tal Rasha's Adjudication
+  {2}Tal Rasha's Fine-Spun Cloth
+== golden 02 amu
+  {2}Tal Rasha's Adjudication
+  {2}Amulet
+  {0}Required Level: 67
+  {3}+2 to Sorceress Skill Levels
+  {3}Adds 3-32 lightning damage
+  {3}+50 to Life
+  {3}+42 to Mana
+  {3}Lightning Resist +33%
+  
+  {4}Tal Rasha's Wrappings
+  {1}Tal Rasha's Horadric Crest
+  {1}Tal Rasha's Guardianship
+  {1}Tal Rasha's Lidless Eye
+  {1}Tal Rasha's Adjudication
+  {1}Tal Rasha's Fine-Spun Cloth
+-- as the golden's level 90 character
+  {2}Tal Rasha's Adjudication
+  {2}Amulet
+  {0}Required Level: 67
+  {3}+2 to Sorceress Skill Levels
+  {3}Adds 3-32 lightning damage
+  {3}+50 to Life
+  {3}+42 to Mana
+  {3}Lightning Resist +33%
+  {2}+10% Faster Cast Rate
+  
+  {4}Tal Rasha's Wrappings
+  {2}Tal Rasha's Horadric Crest
+  {2}Tal Rasha's Guardianship
+  {2}Tal Rasha's Lidless Eye
+  {2}Tal Rasha's Adjudication
+  {2}Tal Rasha's Fine-Spun Cloth
+== golden 03 zmb
+  {2}Tal Rasha's Fine-Spun Cloth
+  {2}Mesh Belt
+  {0}Defense: 40
+  {0}Durability: 16 of 16
+  {0}Required Strength: 47
+  {0}Required Level: 53
+  {3}+20 to Dexterity
+  {3}+30 to Mana
+  {3}37% Damage Taken Goes To Mana
+  {3}15% Better Chance of Getting Magic Items
+  {3}Requirements -20%
+  
+  {4}Tal Rasha's Wrappings
+  {1}Tal Rasha's Horadric Crest
+  {1}Tal Rasha's Guardianship
+  {1}Tal Rasha's Lidless Eye
+  {1}Tal Rasha's Adjudication
+  {1}Tal Rasha's Fine-Spun Cloth
+-- as the golden's level 90 character
+  {2}Tal Rasha's Fine-Spun Cloth
+  {2}Mesh Belt
+  {0}Defense: 40
+  {0}Durability: 16 of 16
+  {0}Required Strength: 47
+  {0}Required Level: 53
+  {3}+20 to Dexterity
+  {3}+30 to Mana
+  {3}37% Damage Taken Goes To Mana
+  {3}15% Better Chance of Getting Magic Items
+  {3}Requirements -20%
+  {2}+10% Faster Cast Rate
+  {2}+60 Defense
+  
+  {4}Tal Rasha's Wrappings
+  {2}Tal Rasha's Horadric Crest
+  {2}Tal Rasha's Guardianship
+  {2}Tal Rasha's Lidless Eye
+  {2}Tal Rasha's Adjudication
+  {2}Tal Rasha's Fine-Spun Cloth
+== golden 04 xmg
+  {2}Trang-Oul's Claws
+  {2}Heavy Bracers
+  {0}Defense: {3}74
+  {0}Durability: 16 of 16
+  {0}Required Strength: 58
+  {0}Required Level: 45
+  {3}+2 to Curses (Necromancer Only)
+  {3}+20% Faster Cast Rate
+  {3}+30 Defense
+  {3}Cold Resist +30%
+  
+  {4}Trang-Oul's Avatar
+  {1}Trang-Oul's Girth
+  {1}Trang-Oul's Claws
+  {1}Trang-Oul's Wing
+  {1}Trang-Oul's Scales
+  {1}Trang-Oul's Guise
+-- as the golden's level 90 character
+  {2}Trang-Oul's Claws
+  {2}Heavy Bracers
+  {0}Defense: {3}74
+  {0}Durability: 16 of 16
+  {0}Required Strength: 58
+  {0}Required Level: 45
+  {3}+2 to Curses (Necromancer Only)
+  {3}+20% Faster Cast Rate
+  {3}+30 Defense
+  {3}Cold Resist +30%
+  
+  {4}Trang-Oul's Avatar
+  {1}Trang-Oul's Girth
+  {2}Trang-Oul's Claws
+  {1}Trang-Oul's Wing
+  {1}Trang-Oul's Scales
+  {1}Trang-Oul's Guise
+== golden 05 fla
+  {4}Heart of the Oak
+  {5}Flail
+  {4}'KoVexPulThul'
+  {0}One-Hand Damage: 1 to 36
+  {0}Durability: 16 of 16
+  {0}Required Dexterity: 25
+  {0}Required Strength: 31
+  {0}Required Level: 55
+  {3}+3 to All Skills
+  {3}+40% Faster Cast Rate
+  {3}+75% Damage to Demons
+  {3}+100 to Attack Rating against Demons
+  {3}Adds 3-14 cold damage
+  {3}7% Mana stolen per hit
+  {3}+10 to Dexterity
+  {3}Replenish Life +20
+  {3}Increase Maximum Mana 15%
+  {3}All Resistances +40
+  {3}Level 4 Oak Sage (25/25 Charges)
+  {3}Level 14 Raven (60/60 Charges)
+  {3}+50% Damage to Undead
+  {3}Ethereal (Cannot be Repaired), Socketed (4)
+-- as the golden's level 90 character
+  {4}Heart of the Oak
+  {5}Flail
+  {4}'KoVexPulThul'
+  {0}One-Hand Damage: 1 to 36
+  {0}Durability: 16 of 16
+  {0}Required Dexterity: 25
+  {0}Required Strength: 31
+  {0}Required Level: 55
+  {3}+3 to All Skills
+  {3}+40% Faster Cast Rate
+  {3}+75% Damage to Demons
+  {3}+100 to Attack Rating against Demons
+  {3}Adds 3-14 cold damage
+  {3}7% Mana stolen per hit
+  {3}+10 to Dexterity
+  {3}Replenish Life +20
+  {3}Increase Maximum Mana 15%
+  {3}All Resistances +40
+  {3}Level 4 Oak Sage (25/25 Charges)
+  {3}Level 14 Raven (60/60 Charges)
+  {3}+50% Damage to Undead
+  {3}Ethereal (Cannot be Repaired), Socketed (4)
+== golden 06 pab
+  {4}Spirit
+  {5}Sacred Targe
+  {4}'TalThulOrtAmn'
+  {0}Defense: 158
+  {0}Chance to Block: 30%
+  {0}Durability: 45 of 45
+  {0}(Paladin Only)
+  {0}Required Strength: 86
+  {0}Required Level: 47
+  {3}+2 to All Skills
+  {3}+35% Faster Cast Rate
+  {3}+55% Faster Hit Recovery
+  {3}+250 Defense vs. Missile
+  {3}+22 to Vitality
+  {3}+112 to Mana
+  {3}Cold Resist +80%
+  {3}Lightning Resist +80%
+  {3}Fire Resist +45%
+  {3}Poison Resist +80%
+  {3}+8 Magic Absorb
+  {3}Attacker Takes Damage of 14
+  {3}Socketed (4)
+-- as the golden's level 90 character
+  {4}Spirit
+  {5}Sacred Targe
+  {4}'TalThulOrtAmn'
+  {0}Defense: 158
+  {0}Chance to Block: {3}60%
+  {0}Smite Damage: 22 to 70
+  {0}Durability: 45 of 45
+  {0}(Paladin Only)
+  {0}Required Strength: 86
+  {0}Required Level: 47
+  {3}+2 to All Skills
+  {3}+35% Faster Cast Rate
+  {3}+55% Faster Hit Recovery
+  {3}+250 Defense vs. Missile
+  {3}+22 to Vitality
+  {3}+112 to Mana
+  {3}Cold Resist +80%
+  {3}Lightning Resist +80%
+  {3}Fire Resist +45%
+  {3}Poison Resist +80%
+  {3}+8 Magic Absorb
+  {3}Attacker Takes Damage of 14
+  {3}Socketed (4)
+== golden 07 rin
+  {4}The Stone of Jordan
+  {4}Ring
+  {0}Required Level: 29
+  {3}+1 to All Skills
+  {3}Adds 1-12 lightning damage
+  {3}+20 to Mana
+  {3}Increase Maximum Mana 25%
+-- as the golden's level 90 character
+  {4}The Stone of Jordan
+  {4}Ring
+  {0}Required Level: 29
+  {3}+1 to All Skills
+  {3}Adds 1-12 lightning damage
+  {3}+20 to Mana
+  {3}Increase Maximum Mana 25%
+== golden 08 rin
+  {3}Ruby Ring of the Apprentice
+  {0}Required Level: 18
+  {3}+10% Faster Cast Rate
+  {3}Fire Resist +50%
+-- as the golden's level 90 character
+  {3}Ruby Ring of the Apprentice
+  {0}Required Level: 18
+  {3}+10% Faster Cast Rate
+  {3}Fire Resist +50%
+== golden 09 xvb
+  {9}Gale Tread
+  {9}Sharkskin Boots
+  {0}Defense: 39
+  {0}Durability: 14 of 14
+  {0}Required Strength: 47
+  {0}Required Level: 29
+  {3}+30% Faster Run/Walk
+  {3}Fire Resist +40%
+-- as the golden's level 90 character
+  {9}Gale Tread
+  {9}Sharkskin Boots
+  {0}Defense: 39
+  {0}Durability: 14 of 14
+  {0}Required Strength: 47
+  {0}Required Level: 29
+  {3}+30% Faster Run/Walk
+  {3}Fire Resist +40%
+== golden 10 ssd
+  {5}Gemmed Short Sword
+  {0}One-Hand Damage: 2 to 7
+  {0}Durability: 24 of 24
+  {0}Required Level: 12
+  {3}+160 to Attack Rating
+  {3}Socketed (2)
+-- as the golden's level 90 character
+  {5}Gemmed Short Sword
+  {0}One-Hand Damage: 2 to 7
+  {0}Durability: 24 of 24
+  {0}Required Level: 12
+  {3}+160 to Attack Rating
+  {3}Socketed (2)
+== golden 11 oba
+  {2}Tal Rasha's Lidless Eye
+  {2}Swirling Crystal
+  {0}One-Hand Damage: 18 to 42
+  {0}Durability: 50 of 50
+  {0}(Sorceress Only)
+  {0}Required Level: 65
+  {3}+20% Faster Cast Rate
+  {3}+2 to Cold Mastery (Sorceress Only)
+  {3}+2 to Lightning Mastery (Sorceress Only)
+  {3}+2 to Fire Mastery (Sorceress Only)
+  {3}+10 to Energy
+  {3}+57 to Life
+  {3}+77 to Mana
+  
+  {4}Tal Rasha's Wrappings
+  {1}Tal Rasha's Horadric Crest
+  {1}Tal Rasha's Guardianship
+  {1}Tal Rasha's Lidless Eye
+  {1}Tal Rasha's Adjudication
+  {1}Tal Rasha's Fine-Spun Cloth
+-- as the golden's level 90 character
+  {2}Tal Rasha's Lidless Eye
+  {2}Swirling Crystal
+  {0}One-Hand Damage: 18 to 42
+  {0}Durability: 50 of 50
+  {1}(Sorceress Only)
+  {0}Required Level: 65
+  {3}+20% Faster Cast Rate
+  {3}+2 to Cold Mastery (Sorceress Only)
+  {3}+2 to Lightning Mastery (Sorceress Only)
+  {3}+2 to Fire Mastery (Sorceress Only)
+  {3}+10 to Energy
+  {3}+57 to Life
+  {3}+77 to Mana
+  {2}-15% to Enemy Lightning Resistance
+  {2}-15% to Enemy Fire Resistance
+  {2}+1 to Sorceress Skill Levels
+  
+  {4}Tal Rasha's Wrappings
+  {2}Tal Rasha's Horadric Crest
+  {2}Tal Rasha's Guardianship
+  {2}Tal Rasha's Lidless Eye
+  {2}Tal Rasha's Adjudication
+  {2}Tal Rasha's Fine-Spun Cloth
+== golden 12 r33
+  {8}Zod Rune
+  {0}Can be Inserted into Socketed Items
+  
+  {0}Weapons: Indestructible
+  {0}Armor: Indestructible
+  {0}Helms: Indestructible
+  {0}Shields: Indestructible
+  
+  {0}Required Level: 69
+-- as the golden's level 90 character
+  {8}Zod Rune
+  {0}Can be Inserted into Socketed Items
+  
+  {0}Weapons: Indestructible
+  {0}Armor: Indestructible
+  {0}Helms: Indestructible
+  {0}Shields: Indestructible
+  
+  {0}Required Level: 69
+== golden 13 gpw
+  {0}Perfect Diamond
+  {0}Can be Inserted into Socketed Items
+  
+  {0}Weapons: +68% Damage to Undead
+  {0}Armor: +100 to Attack Rating
+  {0}Helms: +100 to Attack Rating
+  {0}Shields: All Resistances +19
+  
+  {0}Required Level: 18
+-- as the golden's level 90 character
+  {0}Perfect Diamond
+  {0}Can be Inserted into Socketed Items
+  
+  {0}Weapons: +68% Damage to Undead
+  {0}Armor: +100 to Attack Rating
+  {0}Helms: +100 to Attack Rating
+  {0}Shields: All Resistances +19
+  
+  {0}Required Level: 18
+== golden 14 key
+  {0}Key
+  {0}Quantity: 12
+-- as the golden's level 90 character
+  {0}Key
+  {0}Quantity: 12
+== golden 15 jew
+  {3}Ruby Jewel 
+  {0}Can be Inserted into Socketed Items
+  {0}Required Level: 13
+  {3}Fire Resist +30%
+-- as the golden's level 90 character
+  {3}Ruby Jewel 
+  {0}Can be Inserted into Socketed Items
+  {0}Required Level: 13
+  {3}Fire Resist +30%
+== golden 16 tbk
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 20
+-- as the golden's level 90 character
+  {0}Tome of Town Portal
+  {0}Insert Scrolls
+  {0}Right Click to Use
+  {0}Quantity: 20
+== golden 17 box
+  {4}Horadric Cube
+  {4}Right Click to Open
+-- as the golden's level 90 character
+  {4}Horadric Cube
+  {4}Right Click to Open
+== golden 18 xap
+  {5}Gemmed War Hat
+  {4}'Ral'
+  {0}Defense: 79
+  {0}Durability: 7 of 7
+  {0}Required Strength: 10
+  {0}Required Level: 22
+  {3}Fire Resist +30%
+  {3}Ethereal (Cannot be Repaired), Socketed (2)
+-- as the golden's level 90 character
+  {5}Gemmed War Hat
+  {4}'Ral'
+  {0}Defense: 79
+  {0}Durability: 7 of 7
+  {0}Required Strength: 10
+  {0}Required Level: 22
+  {3}Fire Resist +30%
+  {3}Ethereal (Cannot be Repaired), Socketed (2)
+== golden 19 cm1
+  {3}Ruby Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 32
+  {3}Fire Resist +11%
+-- as the golden's level 90 character
+  {3}Ruby Small Charm 
+  {0}Keep in Inventory to Gain Bonus
+  {0}Required Level: 32
+  {3}Fire Resist +11%
