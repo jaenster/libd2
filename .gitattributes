@@ -1,0 +1,11 @@
+# Written by tools/bindgen from the C headers (`zig build bindings`); collapsed in diffs.
+packages/rust/libd2/src/sys/*.rs linguist-generated=true
+packages/rust/libd2/tests/generated_abi.rs linguist-generated=true
+packages/go/libd2/*/zz_abi.go linguist-generated=true
+packages/go/libd2/*/zz_abi_test.go linguist-generated=true
+packages/dotnet/LibD2/*/Native.g.cs linguist-generated=true
+packages/dotnet/LibD2.Tests/GeneratedAbi.g.cs linguist-generated=true
+packages/npm/libd2/src/abi.ts linguist-generated=true
+packages/npm/libd2/test/abi.generated.test.ts linguist-generated=true
+# Built by packages/wasm.
+packages/npm/libd2/src/*.wasm binary linguist-generated=true

@@ -16,11 +16,23 @@ caller with a modified game overrides them with `data.setOverride` as everywhere
 |tooltip text (`itemdesc.zig`, `statdesc.zig`, `itemstats.zig`)|`d2-item`|item domain, needs only the tables and strings; usable with no art at all (a bot, a web stash list)|
 |icon, frame, font draw, card, asset lookup, C ABI|new `d2-itemdraw` (`packages/itemdraw`)|needs `d2-formats` (dc6, font, palette, pl2, mpq, canvas); `d2-item` stays free of the art formats, `d2-render` drags in the whole DRLG|
 
+Pixels go through `d2-formats`' `canvas` (RGBA canvas, palette blits with a colour map and alpha, fill,
+straight-alpha composite, PNG), the one copy `d2-render`'s object sprites and `tools/sprite` use too.
+
 `d2-item`'s existing `itemtext` (the save inspector's approximate formatter, also used by d2up-server's
 `d2render`) is left as it is. The new text builder is the faithful one; moving `itemtext` users onto it
 is a separate change for the owner to call.
 
 ## API
+
+Drawing is two steps. **Layout** turns an item into a display list in 1.14d pixels: the box, every line
+as colour runs with each glyph's Font16 frame and cell, the icon and socket frames with their DC6 path,
+frame, colour map and draw-mode alpha, and the tinted cells. It needs only the Font16 widths.
+**Raster** draws a display list at a scale through providers: a glyph provider paints one glyph into
+its cell, a sprite provider one frame into its rectangle. libd2's own providers paint the 1.14d DC6 font
+and inventory art from the caller's archives, so `rasterize(layout, defaults, 1)` is byte-identical to
+the game. Other art (HD sprites, a vector face drawn into the glyph cell) plugs in as providers without
+changing the layout; a tile a provider declines falls back to libd2's.
 
 Zig (`@import("libd2").itemdraw`, module `d2-itemdraw`):
 
@@ -32,12 +44,21 @@ const d = try itemdraw.Drawer.init(gpa, &assets, .{ .act = 1 });
 defer d.deinit();
 const records = try itemdraw.parseRecords(arena, bytes, 7); // host + socketed children
 const opts = itemdraw.DescOptions{ .viewer = .{ .class = 1, .level = 80, .strength = 100, .dexterity = 50 } };
-const desc = try d.describe(arena, records, opts);   // the engine's string; itemdesc.lines() reads it top down
-var icon = try d.icon(records, .{ .background = .normal, .sockets = false });
-var tip  = try d.tooltip(desc);
-var card = try d.card(records, opts);                // hovered cells + icon + sockets + the box, as on hover
-const png = try card.png(gpa);
+
+var l = try d.layoutCard(records, opts);       // or layoutIcon / layoutTooltip(desc)
+defer l.deinit();
+const json = try l.json(gpa);                  // the display list as JSON
+const alt = try l.text(gpa, 1024);             // plain text, whole lines, capped (Discord alt text)
+var img = try itemdraw.rasterize(gpa, &l, my_providers, d.defaults(), 4); // scale 4, own art first
+const png = try itemdraw.png(gpa, &img);
+
+var card = try d.card(records, opts);          // shorthand: layout + default providers at scale 1
 ```
+
+A `GlyphProvider` gets the font name, the glyph (code point, Font16 frame, colour id, cell), the colour's
+nominal RGB, the scale and a zeroed RGBA tile of cell x scale plus `pad` on every side. A `SpriteProvider`
+gets the sprite (path, frame, colour map, role, ethereal, rect) and a tile of rect x scale, and paints it
+opaque; the rasterizer applies the draw-mode alpha. Both return whether they drew.
 
 Without art, `d2-item`'s `itemdesc.Describer` gives the same text from the tables alone.
 
@@ -45,17 +66,30 @@ Without art, `d2-item`'s `itemdesc.Describer` gives the same text from the table
 icon, tooltip and card PNGs, the records of each item, and the text with the engine's own string.
 
 Tests: `zig build test` in packages/itemdraw compares the text of every item of three characters
-(EpicSorc, EpicAma, and the kit character `src/testdata/golden.kit`) with and without a viewer; with
-`-Dd2dir=<1.14d install>` it also hashes every icon, tooltip and card, and `-Dout=DIR` writes them.
-`-Dupdate-golden=true` rewrites the golden files, the diff being the review.
+(EpicSorc, EpicAma, and a character composed at test time from `testdata/kits/golden.kit`) with and
+without a viewer, the layout JSON of the binding fixtures, the box provider at scale 2 and 4 against the
+same layout, a provider through the C callbacks, and a padded provider; with `-Dd2dir=<1.14d install>` it
+also hashes every icon, tooltip and card, and `-Dout=DIR` writes them. `-Dupdate-golden=true` rewrites the
+golden files, the diff being the review.
 
 `viewer` is optional. Without one the text uses the neutral case below; with one (class, level, strength,
 dexterity, the set items worn) the requirement colours, class line, per-level stats, the attack-speed
 line and set member colours follow the engine's rules for that character.
 
-C ABI (`d2itemdraw.h`, in the combined wasm as subsystem `itemdraw`, Go package `itemdraw`, .NET
-`LibD2.ItemDraw`): create/destroy a context, add an archive or a file, then `text`, `icon`, `tooltip`,
-`card` from record bytes, each returning an image handle with width, height, RGBA and PNG accessors.
+C ABI (`d2itemdraw.h`, ABI 2): create/destroy a context, add an archive or a file; `text`, `alt_text`,
+`icon`, `tooltip`, `card` from record bytes; `layout` (handle with `json`, `width`, `height`, `text`) and
+`rasterize(ctx, layout, providers, scale)`, where `D2ItemDrawProviders` holds a user pointer, a glyph and
+a sprite callback (either may be NULL) and the glyph pad.
+
+|language|entry|layout + providers|
+|-|-|-|
+|Rust|`libd2::itemdraw::Context`|`layout`, `rasterize(&layout, Option<&mut dyn GlyphProvider>, Option<&mut dyn SpriteProvider>, scale)`|
+|Go|`itemdraw.New()`|`Layout`, `Rasterize(l, GlyphProvider, pad, SpriteProvider, scale)` (purego callbacks)|
+|.NET|`LibD2.ItemDraw.ItemDrawer`|`Layout`, `Rasterize(layout, GlyphProvider?, SpriteProvider?, scale)` (function pointers)|
+|npm|`ItemDrawer.create()` (loads `items.wasm`)|`layout`, `rasterize` (libd2's art in wasm); `rasterizeLayout(layout.data, {glyph, sprite}, scale)` composes in JavaScript with the same blending, for providers in JS|
+
+Every binding's tests read the same fixtures, `testdata/itemdraw/bindings` (records, colored text with
+and without a viewer, the Griffon's Eye card layout JSON), written by the Zig tests through the C ABI.
 
 ## What follows which Ghidra function (1.14d Game.exe)
 
@@ -112,6 +146,8 @@ bonuses that need worn pieces. Everything else is the engine's rule.
 - Missile potions' throw damage (needs Missiles.txt and the character's skills).
 - The quest-difficulty red name, monster body part names, elixirs.
 - Potion points: the calc column as written, without the per-difficulty adjustment.
+- Fractional scales: providers get an integer scale (D2OpenGL's HD text draws at fractional ones).
+- Text wrapping: none, as in the engine.
 - Unconfirmed, for the in-game screenshots: the vertical position of the glyphs in the box, the set
   member order, whether an unworn set piece shows the partial bonuses of the worn pieces, the tome
   line order, translucency taken as the Glide/Direct3D alpha constants (0x40/0x80/0xC0).

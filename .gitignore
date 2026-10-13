@@ -26,3 +26,4 @@ packages/dotnet/**/obj/
 # Go: native assets + their generated embed files are staged by scripts/go-sync-natives.sh
 packages/go/**/natives/
 packages/go/**/embed_*.go
+.zig-global/

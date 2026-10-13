@@ -3,7 +3,7 @@
 //! The raw C ABI of every libd2 library, one module per library, exactly as its header declares
 //! it. The safe wrappers in this crate are built on these.
 
-#![allow(missing_docs)]
+#![allow(missing_docs, rustdoc::broken_intra_doc_links)]
 
 pub mod d2drlg;
 pub mod d2pf;
