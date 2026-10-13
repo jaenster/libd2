@@ -1,5 +1,5 @@
 //! The item drawing wrapper against the fixtures the Zig side writes through the same C ABI
-//! (testdata/itemdraw/bindings at the repository root).
+//! (testdata/itemdraw/bindings, written by `zig build fixtures` in packages/itemdraw).
 
 use libd2::itemdraw::{Context, GlyphProvider, GlyphRef, Kind, TextMode, Tile, Viewer};
 use std::path::PathBuf;
@@ -68,7 +68,7 @@ fn layout_json_and_a_rust_provider_at_scale_2_and_4() {
     }
     let records = std::fs::read(dir.join("griffons-eye.items")).unwrap();
     let l = c.layout(&records, None, Kind::Card).unwrap();
-    assert_eq!(l.json, std::fs::read_to_string(dir.join("griffons-eye.layout.json")).unwrap());
+    assert_eq!(l.json, std::fs::read_to_string(dir.join("../layouts/griffons-eye.json")).unwrap());
     for scale in [2, 4] {
         let mut b = Boxes(0);
         let img = c.rasterize(&l, Some(&mut b), None, scale).unwrap();

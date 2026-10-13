@@ -38,8 +38,8 @@ fn goldenSave() ![]const u8 {
 
 fn chars() ![3]Character {
     return .{
-        .{ .file = "EpicSorc", .bytes = testdata.seed_epic_sorc, .viewer = .{ .class = 1, .level = 99, .strength = 88, .dexterity = 25 } },
-        .{ .file = "EpicAma", .bytes = testdata.seed_epic_ama, .viewer = .{ .class = 0, .level = 91, .strength = 28, .dexterity = 81 } },
+        .{ .file = "EpicSorc", .bytes = testdata.epic_sorc, .viewer = .{ .class = 1, .level = 99, .strength = 88, .dexterity = 25 } },
+        .{ .file = "EpicAma", .bytes = testdata.epic_ama, .viewer = .{ .class = 0, .level = 91, .strength = 28, .dexterity = 81 } },
         .{ .file = "golden", .bytes = try goldenSave(), .viewer = .{ .class = 3, .level = 90, .strength = 208, .dexterity = 80 } },
     };
 }
@@ -206,8 +206,10 @@ test "every item of the golden characters draws as frozen (needs -Dd2dir)" {
 }
 
 /// Items the language bindings check themselves against: their records and the text the C ABI gives for
-/// them (mode 2), neutral and seen by a level 80 sorceress with 100 strength and 50 dexterity. The Go
-/// and .NET tests read testdata/itemdraw/bindings/ and must reproduce these files byte for byte.
+/// them (mode 2), neutral and seen by a level 80 sorceress with 100 strength and 50 dexterity. The text
+/// itself is frozen by golden-text.txt; these files are generated (`zig build fixtures` writes them to
+/// testdata/itemdraw/bindings/, which git ignores), and the Rust, Go, .NET and npm tests must reproduce
+/// them byte for byte through their own binding. Their layouts are goldens, in testdata/itemdraw/layouts/.
 const binding_items = [_]struct { char: usize, index: usize, name: []const u8 }{
     .{ .char = 1, .index = 8, .name = "thunderstroke" },
     .{ .char = 1, .index = 20, .name = "griffons-eye" },
@@ -228,7 +230,7 @@ fn capiText(ctx: *capi.Ctx, a: std.mem.Allocator, bytes: []const u8, opts: ?*con
     return buf;
 }
 
-test "the binding fixtures: records and the C ABI's text for them" {
+test "the binding fixtures: records and the C ABI's text for them, written for the bindings' tests" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -236,21 +238,16 @@ test "the binding fixtures: records and the C ABI's text for them" {
     const io = threaded.io();
     const ctx = capi.d2itemdraw_create() orelse return error.NoContext;
     defer capi.d2itemdraw_destroy(ctx);
-    if (build_options.update_golden) std.Io.Dir.cwd().createDirPath(io, build_options.testdata ++ "/bindings") catch {};
+    try std.Io.Dir.cwd().createDirPath(io, build_options.testdata ++ "/bindings");
     for (binding_items) |b| {
         const gs = try groups(a, (try chars())[b.char].bytes);
         const g = gs[b.index];
         const neutral = try capiText(ctx, a, g.bytes, null);
         const seen = try capiText(ctx, a, g.bytes, &binding_viewer);
-        const base = try std.fmt.allocPrint(a, "bindings/{s}", .{b.name});
-        if (build_options.update_golden) {
-            try writeFile(io, try std.fmt.allocPrint(a, "{s}/{s}.items", .{ build_options.testdata, base }), g.bytes);
-        } else {
-            const want = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}.items", .{ build_options.testdata, base }));
-            try std.testing.expectEqualSlices(u8, want, g.bytes);
-        }
-        try compareOrUpdate(io, a, try std.fmt.allocPrint(a, "{s}.txt", .{base}), neutral);
-        try compareOrUpdate(io, a, try std.fmt.allocPrint(a, "{s}.viewer.txt", .{base}), seen);
+        const base = try std.fmt.allocPrint(a, "{s}/bindings/{s}", .{ build_options.testdata, b.name });
+        try writeFile(io, try std.fmt.allocPrint(a, "{s}.items", .{base}), g.bytes);
+        try writeFile(io, try std.fmt.allocPrint(a, "{s}.txt", .{base}), neutral);
+        try writeFile(io, try std.fmt.allocPrint(a, "{s}.viewer.txt", .{base}), seen);
     }
 }
 
@@ -280,7 +277,7 @@ test "the display lists of the binding items as JSON, and their text from the sa
         defer l.deinit();
         const js = try l.json(gpa);
         defer gpa.free(js);
-        try compareOrUpdate(io, a, try std.fmt.allocPrint(a, "bindings/{s}.layout.json", .{b.name}), js);
+        try compareOrUpdate(io, a, try std.fmt.allocPrint(a, "layouts/{s}.json", .{b.name}), js);
         // the alt text is the layout's lines, the same as the description read top down
         const t = try l.text(gpa, 0);
         defer gpa.free(t);
@@ -412,7 +409,7 @@ test "the C ABI's layout, text and callback providers (needs -Dd2dir)" {
     defer capi.d2itemdraw_layout_free(l);
     var jl: usize = 0;
     const jp = capi.d2itemdraw_layout_json(l, &jl) orelse return error.NoJson;
-    try std.testing.expectEqualStrings(try readFile(io, a, build_options.testdata ++ "/bindings/griffons-eye.layout.json"), jp[0..jl]);
+    try std.testing.expectEqualStrings(try readFile(io, a, build_options.testdata ++ "/layouts/griffons-eye.json"), jp[0..jl]);
     var t1: [2048]u8 = undefined;
     var t2: [2048]u8 = undefined;
     const n1 = capi.d2itemdraw_layout_text(l, 0, &t1, t1.len);

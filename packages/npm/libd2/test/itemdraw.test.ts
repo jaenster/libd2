@@ -1,5 +1,5 @@
 // The item drawing wrapper against the fixtures the Zig side writes through the same C ABI
-// (testdata/itemdraw/bindings at the repository root).
+// (testdata/itemdraw/bindings, written by `zig build fixtures` in packages/itemdraw).
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,7 +40,7 @@ test('layout JSON, default raster and a JS provider at scale 2 and 4', {skip: !d
     const records = new Uint8Array(readFileSync(join(fixtures, 'griffons-eye.items')));
     const l = d.layout(records, 'card');
     try {
-      assert.equal(l.json, readFileSync(join(fixtures, 'griffons-eye.layout.json'), 'utf8'));
+      assert.equal(l.json, readFileSync(join(fixtures, '..', 'layouts', 'griffons-eye.json'), 'utf8'));
       assert.deepEqual(d.rasterize(l).png, d.card(records).png);
       assert.equal(d.rasterize(l, 2).width, l.data.width * 2);
       for (const scale of [2, 4]) {

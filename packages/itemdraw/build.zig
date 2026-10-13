@@ -50,6 +50,21 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     b.step("test", "Run unit tests").dependOn(&run_tests.step);
 
+    // The binding fixtures (records and their C ABI text) the Rust, Go, .NET and npm tests read, written
+    // to testdata/itemdraw/bindings/ by the one test that produces them.
+    const fixtures = b.addTest(.{ .filters = &.{"the binding fixtures"}, .root_module = b.createModule(.{
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = imports,
+    }) });
+    fixtures.root_module.addOptions("build_options", opts);
+    fixtures.root_module.addImport("d2-save", save);
+    if (td) |d| fixtures.root_module.addImport("libd2-testdata", d.module("libd2-testdata"));
+    const run_fixtures = b.addRunArtifact(fixtures);
+    run_fixtures.has_side_effects = true;
+    b.step("fixtures", "Write the binding fixtures to testdata/itemdraw/bindings").dependOn(&run_fixtures.step);
+
     const is_wasm = target.result.cpu.arch.isWasm();
     const cli = b.option(bool, "cli", "Build the dev CLI executables") orelse true;
     if (cli and !is_wasm) {

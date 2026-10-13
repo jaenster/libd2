@@ -355,8 +355,8 @@ fn writeBack(bytes: []const u8, tally: *Tally) !void {
 test "the engine's records are written back byte for byte" {
     var tally = Tally{};
     try writeBack(donor_save, &tally);
-    try writeBack(@import("libd2-testdata").seed_epic_sorc, &tally);
-    try writeBack(@import("libd2-testdata").seed_epic_ama, &tally);
+    try writeBack(@import("libd2-testdata").epic_sorc, &tally);
+    try writeBack(@import("libd2-testdata").epic_ama, &tally);
     // the forms this writer exists for are among them
     try testing.expect(tally.by_quality[4] > 0 and tally.by_quality[6] > 0 and tally.by_quality[7] > 0);
     try testing.expect(tally.same > 60);

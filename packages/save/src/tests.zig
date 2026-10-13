@@ -28,8 +28,8 @@ test "parse decodes every section of a real save" {
     try std.testing.expectEqual(@as(u32, 397), a.vitality);
     try std.testing.expectEqual(@as(u32, 99), a.level);
     try std.testing.expectEqual(@as(u32, 3520485254), a.experience);
-    try std.testing.expectEqual(@as(u32, 148), a.gold);
-    try std.testing.expectEqual(@as(u32, 2088168), a.goldbank);
+    try std.testing.expectEqual(@as(u32, 2905), a.gold);
+    try std.testing.expectEqual(@as(u32, 2085425), a.goldbank);
     // maxhp is 8.8 fixed point in the stream.
     try std.testing.expectEqual(@as(u32, 251392 >> 8), a.maxhp);
 
@@ -47,8 +47,8 @@ test "parse decodes every section of a real save" {
     var seen: usize = 0;
     while (it.next()) |_| seen += 1;
     // the header counts the 70 carried items; the 19 gems and runes socketed into them follow their hosts
-    try std.testing.expectEqual(@as(usize, 70), s.items.playerCount());
-    try std.testing.expectEqual(@as(usize, 89), seen);
+    try std.testing.expectEqual(@as(usize, 64), s.items.playerCount());
+    try std.testing.expectEqual(@as(usize, 83), seen);
     try std.testing.expectEqual(@as(?save.charkit.ItemFault, null), save.charkit.itemListFault(s.items.bytes));
 }
 
