@@ -479,7 +479,7 @@ pub const Describer = struct {
         for (self.set_rows, 0..) |r, set_id| {
             if (!std.ascii.eqlIgnoreCase(self.t.set_items.str(r, "set"), set_key)) continue;
             var t = Text{ .gpa = a };
-            try statdesc.format(&t, self.idText(sid.set_fmt), &.{.{ .s = self.keyText(self.t.set_items.str(r, "index")) }});
+            try positionalFormat(&t, self.idText(sid.set_fmt), &.{self.keyText(self.t.set_items.str(r, "index"))});
             try t.s(nl);
             const owned = if (it.viewer) |v| contains(v.set_items_owned, @intCast(set_id)) else false;
             try block_(&out, t.items(), if (owned) 2 else 1);
@@ -923,7 +923,8 @@ pub const Describer = struct {
                 var stats = Text{ .gpa = it.a };
                 try statdesc.describeList(&self.sd, &stats, &list, it.env(), rune, false);
                 try prefixed(out, stats.items(), label.items(), nl, self.idText(sid.comma));
-                if (rune and out.buf.items.len != 0 and out.buf.items[out.buf.items.len - 1] == '\n') out.buf.items.len -= 1;
+                // SKILLDESC_FormatMagicPrefixDesc 0x004e6720 and FormatMagicSuffixDesc 0x004e67d0 drop the newline the text ends in
+                if (out.buf.items.len != 0 and out.buf.items[out.buf.items.len - 1] == '\n') out.buf.items.len -= 1;
             }
             try out.s(nl);
             try out.s(nl);
