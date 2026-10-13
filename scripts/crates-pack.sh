@@ -17,8 +17,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 crate="${repo_root}/packages/rust/libd2"
 engine="${crate}/engine"
 
-# drlg and its transitive path dependencies, per build.zig.zon.
-packages=(drlg core data formats)
+# The combined native (packages/wasm) and its transitive path dependencies, per build.zig.zon.
+packages=(wasm drlg pathfinding item itemdraw net util save core data formats)
 
 rm -rf "$engine"
 for pkg in "${packages[@]}"; do
@@ -40,12 +40,18 @@ done
 # merely unused today.
 rm -f "${engine}/formats/src/blobs/dt1pix_blob.bin"
 
+# The packages name the shared test data (../../testdata) as a lazy dependency; the build only needs
+# it to exist, so the skeleton goes along without the files it embeds.
+rm -rf "${crate}/testdata"
+mkdir -p "${crate}/testdata"
+cp "${repo_root}/testdata/build.zig" "${repo_root}/testdata/build.zig.zon" "${repo_root}/testdata/testdata.zig" "${crate}/testdata/"
+
 echo "vendored engine: $(du -sh "$engine" | cut -f1)"
 
 # The vendored tree must build on its own, or the crate is broken for everyone downloading it
 # and fine for us. Building here is the only way to tell the difference.
 tmp="$(mktemp -d)"
-( cd "${engine}/drlg" && zig build -Doptimize=ReleaseFast -Dcli=false --cache-dir "${tmp}/cache" --prefix "${tmp}/out" )
+( cd "${engine}/wasm" && zig build -Doptimize=ReleaseFast --cache-dir "${tmp}/cache" --prefix "${tmp}/out" )
 echo "vendored engine builds"
 
 cd "$crate"

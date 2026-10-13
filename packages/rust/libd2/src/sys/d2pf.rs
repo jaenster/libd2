@@ -2,7 +2,7 @@
 
 //! The raw `d2pf` C ABI.
 
-#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code, clippy::all)]
+#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code, missing_docs, clippy::all)]
 
 #[allow(unused_imports)]
 use core::ffi::{c_char, c_void};

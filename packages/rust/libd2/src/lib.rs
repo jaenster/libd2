@@ -96,6 +96,11 @@
 #![warn(missing_docs)]
 
 pub mod drlg;
+pub mod itemdraw;
+/// The raw C ABI of every libd2 library, generated from the headers (see tools/bindgen): drlg,
+/// pathfinding (d2pf), item, itemdraw, net and util. Everything here is `unsafe`; the modules above
+/// wrap it.
+pub mod sys;
 
 #[doc(inline)]
 pub use drlg::{Level, Local, Subtile, Tile};

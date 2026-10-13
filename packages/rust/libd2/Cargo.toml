@@ -21,6 +21,7 @@ include = [
     "tests/**/*.rs",
     "examples/**/*.rs",
     "engine/**",
+    "testdata/**",
 ]
 
 [features]

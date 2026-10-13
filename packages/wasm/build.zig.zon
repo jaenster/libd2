@@ -13,6 +13,7 @@
         .d2_item = .{ .path = "../item" },
         .d2_net = .{ .path = "../net" },
         .d2_itemdraw = .{ .path = "../itemdraw" },
+        .d2_util = .{ .path = "../util" },
     },
 
     .paths = .{

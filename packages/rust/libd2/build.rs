@@ -1,5 +1,8 @@
-//! Builds the native `d2drlg` C ABI for whatever target cargo asked for, and links it
-//! statically so the resulting binary needs no shared library beside it.
+//! Builds the native C ABIs (the combined `d2` library: drlg, pathfinding, item, itemdraw, net
+//! and util in one archive) for whatever target cargo asked for, and links it statically so the
+//! resulting binary needs no shared library beside it. One archive rather than one per library:
+//! each Zig static library carries its own copy of the shared packages and runtime, so several of
+//! them cannot be linked into one binary.
 //!
 //! Unlike the npm and NuGet packages, which ship a prebuilt binary per platform, a crate
 //! cannot reasonably carry fourteen of them. So the native side is built here from source,
@@ -19,15 +22,18 @@ fn main() {
     // In the repo the engine is a sibling package, and that is the copy to build: engine/ is
     // a vendored snapshot that goes stale the moment the real sources change. A published
     // crate has only engine/, because cargo will not package anything above the crate root.
-    let drlg = ["../../drlg", "engine/drlg"]
+    let drlg = ["../../wasm", "engine/wasm"]
         .iter()
         .map(|p| manifest.join(p))
         .find_map(|p| p.canonicalize().ok())
-        .expect("libd2: cannot find the zig engine sources (engine/drlg or ../../drlg)");
+        .expect("libd2: cannot find the zig engine sources (engine/wasm or ../../wasm)");
+    let packages = drlg.parent().unwrap().to_path_buf();
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    println!("cargo:rerun-if-changed={}", drlg.join("src").display());
-    println!("cargo:rerun-if-changed={}", drlg.join("build.zig").display());
+    for pkg in ["wasm", "drlg", "pathfinding", "item", "itemdraw", "net", "util", "core", "data", "formats", "save"] {
+        println!("cargo:rerun-if-changed={}", packages.join(pkg).join("src").display());
+        println!("cargo:rerun-if-changed={}", packages.join(pkg).join("include").display());
+    }
 
     let target = env::var("TARGET").unwrap();
     let zig_target = zig_target_for(&target)
@@ -40,7 +46,6 @@ fn main() {
             "build",
             &format!("-Dtarget={zig_target}"),
             "-Doptimize=ReleaseFast",
-            "-Dcli=false",
             "--cache-dir",
         ])
         // Zig defaults its cache to .zig-cache beside build.zig. That would write into the
@@ -57,13 +62,45 @@ fn main() {
     assert!(status.success(), "libd2: `zig build` failed for target {zig_target}");
 
     println!("cargo:rustc-link-search=native={}", out.join("lib").display());
-    println!("cargo:rustc-link-lib=static=d2drlg");
+    if target.contains("apple") {
+        realign(&out.join("lib").join("libd2.a"), &out.join("realign"));
+    }
+    println!("cargo:rustc-link-lib=static=d2");
 
     // Zig's static library carries no libc dependency of its own, but the Rust target's
     // runtime still needs its usual system libraries.
     if target.contains("apple") {
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
     }
+}
+
+/// Apple's linker refuses an archive whose 64-bit object member does not start 8-byte aligned, and
+/// where zig's archive writer puts the one object depends on the length of the symbol table before
+/// it. Rewriting the archive with `zig ar --format=darwin` pads it into place.
+fn realign(archive: &std::path::Path, work: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(work);
+    std::fs::create_dir_all(work).unwrap();
+    let run = |args: &[&std::ffi::OsStr]| {
+        let ok = Command::new("zig").current_dir(work).args(args).status().map(|s| s.success()).unwrap_or(false);
+        assert!(ok, "libd2: `zig {:?}` failed while realigning the archive", args);
+    };
+    run(&["ar".as_ref(), "x".as_ref(), archive.as_os_str()]);
+    let mut objects: Vec<std::ffi::OsString> = Vec::new();
+    for e in std::fs::read_dir(work).unwrap() {
+        let p = e.unwrap().path();
+        let mut perm = std::fs::metadata(&p).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perm.set_mode(0o644);
+        }
+        std::fs::set_permissions(&p, perm).unwrap();
+        objects.push(p.file_name().unwrap().to_owned());
+    }
+    std::fs::remove_file(archive).unwrap();
+    let mut args: Vec<&std::ffi::OsStr> = vec!["ar".as_ref(), "--format=darwin".as_ref(), "rcs".as_ref(), archive.as_os_str()];
+    args.extend(objects.iter().map(|o| o.as_os_str()));
+    run(&args);
 }
 
 /// Rust target triples and zig's differ in the vendor field, so map rather than munge.
