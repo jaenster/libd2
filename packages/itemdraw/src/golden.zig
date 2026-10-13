@@ -298,7 +298,7 @@ const BoxProvider = struct {
     fn glyphRgb(code: u21) [3]u8 {
         return .{ @truncate(code *% 37), 200, @truncate(code *% 11) };
     }
-    fn glyph(_: *anyopaque, _: []const u8, g: *const itemdraw.layout.Glyph, scale: u32, t: itemdraw.Tile) bool {
+    fn glyph(_: *anyopaque, _: []const u8, g: *const itemdraw.layout.Glyph, _: [3]u8, scale: u32, t: itemdraw.Tile) bool {
         const c = glyphRgb(g.code);
         var y: u32 = 0;
         while (y < @min(scale, t.h)) : (y += 1) {
@@ -385,8 +385,9 @@ test "custom providers draw into the same layout at scale 2 and 4 (needs -Dd2dir
 
 const CBox = struct {
     var glyphs: usize = 0;
+    var pad: u32 = 0;
     fn glyph(_: ?*anyopaque, g: *const capi.D2ItemDrawGlyphRef, scale: u32, w: u32, h: u32, rgba: [*]u8) callconv(.c) i32 {
-        if (w != @as(u32, @intCast(g.cell.w)) * scale or h != @as(u32, @intCast(g.cell.h)) * scale) return 0;
+        if (w != @as(u32, @intCast(g.cell.w)) * scale + 2 * pad or h != @as(u32, @intCast(g.cell.h)) * scale + 2 * pad) return 0;
         glyphs += 1;
         @memset(rgba[0 .. w * h * 4], 255);
         return 1;
@@ -430,5 +431,30 @@ test "the C ABI's layout, text and callback providers (needs -Dd2dir)" {
     const big = capi.d2itemdraw_rasterize(ctx, l, &prov, 4) orelse return error.NoImage;
     defer capi.d2itemdraw_image_free(big);
     try std.testing.expectEqual(@as(u32, @intCast(capi.d2itemdraw_layout_width(l) * 4)), capi.d2itemdraw_image_width(big));
+    try std.testing.expect(CBox.glyphs > 100);
+}
+
+test "a padded glyph provider gets the cell plus its pad on every side (needs -Dd2dir)" {
+    if (build_options.d2dir.len == 0) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var threaded = std.Io.Threaded.init_single_threaded;
+    const io = threaded.io();
+    const ctx = capi.d2itemdraw_create() orelse return error.NoContext;
+    defer capi.d2itemdraw_destroy(ctx);
+    for ([_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" }) |m| {
+        const bytes = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}", .{ build_options.d2dir, m }));
+        _ = capi.d2itemdraw_add_archive(ctx, bytes.ptr, bytes.len);
+    }
+    const g = (try groups(a, (try chars())[1].bytes))[8];
+    const l = capi.d2itemdraw_layout(ctx, g.bytes.ptr, g.bytes.len, null, capi.kind_tooltip, 0, 0) orelse return error.NoLayout;
+    defer capi.d2itemdraw_layout_free(l);
+    CBox.glyphs = 0;
+    CBox.pad = 3;
+    defer CBox.pad = 0;
+    const prov = capi.D2ItemDrawProviders{ .glyph = CBox.glyph, .glyph_pad = 3 };
+    const img = capi.d2itemdraw_rasterize(ctx, l, &prov, 2) orelse return error.NoImage;
+    defer capi.d2itemdraw_image_free(img);
     try std.testing.expect(CBox.glyphs > 100);
 }

@@ -391,7 +391,7 @@ pub const Drawer = struct {
         view.blitAlpha(f.indices, f.width, f.height, &self.pal, 0, 0, remap, 255, scale);
     }
 
-    fn drawGlyph(ctx: *anyopaque, font: []const u8, g: *const layout.Glyph, scale: u32, t: raster.Tile) bool {
+    fn drawGlyph(ctx: *anyopaque, font: []const u8, g: *const layout.Glyph, _: [3]u8, scale: u32, t: raster.Tile) bool {
         const self: *Drawer = @ptrCast(@alignCast(ctx));
         if (!std.mem.eql(u8, font, layout.font_name) or g.frame >= self.font.sheet.frames.len) return false;
         const shift = formats.pl2.textShift(self.pl2, @enumFromInt(g.color)) catch null;

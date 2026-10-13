@@ -93,6 +93,7 @@ typedef struct D2ItemDrawGlyphRef {
     uint32_t code;       /* code point */
     uint32_t frame;      /* Font16 DC6 frame */
     uint32_t color;      /* text colour id 0..12 */
+    uint32_t rgb;        /* its nominal colour, 0x00RRGGBB */
     D2ItemDrawRect cell; /* in layout pixels */
 } D2ItemDrawGlyphRef;
 
@@ -115,6 +116,7 @@ typedef struct D2ItemDrawProviders {
     void *user;
     d2itemdraw_glyph_fn glyph;   /* NULL: libd2's DC6 font */
     d2itemdraw_sprite_fn sprite; /* NULL: libd2's DC6 inventory art */
+    uint32_t glyph_pad;          /* pixels the glyph tile extends past the cell on each side */
 } D2ItemDrawProviders;
 
 /* kind: D2ITEMDRAW_KIND_*; background and sockets apply to the icon as in d2itemdraw_icon.

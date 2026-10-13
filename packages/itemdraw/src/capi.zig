@@ -271,6 +271,8 @@ pub const D2ItemDrawGlyphRef = extern struct {
     code: u32,
     frame: u32,
     color: u32,
+    /// The nominal RGB of the colour id, 0x00RRGGBB.
+    rgb: u32,
     cell: D2ItemDrawRect,
 };
 
@@ -295,6 +297,8 @@ pub const D2ItemDrawProviders = extern struct {
     user: ?*anyopaque = null,
     glyph: ?GlyphFn = null,
     sprite: ?SpriteFn = null,
+    /// Pixels the glyph tile extends past the cell on each side (for outlines that reach outside it).
+    glyph_pad: u32 = 0,
 };
 
 /// The display list of an item: kind 0 icon (with `background` and `sockets` as in d2itemdraw_icon),
@@ -400,7 +404,7 @@ const Bridge = struct {
     p: D2ItemDrawProviders,
     path_buf: [256]u8 = undefined,
 
-    fn glyph(ctx: *anyopaque, font: []const u8, g: *const lib.layout.Glyph, scale: u32, t: lib.Tile) bool {
+    fn glyph(ctx: *anyopaque, font: []const u8, g: *const lib.layout.Glyph, rgb: [3]u8, scale: u32, t: lib.Tile) bool {
         const self: *Bridge = @ptrCast(@alignCast(ctx));
         const f = self.p.glyph orelse return false;
         _ = font;
@@ -409,6 +413,7 @@ const Bridge = struct {
             .code = g.code,
             .frame = g.frame,
             .color = g.color,
+            .rgb = (@as(u32, rgb[0]) << 16) | (@as(u32, rgb[1]) << 8) | rgb[2],
             .cell = .{ .x = g.rect.x, .y = g.rect.y, .w = g.rect.w, .h = g.rect.h },
         };
         return f(self.p.user, &ref, scale, t.w, t.h, t.rgba.ptr) != 0;
@@ -441,7 +446,7 @@ pub export fn d2itemdraw_rasterize(ctx: ?*Ctx, layout: ?*const Layout, providers
     const fallback: lib.Providers = if (c.drawer) |d| d.defaults() else .{};
     var bridge = Bridge{ .p = if (providers) |p| p.* else .{} };
     const primary = lib.Providers{
-        .glyph = if (bridge.p.glyph != null) .{ .ctx = &bridge, .draw = Bridge.glyph } else null,
+        .glyph = if (bridge.p.glyph != null) .{ .ctx = &bridge, .draw = Bridge.glyph, .pad = bridge.p.glyph_pad } else null,
         .sprite = if (bridge.p.sprite != null) .{ .ctx = &bridge, .draw = Bridge.sprite } else null,
     };
     return finish(lib.rasterize(gpa, &h.l, primary, fallback, scale) catch return null);

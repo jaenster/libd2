@@ -19,8 +19,12 @@ pub const Tile = struct { w: u32, h: u32, rgba: []u8 };
 
 pub const GlyphProvider = struct {
     ctx: *anyopaque,
-    /// Paint `glyph` of font `font` in its colour into `tile` (the glyph cell at `scale`).
-    draw: *const fn (ctx: *anyopaque, font: []const u8, glyph: *const layout.Glyph, scale: u32, tile: Tile) bool,
+    /// Paint `glyph` of font `font` into `tile`: the glyph cell at `scale`, plus `pad` pixels on every
+    /// side for ink that reaches past the cell (an outline, anti-aliasing). `rgb` is the nominal colour
+    /// of the glyph's text colour id, for a provider that colours text itself.
+    draw: *const fn (ctx: *anyopaque, font: []const u8, glyph: *const layout.Glyph, rgb: [3]u8, scale: u32, tile: Tile) bool,
+    /// Output pixels the tile extends past the cell on each side.
+    pad: u32 = 0,
 };
 
 pub const SpriteProvider = struct {
@@ -56,13 +60,15 @@ pub fn rasterize(gpa: std.mem.Allocator, l: *const layout.Layout, primary: Provi
     while (li > 0) {
         li -= 1;
         for (l.lines[li].spans) |sp| for (sp.glyphs) |*g| {
-            const t = try tile(gpa, &tile_buf, g.rect, scale);
-            const drawn = blk: {
-                if (primary.glyph) |p| if (p.draw(p.ctx, layout.font_name, g, scale, t)) break :blk true;
-                if (fallback.glyph) |p| if (p.draw(p.ctx, layout.font_name, g, scale, t)) break :blk true;
-                break :blk false;
-            };
-            if (drawn) img.composite(&Image{ .w = t.w, .h = t.h, .px = t.rgba }, g.rect.x * s, g.rect.y * s, 255);
+            const rgb = l.text_rgb[@min(g.color, 12)];
+            for ([2]?GlyphProvider{ primary.glyph, fallback.glyph }) |maybe| {
+                const p = maybe orelse continue;
+                const t = try padded(gpa, &tile_buf, g.rect, scale, p.pad);
+                if (!p.draw(p.ctx, layout.font_name, g, rgb, scale, t)) continue;
+                const pad: i32 = @intCast(p.pad);
+                img.composite(&Image{ .w = t.w, .h = t.h, .px = t.rgba }, g.rect.x * s - pad, g.rect.y * s - pad, 255);
+                break;
+            }
         };
     }
     return img;
@@ -70,6 +76,14 @@ pub fn rasterize(gpa: std.mem.Allocator, l: *const layout.Layout, primary: Provi
 
 fn fillScaled(img: *Image, f: layout.Fill, s: i32) void {
     img.fill(f.rect.x * s, f.rect.y * s, f.rect.w * s, f.rect.h * s, f.rgb, f.alpha);
+}
+
+fn padded(gpa: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), r: layout.Rect, scale: u32, pad: u32) !Tile {
+    const w: u32 = @as(u32, @intCast(@max(r.w, 0))) * scale + 2 * pad;
+    const h: u32 = @as(u32, @intCast(@max(r.h, 0))) * scale + 2 * pad;
+    try buf.resize(gpa, @as(usize, w) * h * 4);
+    @memset(buf.items, 0);
+    return .{ .w = w, .h = h, .rgba = buf.items };
 }
 
 fn tile(gpa: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), r: layout.Rect, scale: u32) !Tile {
