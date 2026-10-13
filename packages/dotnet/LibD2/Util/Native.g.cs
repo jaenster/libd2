@@ -5,6 +5,9 @@
 using System;
 using System.Runtime.InteropServices;
 
+// The C header documents each declaration; the safe wrappers carry the documentation.
+#pragma warning disable CS1591
+
 namespace LibD2.Util;
 
 /// <summary>The raw <c>d2util</c> C ABI, exactly as its header declares it.</summary>

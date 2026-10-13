@@ -6,6 +6,8 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+    <!-- The generated P/Invoke layer (Native.g.cs) passes buffers as pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>LibD2</AssemblyName>
     <RootNamespace>LibD2</RootNamespace>
 

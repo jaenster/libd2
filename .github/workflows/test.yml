@@ -99,6 +99,30 @@ jobs:
         working-directory: packages/go/libd2
         run: go test ./...
 
+  dotnet:
+    name: dotnet test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - name: Build the natives
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/natives"
+          for p in drlg item pathfinding itemdraw net util; do
+            ( cd "packages/$p" && zig build -Doptimize=ReleaseFast --prefix "$RUNNER_TEMP/natives" )
+          done
+      # The generated smoke test (every export resolves, every struct has the C size) and the
+      # wrappers against the shared fixtures.
+      - name: Test
+        working-directory: packages/dotnet/LibD2.Tests
+        env:
+          LD_LIBRARY_PATH: ${{ runner.temp }}/natives/lib
+        run: dotnet test
+
   npm:
     name: npm test
     runs-on: ubuntu-latest

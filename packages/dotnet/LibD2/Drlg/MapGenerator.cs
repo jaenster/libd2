@@ -28,7 +28,7 @@ public sealed class DrlgException : Exception
 /// returns is ordinary managed data with no native lifetime attached. Not thread-safe: give each
 /// thread its own.
 /// </remarks>
-public sealed class MapGenerator : IDisposable
+public sealed unsafe class MapGenerator : IDisposable
 {
     private IntPtr _ctx;
 
@@ -93,19 +93,20 @@ public sealed class MapGenerator : IDisposable
         for (var i = 0; i < count; i++)
         {
             var id = Native.d2drlg_act_level_id(act, i);
-            Native.d2drlg_act_level_origin(act, i, out var ox, out var oy);
-            Native.d2drlg_act_level_size(act, i, out var w, out var h);
+            int ox, oy, w, h;
+            Native.d2drlg_act_level_origin(act, i, &ox, &oy);
+            Native.d2drlg_act_level_size(act, i, &w, &h);
 
             var index = i;
             levels.Add(new Level(
                 id,
-                ReadString((buf, cap) => Native.d2drlg_level_name(_ctx, id, buf, cap)),
+                ReadString((buf, cap) => Native.d2drlg_level_name(_ctx, id, (byte*)buf, cap)),
                 (DrlgType)Native.d2drlg_act_level_drlg_type(act, i),
                 Native.d2drlg_act_level_placed(act, i) == 1,
                 ox, oy, w, h,
-                Read<Room>((b, c) => Native.d2drlg_act_rooms(act, index, b, c)),
-                Read<PresetUnit>((b, c) => Native.d2drlg_act_level_presets(act, index, b, c)),
-                Read<Adjacent>((b, c) => Native.d2drlg_act_level_adjacents(act, index, b, c)),
+                Read<Room>((b, c) => Native.d2drlg_act_rooms(act, index, (D2DrlgRoom*)b, c)),
+                Read<PresetUnit>((b, c) => Native.d2drlg_act_level_presets(act, index, (D2DrlgPreset*)b, c)),
+                Read<Adjacent>((b, c) => Native.d2drlg_act_level_adjacents(act, index, (D2DrlgAdjacent*)b, c)),
                 includeCollision ? ReadCollision(act, index) : null));
         }
         return levels;
@@ -115,20 +116,26 @@ public sealed class MapGenerator : IDisposable
     /// Ask for the count first, then the data. Every list-returning entry point reports the FULL
     /// count even when it wrote nothing, which is what makes a zero-capacity probe safe.
     /// </summary>
-    private static IReadOnlyList<T> Read<T>(Func<T[], int, int> call) where T : struct
+    /// <remarks>The public element types are laid out exactly as the C structs, so the native side
+    /// writes straight into them.</remarks>
+    private static IReadOnlyList<T> Read<T>(Func<IntPtr, int, int> call) where T : unmanaged
     {
-        var n = call(Array.Empty<T>(), 0);
+        var n = call(IntPtr.Zero, 0);
         if (n <= 0) return Array.Empty<T>();
         var buf = new T[n];
-        return call(buf, n) == n ? buf : Array.Empty<T>();
+        fixed (T* p = buf)
+        {
+            return call((IntPtr)p, n) == n ? buf : Array.Empty<T>();
+        }
     }
 
     private static CollisionGrid ReadCollision(IntPtr act, int levelIndex)
     {
-        var n = Native.d2drlg_act_level_collision(act, levelIndex, Array.Empty<ushort>(), 0, out var w, out var h);
+        int w, h;
+        var n = Native.d2drlg_act_level_collision(act, levelIndex, null, 0, &w, &h);
         if (n <= 0) return new CollisionGrid(Array.Empty<ushort>(), 0, 0);
         var cells = new ushort[n];
-        Native.d2drlg_act_level_collision(act, levelIndex, cells, n, out w, out h);
+        fixed (ushort* p = cells) Native.d2drlg_act_level_collision(act, levelIndex, p, n, &w, &h);
         return new CollisionGrid(cells, w, h);
     }
 
@@ -152,19 +159,20 @@ public sealed class MapGenerator : IDisposable
     public string GetLevelName(int levelId)
     {
         ThrowIfDisposed();
-        return ReadString((buf, cap) => Native.d2drlg_level_name(_ctx, levelId, buf, cap));
+        return ReadString((buf, cap) => Native.d2drlg_level_name(_ctx, levelId, (byte*)buf, cap));
     }
 
     /// <summary>The Objects.txt name of an object id, or an empty string if unknown.</summary>
     public static string ObjectName(int txtFileNo) =>
-        ReadString((buf, cap) => Native.d2drlg_object_name(txtFileNo, buf, cap));
+        ReadString((buf, cap) => Native.d2drlg_object_name(txtFileNo, (byte*)buf, cap));
 
-    private static string ReadString(Func<byte[], int, int> call)
+    private static string ReadString(Func<IntPtr, int, int> call)
     {
-        var n = call(Array.Empty<byte>(), 0);
+        var n = call(IntPtr.Zero, 0);
         if (n <= 0) return string.Empty;
         var buf = new byte[n + 1];
-        var got = call(buf, buf.Length);
+        int got;
+        fixed (byte* p = buf) got = call((IntPtr)p, buf.Length);
         return got <= 0 ? string.Empty : Encoding.UTF8.GetString(buf, 0, Math.Min(got, buf.Length));
     }
 

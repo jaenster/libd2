@@ -5,6 +5,9 @@
 using System;
 using System.Runtime.InteropServices;
 
+// The C header documents each declaration; the safe wrappers carry the documentation.
+#pragma warning disable CS1591
+
 namespace LibD2.Pathfinding;
 
 /// <summary>The raw <c>d2pf</c> C ABI, exactly as its header declares it.</summary>
@@ -183,7 +186,7 @@ public static unsafe partial class Native
 }
 
 /// <summary>The C struct <c>D2PfMove</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2PfMove
 {
     public int x;
@@ -192,7 +195,7 @@ public unsafe struct D2PfMove
 }
 
 /// <summary>The C struct <c>D2PfOptions</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2PfOptions
 {
     public ushort mask;

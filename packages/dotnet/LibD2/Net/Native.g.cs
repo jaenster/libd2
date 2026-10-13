@@ -5,6 +5,9 @@
 using System;
 using System.Runtime.InteropServices;
 
+// The C header documents each declaration; the safe wrappers carry the documentation.
+#pragma warning disable CS1591
+
 namespace LibD2.Net;
 
 /// <summary>The raw <c>d2net</c> C ABI, exactly as its header declares it.</summary>
@@ -194,7 +197,7 @@ public static unsafe partial class Native
 }
 
 /// <summary>The C struct <c>D2NetLoadAct</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetLoadAct
 {
     public int act;
@@ -204,7 +207,7 @@ public unsafe struct D2NetLoadAct
 }
 
 /// <summary>The C struct <c>D2NetGameFlags</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetGameFlags
 {
     public int difficulty;
@@ -214,7 +217,7 @@ public unsafe struct D2NetGameFlags
 }
 
 /// <summary>The C struct <c>D2NetCreatePlayer</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetCreatePlayer
 {
     public uint guid;
@@ -225,7 +228,7 @@ public unsafe struct D2NetCreatePlayer
 }
 
 /// <summary>The C struct <c>D2NetAssignMonster</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetAssignMonster
 {
     public uint guid;
@@ -238,7 +241,7 @@ public unsafe struct D2NetAssignMonster
 }
 
 /// <summary>The C struct <c>D2NetAssignLevelWarp</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetAssignLevelWarp
 {
     public int unit_type;
@@ -249,7 +252,7 @@ public unsafe struct D2NetAssignLevelWarp
 }
 
 /// <summary>The C struct <c>D2NetLife</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetLife
 {
     public int opcode;
@@ -263,7 +266,7 @@ public unsafe struct D2NetLife
 }
 
 /// <summary>The C struct <c>D2NetItem</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetItem
 {
     public int action;
@@ -273,7 +276,7 @@ public unsafe struct D2NetItem
 }
 
 /// <summary>The C struct <c>D2NetPlayerMove</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetPlayerMove
 {
     public int unit_type;
@@ -287,7 +290,7 @@ public unsafe struct D2NetPlayerMove
 }
 
 /// <summary>The C struct <c>D2NetPlayerStop</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetPlayerStop
 {
     public int unit_type;
@@ -300,7 +303,7 @@ public unsafe struct D2NetPlayerStop
 }
 
 /// <summary>The C struct <c>D2NetReassignPlayer</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetReassignPlayer
 {
     public int unit_type;
@@ -311,7 +314,7 @@ public unsafe struct D2NetReassignPlayer
 }
 
 /// <summary>The C struct <c>D2NetLocalMove</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetLocalMove
 {
     public int stamina;
@@ -322,7 +325,7 @@ public unsafe struct D2NetLocalMove
 }
 
 /// <summary>The C struct <c>D2NetRemoveObject</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetRemoveObject
 {
     public int unit_type;
@@ -330,7 +333,7 @@ public unsafe struct D2NetRemoveObject
 }
 
 /// <summary>The C struct <c>D2NetUnitHpPercent</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetUnitHpPercent
 {
     public int unit_type;
@@ -339,7 +342,7 @@ public unsafe struct D2NetUnitHpPercent
 }
 
 /// <summary>The C struct <c>D2NetChat</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetChat
 {
     public int msg_type;
@@ -353,7 +356,7 @@ public unsafe struct D2NetChat
 }
 
 /// <summary>The C struct <c>D2NetUnitPos</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2NetUnitPos
 {
     public int unit_type;

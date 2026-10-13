@@ -5,6 +5,9 @@
 using System;
 using System.Runtime.InteropServices;
 
+// The C header documents each declaration; the safe wrappers carry the documentation.
+#pragma warning disable CS1591
+
 namespace LibD2.ItemDraw;
 
 /// <summary>The raw <c>d2itemdraw</c> C ABI, exactly as its header declares it.</summary>
@@ -139,7 +142,7 @@ public static unsafe partial class Native
 }
 
 /// <summary>The C struct <c>D2ItemDrawOptions</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2ItemDrawOptions
 {
     public int has_viewer;
@@ -151,7 +154,7 @@ public unsafe struct D2ItemDrawOptions
 }
 
 /// <summary>The C struct <c>D2ItemDrawRect</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2ItemDrawRect
 {
     public int x;
@@ -161,7 +164,7 @@ public unsafe struct D2ItemDrawRect
 }
 
 /// <summary>The C struct <c>D2ItemDrawGlyphRef</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2ItemDrawGlyphRef
 {
     public IntPtr font;
@@ -173,7 +176,7 @@ public unsafe struct D2ItemDrawGlyphRef
 }
 
 /// <summary>The C struct <c>D2ItemDrawSpriteRef</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2ItemDrawSpriteRef
 {
     public IntPtr path;
@@ -186,7 +189,7 @@ public unsafe struct D2ItemDrawSpriteRef
 }
 
 /// <summary>The C struct <c>D2ItemDrawProviders</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2ItemDrawProviders
 {
     public IntPtr user;

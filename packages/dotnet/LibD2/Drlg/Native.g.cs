@@ -5,6 +5,9 @@
 using System;
 using System.Runtime.InteropServices;
 
+// The C header documents each declaration; the safe wrappers carry the documentation.
+#pragma warning disable CS1591
+
 namespace LibD2.Drlg;
 
 /// <summary>The raw <c>d2drlg</c> C ABI, exactly as its header declares it.</summary>
@@ -260,7 +263,7 @@ public static unsafe partial class Native
 }
 
 /// <summary>The C struct <c>D2DrlgRoom</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2DrlgRoom
 {
     public int x;
@@ -273,7 +276,7 @@ public unsafe struct D2DrlgRoom
 }
 
 /// <summary>The C struct <c>D2DrlgShrine</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2DrlgShrine
 {
     public int class_id;
@@ -282,7 +285,7 @@ public unsafe struct D2DrlgShrine
 }
 
 /// <summary>The C struct <c>D2DrlgPreset</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2DrlgPreset
 {
     public int etype;
@@ -292,7 +295,7 @@ public unsafe struct D2DrlgPreset
 }
 
 /// <summary>The C struct <c>D2DrlgAdjacent</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2DrlgAdjacent
 {
     public int dest_level_id;

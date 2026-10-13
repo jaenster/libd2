@@ -5,6 +5,9 @@
 using System;
 using System.Runtime.InteropServices;
 
+// The C header documents each declaration; the safe wrappers carry the documentation.
+#pragma warning disable CS1591
+
 namespace LibD2.Item;
 
 /// <summary>The raw <c>d2item</c> C ABI, exactly as its header declares it.</summary>
@@ -44,7 +47,7 @@ public static unsafe partial class Native
 }
 
 /// <summary>The C struct <c>D2ItemDrop</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public unsafe struct D2ItemDrop
 {
     public byte kind;
