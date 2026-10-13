@@ -503,7 +503,7 @@ export interface Exports {
    * (>=0, may exceed `cap` => grow+retry) or a negative error code. Lets a host deflate any
    * buffer entirely in-wasm (no host zlib).
    */
-  d2drlg_deflate_zlib(in: number, in_len: number, out: number, cap: number): number;
+  d2drlg_deflate_zlib(in_: number, in_len: number, out: number, cap: number): number;
   /**
    * Write an object row's Objects.txt "Name" (d2drlg_object_name) or description
    * (d2drlg_object_desc, column "description - not loaded") into `buf`, NUL-terminated if

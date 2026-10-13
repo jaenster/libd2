@@ -158,8 +158,11 @@ jobs:
         run: |
           set -euo pipefail
           ( cd packages/wasm && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall \
-              -Dcapi=drlg,pf,net --prefix "$GITHUB_WORKSPACE/dist" )
+              -Dcapi=drlg,pf,net,util --prefix "$GITHUB_WORKSPACE/dist" )
+          ( cd packages/wasm && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall \
+              -Dcapi=item,itemdraw --prefix "$GITHUB_WORKSPACE/dist-items" )
           cp dist/bin/libd2.wasm packages/npm/libd2/src/libd2.wasm
+          cp dist-items/bin/libd2.wasm packages/npm/libd2/src/items.wasm
           ( cd packages/npm/libd2 && npm test )
 
   npm-floor:
