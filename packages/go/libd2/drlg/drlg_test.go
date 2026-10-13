@@ -359,12 +359,12 @@ func BenchmarkGenerateActWithCollision(b *testing.B) {
 
 // A single trivial call, to price the FFI boundary itself.
 func BenchmarkABIVersion(b *testing.B) {
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		b.Fatal(err)
 	}
 	for b.Loop() {
-		_ = a.abiVersion()
+		_ = a.AbiVersion()
 	}
 }
 

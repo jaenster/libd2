@@ -81,4 +81,18 @@ pub fn build(b: *std.Build) void {
     verify_sub.setCwd(b.path("packages/drlg"));
     verify_sub.setName("verify:drlg");
     verify_step.dependOn(&verify_sub.step);
+
+    // The raw language bindings are generated from the C headers (tools/bindgen): `bindings` rewrites
+    // them, `check-bindings` fails when a header or a capi.zig changed and they were not regenerated.
+    const root = b.path(".").getPath(b);
+    const gen = b.addSystemCommand(&.{ "zig", "build", "run", "--" });
+    gen.setCwd(b.path("tools/bindgen"));
+    gen.addArg(root);
+    gen.setName("bindgen");
+    b.step("bindings", "Regenerate the raw Rust, Go, .NET and TypeScript bindings").dependOn(&gen.step);
+    const check = b.addSystemCommand(&.{ "zig", "build", "run", "--" });
+    check.setCwd(b.path("tools/bindgen"));
+    check.addArgs(&.{ root, "--check" });
+    check.setName("check-bindings");
+    b.step("check-bindings", "Fail when the generated bindings are out of date").dependOn(&check.step);
 }

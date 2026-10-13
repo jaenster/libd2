@@ -1,0 +1,8 @@
+.{
+    .name = .d2_bindgen,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xe9cb617cd33c4512,
+    .dependencies = .{},
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+}

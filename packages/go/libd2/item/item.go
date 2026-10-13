@@ -39,17 +39,17 @@ var ErrClosed = errors.New("libd2/item: context is closed")
 // Context to actually parallelise.
 type Context struct {
 	mu  sync.Mutex
-	api *api
+	api *API
 	ctx uintptr
 }
 
 // New loads the tables and treasure sets. Close it when you are done.
 func New() (*Context, error) {
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		return nil, err
 	}
-	ctx := a.create()
+	ctx := a.Create()
 	if ctx == 0 {
 		return nil, errors.New("libd2/item: could not load the tables")
 	}
@@ -61,7 +61,7 @@ func (c *Context) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.ctx != 0 {
-		c.api.destroy(c.ctx)
+		c.api.Destroy(c.ctx)
 		c.ctx = 0
 	}
 	return nil
@@ -69,11 +69,11 @@ func (c *Context) Close() error {
 
 // ABIVersion is the C ABI version of the native library in use.
 func ABIVersion() (uint32, error) {
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		return 0, err
 	}
-	return a.abiVersion(), nil
+	return a.AbiVersion(), nil
 }
 
 // Roll produces the drops for one kill: the treasure class named by tc, at monster level mlvl,
@@ -92,7 +92,7 @@ func (c *Context) Roll(seed uint32, tc string, mlvl, mf int32) ([]Drop, error) {
 	// map generator's list accessors this call does the work each time it is asked.
 	buf := make([]Drop, 8)
 	for {
-		got := c.api.roll(c.ctx, seed, tc, mlvl, mf, unsafe.Pointer(&buf[0]), int32(len(buf)))
+		got := c.api.Roll(c.ctx, seed, tc, mlvl, mf, unsafe.Pointer(&buf[0]), int32(len(buf)))
 		runtime.KeepAlive(buf)
 		if got < 0 {
 			return nil, fmt.Errorf("libd2/item: rolling %q at mlvl %d failed (%d)", tc, mlvl, got)

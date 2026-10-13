@@ -124,31 +124,31 @@ type Options struct {
 
 // DefaultOptions is what the engine itself does. Start here.
 func DefaultOptions() (Options, error) {
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		return Options{}, err
 	}
-	var c cOptions
-	a.optionsDefault(unsafe.Pointer(&c))
+	var c D2PfOptions
+	a.OptionsDefault(unsafe.Pointer(&c))
 	runtime.KeepAlive(c)
 	return Options{
-		Mask:                 c.mask,
-		Teleport:             c.teleport != 0,
-		TeleportAcrossLevels: c.teleportAcrossLevels != 0,
-		TeleportMaxCast:      c.teleportMaxCast,
-		TeleportMetric:       Metric(c.teleportMetric),
-		SnapRadius:           c.snapRadius,
+		Mask:                 c.Mask,
+		Teleport:             c.Teleport != 0,
+		TeleportAcrossLevels: c.TeleportAcrossLevels != 0,
+		TeleportMaxCast:      c.TeleportMaxCast,
+		TeleportMetric:       Metric(c.TeleportMetric),
+		SnapRadius:           c.SnapRadius,
 	}, nil
 }
 
-func (o *Options) toC() cOptions {
-	return cOptions{
-		mask:                 o.Mask,
-		teleport:             boolToInt(o.Teleport),
-		teleportAcrossLevels: boolToInt(o.TeleportAcrossLevels),
-		teleportMaxCast:      o.TeleportMaxCast,
-		teleportMetric:       int32(o.TeleportMetric),
-		snapRadius:           o.SnapRadius,
+func (o *Options) toC() D2PfOptions {
+	return D2PfOptions{
+		Mask:                 o.Mask,
+		Teleport:             boolToInt(o.Teleport),
+		TeleportAcrossLevels: boolToInt(o.TeleportAcrossLevels),
+		TeleportMaxCast:      o.TeleportMaxCast,
+		TeleportMetric:       int32(o.TeleportMetric),
+		SnapRadius:           o.SnapRadius,
 	}
 }
 

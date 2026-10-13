@@ -36,12 +36,18 @@ jobs:
       # It is the long pole (whole acts regenerated in ReleaseFast) and worth every minute.
       - run: zig build test
 
+      # The raw Rust, Go, .NET and TypeScript bindings are generated from the C headers, which are
+      # themselves checked against every package's exports. A header or capi.zig changed without
+      # `zig build bindings` fails here.
+      - name: Generated bindings are up to date
+        run: zig build check-bindings
+
       # The C ABI is a separate artifact from the module, and nothing above links it. A consumer
       # who takes the header + library gets neither unless this builds.
       - name: Build the C ABIs
         run: |
           set -euo pipefail
-          for p in drlg item pathfinding net itemdraw; do
+          for p in drlg item pathfinding net itemdraw util; do
             ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
           done
 
@@ -82,7 +88,7 @@ jobs:
       - name: Build and embed the natives
         run: |
           set -euo pipefail
-          for p in drlg item pathfinding itemdraw; do
+          for p in drlg item pathfinding itemdraw net util; do
             ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
           done
           ./scripts/go-sync-natives.sh --local
