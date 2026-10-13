@@ -1,0 +1,21 @@
+{4}Call to Arms
+{5}Flail
+{4}'AmnRalMalIstOhm'
+{0}One-Hand Damage: {3}3 to 93
+{0}Durability: 30 of 30
+{0}Required Dexterity: 35
+{0}Required Strength: 41
+{0}Required Level: 57
+{3}+1 to All Skills
+{3}+40% Increased Attack Speed
+{3}+290% Enhanced Damage
+{3}Adds 5-30 fire damage
+{3}7% Life stolen per hit
+{3}+6 to Battle Command
+{3}+6 to Battle Orders
+{3}+4 to Battle Cry
+{3}Prevent Monster Heal
+{3}Replenish Life +12
+{3}30% Better Chance of Getting Magic Items
+{3}+50% Damage to Undead
+{3}Socketed (5)

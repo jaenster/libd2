@@ -55,22 +55,22 @@ fn descOptions(o: ?*const D2ItemDrawOptions) item.itemdesc.Options {
     } };
 }
 
-export fn d2itemdraw_abi_version() u32 {
+pub export fn d2itemdraw_abi_version() u32 {
     return abi_version;
 }
 
 /// Memory the host fills (archive or record bytes in a wasm host). Null on failure.
-export fn d2itemdraw_alloc(len: usize) ?[*]u8 {
+pub export fn d2itemdraw_alloc(len: usize) ?[*]u8 {
     const s = gpa.alloc(u8, len) catch return null;
     return s.ptr;
 }
 
-export fn d2itemdraw_free(ptr: ?[*]u8, len: usize) void {
+pub export fn d2itemdraw_free(ptr: ?[*]u8, len: usize) void {
     const p = ptr orelse return;
     gpa.free(p[0..len]);
 }
 
-export fn d2itemdraw_create() ?*Ctx {
+pub export fn d2itemdraw_create() ?*Ctx {
     const c = gpa.create(Ctx) catch return null;
     c.assets = lib.Assets.init(gpa);
     c.drawer = null;
@@ -93,7 +93,7 @@ export fn d2itemdraw_create() ?*Ctx {
     return c;
 }
 
-export fn d2itemdraw_destroy(ctx: ?*Ctx) void {
+pub export fn d2itemdraw_destroy(ctx: ?*Ctx) void {
     const c = ctx orelse return;
     if (c.drawer) |d| d.deinit();
     c.describer.deinit();
@@ -104,7 +104,7 @@ export fn d2itemdraw_destroy(ctx: ?*Ctx) void {
 }
 
 /// Add an MPQ, searched after those added before it (add Patch_D2, then d2exp, then d2data). 0 on success.
-export fn d2itemdraw_add_archive(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize) i32 {
+pub export fn d2itemdraw_add_archive(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize) i32 {
     const c = ctx orelse return -1;
     const b = bytes orelse return -2;
     c.assets.addArchive(b[0..len]) catch return -3;
@@ -112,7 +112,7 @@ export fn d2itemdraw_add_archive(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize) i3
 }
 
 /// Add one file under its game path (`data/global/items/invamu1.dc6`); it wins over the archives.
-export fn d2itemdraw_add_file(ctx: ?*Ctx, name: ?[*:0]const u8, bytes: ?[*]const u8, len: usize) i32 {
+pub export fn d2itemdraw_add_file(ctx: ?*Ctx, name: ?[*:0]const u8, bytes: ?[*]const u8, len: usize) i32 {
     const c = ctx orelse return -1;
     const n = name orelse return -2;
     const b = bytes orelse return -2;
@@ -143,7 +143,7 @@ fn records(arena: std.mem.Allocator, bytes: ?[*]const u8, len: usize) ?[]const i
 /// mode 0: the engine's own string (UTF-8, first line at the bottom, `ÿcN` colour codes);
 /// mode 1: plain text top to bottom; mode 2: top to bottom with each colour run as `{N}text`.
 /// Writes at most `cap` bytes and returns the full length, or a negative error.
-export fn d2itemdraw_text(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions, mode: i32, out: ?[*]u8, cap: usize) i64 {
+pub export fn d2itemdraw_text(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions, mode: i32, out: ?[*]u8, cap: usize) i32 {
     const c = ctx orelse return -1;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -184,7 +184,7 @@ fn finish(img: lib.Image) ?*Image {
 
 /// The grid icon. background: 0 none, 1 normal (blue), 2 hovered (green), 3 unusable (red),
 /// 4 unidentified; sockets: non-zero draws the sockets and their fillers as for the hovered item.
-export fn d2itemdraw_icon(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions, background: i32, sockets: i32) ?*Image {
+pub export fn d2itemdraw_icon(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions, background: i32, sockets: i32) ?*Image {
     const c = ctx orelse return null;
     const d = drawer(c, if (opts) |o| o.act else 1) orelse return null;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -201,7 +201,7 @@ export fn d2itemdraw_icon(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*c
 }
 
 /// The hover tooltip box alone.
-export fn d2itemdraw_tooltip(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions) ?*Image {
+pub export fn d2itemdraw_tooltip(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions) ?*Image {
     const c = ctx orelse return null;
     const d = drawer(c, if (opts) |o| o.act else 1) orelse return null;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -213,7 +213,7 @@ export fn d2itemdraw_tooltip(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: 
 }
 
 /// The item as on hover: its cells tinted, the icon with its sockets and the tooltip above it.
-export fn d2itemdraw_card(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions) ?*Image {
+pub export fn d2itemdraw_card(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions) ?*Image {
     const c = ctx orelse return null;
     const d = drawer(c, if (opts) |o| o.act else 1) orelse return null;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -222,28 +222,28 @@ export fn d2itemdraw_card(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*c
     return finish(d.card(recs, descOptions(opts)) catch return null);
 }
 
-export fn d2itemdraw_image_width(img: ?*const Image) u32 {
+pub export fn d2itemdraw_image_width(img: ?*const Image) u32 {
     return if (img) |i| i.img.w else 0;
 }
 
-export fn d2itemdraw_image_height(img: ?*const Image) u32 {
+pub export fn d2itemdraw_image_height(img: ?*const Image) u32 {
     return if (img) |i| i.img.h else 0;
 }
 
 /// width*height*4 bytes of straight-alpha RGBA, rows top-down. Valid until the image is freed.
-export fn d2itemdraw_image_rgba(img: ?*const Image) ?[*]const u8 {
+pub export fn d2itemdraw_image_rgba(img: ?*const Image) ?[*]const u8 {
     return if (img) |i| i.img.px.ptr else null;
 }
 
 /// The picture as a PNG, encoded on first use. Valid until the image is freed.
-export fn d2itemdraw_image_png(img: ?*Image, out_len: ?*usize) ?[*]const u8 {
+pub export fn d2itemdraw_image_png(img: ?*Image, out_len: ?*usize) ?[*]const u8 {
     const i = img orelse return null;
     if (i.png == null) i.png = i.img.png(gpa) catch return null;
     if (out_len) |l| l.* = i.png.?.len;
     return i.png.?.ptr;
 }
 
-export fn d2itemdraw_image_free(img: ?*Image) void {
+pub export fn d2itemdraw_image_free(img: ?*Image) void {
     const i = img orelse return;
     if (i.png) |p| gpa.free(p);
     i.img.deinit(gpa);

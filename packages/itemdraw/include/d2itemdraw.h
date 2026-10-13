@@ -49,7 +49,7 @@ int32_t d2itemdraw_add_file(D2ItemDrawCtx *ctx, const char *name, const uint8_t 
 /* The item's description. mode 0: the engine's string (UTF-8, first line at the BOTTOM, colour codes
  * "\xC3\xBF" "c" digit); 1: plain text top to bottom; 2: top to bottom, colour runs as "{N}text".
  * Writes at most cap bytes, returns the full length or a negative error. */
-int64_t d2itemdraw_text(D2ItemDrawCtx *ctx, const uint8_t *records, size_t len,
+int32_t d2itemdraw_text(D2ItemDrawCtx *ctx, const uint8_t *records, size_t len,
                         const D2ItemDrawOptions *opts, int32_t mode, uint8_t *out, size_t cap);
 
 /* Pictures; NULL when the records do not parse or the art is missing.

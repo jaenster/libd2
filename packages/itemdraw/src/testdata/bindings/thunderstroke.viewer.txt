@@ -1,0 +1,16 @@
+{4}Thunderstroke
+{4}Matriarchal Javelin
+{0}Throw Damage: {3}105 to {3}198
+{0}One-Hand Damage: {3}90 to 162
+{0}Quantity: 44
+{1}(Amazon Only)
+{1}Required Dexterity: 151
+{1}Required Strength: 107
+{0}Required Level: 69
+{3}20% Chance to cast level 14 Lightning on striking
+{3}+4 to Javelin and Spear Skills (Amazon Only)
+{3}+15% Increased Attack Speed
+{3}+200% Enhanced Damage
+{3}Adds 1-511 lightning damage
+{3}-15% to Enemy Lightning Resistance
+{3}+3 to Lightning Bolt (Amazon Only)

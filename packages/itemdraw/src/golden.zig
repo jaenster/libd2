@@ -24,18 +24,23 @@ const characters = [_]Character{
     .{ .file = "golden", .bytes = @embedFile("testdata/golden.d2s"), .viewer = .{ .class = 3, .level = 90, .strength = 208, .dexterity = 80 } },
 };
 
-const Group = struct { records: []const save.wire.Item };
+const Group = struct { records: []const save.wire.Item, bytes: []const u8 };
 
 fn groups(a: std.mem.Allocator, bytes: []const u8) ![]Group {
     const s = try save.parse(bytes);
     var flat: std.ArrayListUnmanaged(save.wire.Item) = .empty;
+    var starts: std.ArrayListUnmanaged(usize) = .empty;
     var it = s.items.iterator();
-    while (it.next()) |w| try flat.append(a, w);
+    while (it.next()) |w| {
+        try flat.append(a, w);
+        try starts.append(a, it.pos - (w.bit_len + 7) / 8);
+    }
+    try starts.append(a, it.pos);
     var out: std.ArrayListUnmanaged(Group) = .empty;
     var i: usize = 0;
     while (i < flat.items.len) {
         const n = 1 + @min(flat.items[i].socketed_count, flat.items.len - i - 1);
-        try out.append(a, .{ .records = flat.items[i .. i + n] });
+        try out.append(a, .{ .records = flat.items[i .. i + n], .bytes = s.items.bytes[starts.items[i]..starts.items[i + n]] });
         i += n;
     }
     return out.items;
@@ -172,4 +177,53 @@ test "every item of the golden characters draws as frozen (needs -Dd2dir)" {
         }
     }
     try compareOrUpdate(io, a, "golden-images.txt", out.items);
+}
+
+/// Items the language bindings check themselves against: their records and the text the C ABI gives for
+/// them (mode 2), neutral and seen by a level 80 sorceress with 100 strength and 50 dexterity. The Go
+/// and .NET tests carry copies of src/testdata/bindings/ and must reproduce these files byte for byte.
+const binding_items = [_]struct { char: usize, index: usize, name: []const u8 }{
+    .{ .char = 1, .index = 8, .name = "thunderstroke" },
+    .{ .char = 1, .index = 20, .name = "griffons-eye" },
+    .{ .char = 1, .index = 41, .name = "call-to-arms" },
+    .{ .char = 2, .index = 1, .name = "tal-rasha-guardianship" },
+    .{ .char = 2, .index = 12, .name = "zod-rune" },
+};
+
+pub const binding_viewer = capi.D2ItemDrawOptions{ .has_viewer = 1, .class_id = 1, .level = 80, .strength = 100, .dexterity = 50 };
+
+const capi = @import("capi.zig");
+
+fn capiText(ctx: *capi.Ctx, a: std.mem.Allocator, bytes: []const u8, opts: ?*const capi.D2ItemDrawOptions) ![]const u8 {
+    const n = capi.d2itemdraw_text(ctx, bytes.ptr, bytes.len, opts, 2, null, 0);
+    if (n < 0) return error.TextFailed;
+    const buf = try a.alloc(u8, @intCast(n));
+    _ = capi.d2itemdraw_text(ctx, bytes.ptr, bytes.len, opts, 2, buf.ptr, buf.len);
+    return buf;
+}
+
+test "the binding fixtures: records and the C ABI's text for them" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var threaded = std.Io.Threaded.init_single_threaded;
+    const io = threaded.io();
+    const ctx = capi.d2itemdraw_create() orelse return error.NoContext;
+    defer capi.d2itemdraw_destroy(ctx);
+    if (build_options.update_golden) std.Io.Dir.cwd().createDirPath(io, build_options.testdata ++ "/bindings") catch {};
+    for (binding_items) |b| {
+        const gs = try groups(a, characters[b.char].bytes);
+        const g = gs[b.index];
+        const neutral = try capiText(ctx, a, g.bytes, null);
+        const seen = try capiText(ctx, a, g.bytes, &binding_viewer);
+        const base = try std.fmt.allocPrint(a, "bindings/{s}", .{b.name});
+        if (build_options.update_golden) {
+            try writeFile(io, try std.fmt.allocPrint(a, "{s}/{s}.items", .{ build_options.testdata, base }), g.bytes);
+        } else {
+            const want = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}.items", .{ build_options.testdata, base }));
+            try std.testing.expectEqualSlices(u8, want, g.bytes);
+        }
+        try compareOrUpdate(io, a, try std.fmt.allocPrint(a, "{s}.txt", .{base}), neutral);
+        try compareOrUpdate(io, a, try std.fmt.allocPrint(a, "{s}.viewer.txt", .{base}), seen);
+    }
 }

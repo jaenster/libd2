@@ -61,6 +61,22 @@ for _, d := range drops {
 }
 ```
 
+## Drawing an item
+
+`itemdraw` draws an item the way the game does, from its save-form records. The art is the game's
+own: add your MPQs; the text alone needs none.
+
+```go
+c, _ := itemdraw.New()
+defer c.Close()
+for _, m := range []string{"Patch_D2.mpq", "d2exp.mpq", "d2data.mpq"} {
+	b, _ := os.ReadFile(m)
+	c.AddArchive(b)
+}
+text, _ := c.Text(records, itemdraw.Viewer(1, 80, 100, 50), itemdraw.Plain)
+card, _ := c.Card(records, nil) // icon + tooltip as on hover; card.PNG, card.RGBA
+```
+
 ## Routing
 
 `pathfinding` routes over a world `drlg` generated, sharing that generator's loaded tables:

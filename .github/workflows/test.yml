@@ -41,7 +41,7 @@ jobs:
       - name: Build the C ABIs
         run: |
           set -euo pipefail
-          for p in drlg item pathfinding net; do
+          for p in drlg item pathfinding net itemdraw; do
             ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
           done
 
@@ -82,7 +82,7 @@ jobs:
       - name: Build and embed the natives
         run: |
           set -euo pipefail
-          for p in drlg item pathfinding; do
+          for p in drlg item pathfinding itemdraw; do
             ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
           done
           ./scripts/go-sync-natives.sh --local
