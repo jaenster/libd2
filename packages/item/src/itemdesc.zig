@@ -1359,30 +1359,10 @@ fn contains(list: []const u16, v: u16) bool {
     return false;
 }
 
-/// The indices of a table's rows once the loader's `Expansion` separator rows are dropped.
-fn compact(a: std.mem.Allocator, t: *const txt.Table) ![]usize {
-    var out: std.ArrayListUnmanaged(usize) = .empty;
-    for (t.rows, 0..) |r, i| {
-        if (r.len != 0 and std.mem.eql(u8, r[0], "Expansion")) continue;
-        try out.append(a, i);
-    }
-    return out.toOwnedSlice(a);
-}
+const compact = @import("itemtext.zig").compact;
 
 /// Consecutive save-format item records (each starts with `JM`, byte aligned), up to `max`.
-pub fn parseRecords(arena: std.mem.Allocator, bytes: []const u8, max: usize) ![]wire.Item {
-    var out: std.ArrayListUnmanaged(wire.Item) = .empty;
-    var pos: usize = 0;
-    while (out.items.len < max and pos + 2 <= bytes.len and bytes[pos] == 'J' and bytes[pos + 1] == 'M') {
-        var r = @import("d2-core").bitreader.BitReader.init(bytes[pos..]);
-        const it = wire.parseSave(&r);
-        try out.append(arena, it);
-        const len = (it.bit_len + 7) / 8;
-        if (len == 0) break;
-        pos += len;
-    }
-    return out.toOwnedSlice(arena);
-}
+pub const parseRecords = @import("itemtext.zig").parseRecords;
 
 // -------------------------------------------------------------------------------------------------
 // tests

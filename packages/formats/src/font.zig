@@ -74,6 +74,8 @@ pub const Glyph = struct {
 pub const Table = struct {
     /// Sorted by `code`, which is what lets a lookup binary-search the way the game does.
     glyphs: []Glyph,
+    /// The header byte at +10: the font height the D2Win line metrics scale (Font16: 10).
+    height: u8 = 0,
 
     pub fn deinit(self: *Table, gpa: std.mem.Allocator) void {
         gpa.free(self.glyphs);
@@ -90,6 +92,13 @@ pub const Table = struct {
             if (code < g.code) hi = mid else lo = mid + 1;
         }
         return null;
+    }
+
+    /// The glyph the Latin draw uses for `code` (FONT_GetCharWidthCallback 0x00501650): a code up to
+    /// 0xFF is its own table entry, anything above uses entry 0. No search, unlike `find`.
+    pub fn latin(self: *const Table, code: u21) Glyph {
+        const i: usize = if (code <= 0xff) code else 0;
+        return if (i < self.glyphs.len) self.glyphs[i] else self.glyphs[0];
     }
 };
 
@@ -113,7 +122,7 @@ pub fn parseTable(gpa: std.mem.Allocator, bytes: []const u8) !Table {
             .frame = std.mem.readInt(u16, e[8..10], .little),
         };
     }
-    return .{ .glyphs = glyphs };
+    return .{ .glyphs = glyphs, .height = bytes[10] };
 }
 
 /// A table and its images together, which is the only useful form.

@@ -871,7 +871,7 @@ fn scaleReq(base: i64, pct: i32) i64 {
 }
 
 /// The indices of a table's rows once the loader's `Expansion` separator rows are dropped.
-fn compact(a: std.mem.Allocator, t: *const txt.Table) ![]usize {
+pub fn compact(a: std.mem.Allocator, t: *const txt.Table) ![]usize {
     var out: std.ArrayListUnmanaged(usize) = .empty;
     for (t.rows, 0..) |r, i| {
         if (r.len != 0 and std.mem.eql(u8, r[0], "Expansion")) continue;

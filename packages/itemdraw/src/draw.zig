@@ -32,19 +32,6 @@ pub const Error = error{ MissingPalette, MissingFont };
 /// Font16 (aFontNames[1]), the item tooltip's font.
 const font_dir = "data/local/font/latin/";
 
-const Font = struct {
-    glyphs: []formats.font.Glyph,
-    sheet: formats.dc6.Dc6,
-    /// The table header's byte at +10: the font height the line metrics scale.
-    height: u8,
-
-    /// FONT_GetCharWidthCallback 0x00501650: a code up to 0xFF is its own table entry, anything above
-    /// uses entry 0.
-    fn glyph(self: *const Font, code: u21) formats.font.Glyph {
-        const i: usize = if (code <= 0xff) code else 0;
-        return if (i < self.glyphs.len) self.glyphs[i] else self.glyphs[0];
-    }
-};
 
 pub const Drawer = struct {
     gpa: std.mem.Allocator,
@@ -55,7 +42,7 @@ pub const Drawer = struct {
     icons: icon_mod.Ctx,
     pal: formats.palette.Palette,
     pl2: []u8,
-    font: Font,
+    font: formats.font.Font,
     item_palettes: [9]?[]u8,
     socket: ?formats.dc6.Dc6,
     animdata: ?[]u8,
@@ -103,7 +90,7 @@ pub const Drawer = struct {
         errdefer table.deinit(gpa);
         const sheet_bytes = assets.read(gpa, font_dir ++ "font16.dc6") catch return Error.MissingFont;
         defer gpa.free(sheet_bytes);
-        d.font = .{ .glyphs = table.glyphs, .sheet = formats.dc6.parse(gpa, sheet_bytes) catch return Error.MissingFont, .height = if (tbl.len > 10) tbl[10] else 10 };
+        d.font = .{ .table = table, .sheet = formats.dc6.parse(gpa, sheet_bytes) catch return Error.MissingFont };
 
         for (icon_mod.palette_files, 0..) |f, i| {
             d.item_palettes[i] = if (f) |p| assets.read(gpa, p) catch null else null;
@@ -128,8 +115,7 @@ pub const Drawer = struct {
         if (self.animdata) |a| gpa.free(a);
         if (self.socket) |*s| s.deinit();
         for (self.item_palettes) |p| if (p) |b| gpa.free(b);
-        self.font.sheet.deinit();
-        gpa.free(self.font.glyphs);
+        self.font.deinit(gpa);
         gpa.free(self.pl2);
         self.icons.colors.deinit();
         self.describer.deinit();
@@ -341,7 +327,7 @@ pub const Drawer = struct {
                 var enc: [4]u8 = undefined;
                 const n = std.unicode.utf8Encode(cp, &enc) catch 1;
                 try chars.appendSlice(a, enc[0..n]);
-                const g = self.font.glyph(cp);
+                const g = self.font.table.latin(cp);
                 if (g.frame < self.font.sheet.frames.len) {
                     const f = &self.font.sheet.frames[g.frame];
                     try glyphs.append(a, .{
@@ -451,7 +437,7 @@ pub const Drawer = struct {
     const Metrics = struct { pitch: i32, height_per_line: i32, lift: i32 };
 
     fn metrics(self: *const Drawer) Metrics {
-        const lh: i32 = self.font.height;
+        const lh: i32 = self.font.table.height;
         return .{ .pitch = @divTrunc(lh * 16, 10), .height_per_line = lh * 16, .lift = @divTrunc(lh * 3, 10) };
     }
 
@@ -464,11 +450,11 @@ pub const Drawer = struct {
         while (cps.nextCodepoint()) |cp| {
             if (cp == 0xff) {
                 const n1 = cps.nextCodepoint() orelse break;
-                if (n1 == 'm' or n1 == 'M') w += self.font.glyph('m').width;
+                if (n1 == 'm' or n1 == 'M') w += self.font.table.latin('m').width;
                 _ = cps.nextCodepoint();
                 continue;
             }
-            w += self.font.glyph(cp).width;
+            w += self.font.table.latin(cp).width;
         }
         return w;
     }
