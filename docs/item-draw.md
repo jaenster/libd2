@@ -28,14 +28,26 @@ Zig (`@import("libd2").itemdraw`, module `d2-itemdraw`):
 var assets = itemdraw.Assets.init(gpa);       // where art comes from
 try assets.addArchive(mpq_bytes);              // MPQs, searched in the order added (Patch_D2, d2exp, d2data)
 try assets.addFile("data/global/items/invamu1.dc6", bytes); // or loose files, which win over archives
-var d = try itemdraw.Drawer.init(gpa, &assets, .{ .act = 1 });
-const records = try item.itemdesc.parseRecords(arena, bytes, 7); // host + socketed children
-const desc = try item.itemdesc.build(arena, &tables, records, viewer); // lines, top to bottom, with colours
-var icon = try d.icon(records, .{ .background = .none, .sockets = false });
+const d = try itemdraw.Drawer.init(gpa, &assets, .{ .act = 1 });
+defer d.deinit();
+const records = try itemdraw.parseRecords(arena, bytes, 7); // host + socketed children
+const opts = itemdraw.DescOptions{ .viewer = .{ .class = 1, .level = 80, .strength = 100, .dexterity = 50 } };
+const desc = try d.describe(arena, records, opts);   // the engine's string; itemdesc.lines() reads it top down
+var icon = try d.icon(records, .{ .background = .normal, .sockets = false });
 var tip  = try d.tooltip(desc);
-var card = try d.card(records, viewer);         // background + icon + sockets + the box, placed as on hover
-const png = try icon.png(gpa);
+var card = try d.card(records, opts);                // hovered cells + icon + sockets + the box, as on hover
+const png = try card.png(gpa);
 ```
+
+Without art, `d2-item`'s `itemdesc.Describer` gives the same text from the tables alone.
+
+`item-draw` (`zig build run -- --mpq ... --out DIR save.d2s`) draws every item of a save or record file:
+icon, tooltip and card PNGs, the records of each item, and the text with the engine's own string.
+
+Tests: `zig build test` in packages/itemdraw compares the text of every item of three characters
+(EpicSorc, EpicAma, and the kit character `src/testdata/golden.kit`) with and without a viewer; with
+`-Dd2dir=<1.14d install>` it also hashes every icon, tooltip and card, and `-Dout=DIR` writes them.
+`-Dupdate-golden=true` rewrites the golden files, the diff being the review.
 
 `viewer` is optional. Without one the text uses the neutral case below; with one (class, level, strength,
 dexterity, the set items worn) the requirement colours, class line, per-level stats, the attack-speed
@@ -95,5 +107,11 @@ bonuses that need worn pieces. Everything else is the engine's rule.
 
 ## Not covered
 
-Shop cost lines, the trade-page short form, by-time stats evaluated against a live act (shown as with
-no act, the engine's own branch), the full-set bonus block (needs the owner's set state list), elixirs.
+- Shop cost lines and the trade-page short form (no shop here).
+- By-time stats against a live act: shown as the engine does with no act loaded.
+- Missile potions' throw damage (needs Missiles.txt and the character's skills).
+- The quest-difficulty red name, monster body part names, elixirs.
+- Potion points: the calc column as written, without the per-difficulty adjustment.
+- Unconfirmed, for the in-game screenshots: the vertical position of the glyphs in the box, the set
+  member order, whether an unworn set piece shows the partial bonuses of the worn pieces, the tome
+  line order, translucency taken as the Glide/Direct3D alpha constants (0x40/0x80/0xC0).
