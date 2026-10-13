@@ -1486,3 +1486,26 @@ test "the unidentified card shows the base name and Unidentified in red" {
     try testing.expectEqual(@as(u8, 4), ls[0].spans[0].color);
     try testing.expectEqual(@as(u8, 1), ls[1].spans[0].color);
 }
+
+test "a low quality weapon: its name from LowQualityItems and three quarters of the txt damage" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var it = record("ssd", .low);
+    it.file_index = 0;
+    addStat(&it, 73, 0, 24, wire.list_base);
+    addStat(&it, 72, 0, 24, wire.list_base);
+    try testing.expectEqualStrings("Crude Short Sword\nOne-Hand Damage: 1 to 5\nDurability: 24 of 24", try f.text(&it, &.{}, .{}));
+}
+
+test "a personalised name ending in s takes only an apostrophe" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var it = record("ssd", .superior);
+    it.flags |= wire.flag.PLAYERNAME;
+    @memcpy(it.owner[0..4], "Jens");
+    const a = f.arena.allocator();
+    const ls = try lines(a, try f.d.describe(a, &it, &.{}, .{}));
+    try testing.expectEqualStrings("Jens' Superior Short Sword", ls[0].spans[0].text);
+}
