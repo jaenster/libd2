@@ -14,6 +14,8 @@ const formats = @import("d2-formats");
 const item = @import("d2-item");
 const wire = item.wire;
 const image = @import("image.zig");
+const layout = @import("layout.zig");
+const raster = @import("raster.zig");
 const icon_mod = @import("icon.zig");
 const Assets = @import("assets.zig").Assets;
 const Image = image.Image;
@@ -145,90 +147,323 @@ pub const Drawer = struct {
         return self.describer.describe(arena, &records[0], records[1..], o);
     }
 
-    fn sprite(self: *Drawer, name: []const u8) ?*const formats.dc6.Dc6 {
-        if (self.sprites.getPtr(name)) |s| return s;
-        var path_buf: [96]u8 = undefined;
-        const path = std.fmt.bufPrint(&path_buf, "data/global/items/{s}.dc6", .{name}) catch return null;
+    /// A DC6 by its game path, loaded once.
+    fn sheetAt(self: *Drawer, path: []const u8) ?*const formats.dc6.Dc6 {
+        if (self.sprites.getPtr(path)) |s| return s;
         const bytes = self.assets.read(self.gpa, path) catch return null;
         defer self.gpa.free(bytes);
         const sheet = formats.dc6.parse(self.gpa, bytes) catch return null;
-        const key = self.gpa.dupe(u8, name) catch return null;
+        const key = self.gpa.dupe(u8, path) catch return null;
         self.sprites.put(self.gpa, key, sheet) catch return null;
-        return self.sprites.getPtr(name);
+        return self.sprites.getPtr(path);
     }
 
-    fn remapOf(self: *const Drawer, g: icon_mod.Gfx) ?[]const u8 {
-        const r = g.remap orelse return null;
+    fn remapOf(self: *const Drawer, cm: ?layout.ColorMap) ?[]const u8 {
+        const r = cm orelse return null;
         const p = self.item_palettes[r.set] orelse return null;
         const at = @as(usize, r.row) * 256;
         if (at + 256 > p.len) return null;
         return p[at..][0..256];
     }
 
-    /// DrawItemGfx 0x0046ee80: the icon with its top-left cell corner at (x, y).
-    fn drawItem(self: *Drawer, a: std.mem.Allocator, img: *Image, it: *const wire.Item, kids: []const wire.Item, x: i32, y: i32) !void {
-        const g = (try self.icons.gfx(a, it, kids)) orelse return;
-        const sheet = self.sprite(g.file) orelse return;
-        if (sheet.frames.len == 0) return;
-        const f = &sheet.frames[0];
-        // DrawItemGfx hands the draw the cell top plus the frame height: the baseline the frame hangs from
-        const base_y = y + @as(i32, @intCast(f.height));
-        img.blitBaseline(f, &self.pal, x, base_y, self.remapOf(g), if (g.ethereal) image.alpha_transparent else image.alpha_solid);
+    // ---------------------------------------------------------------------------------------------
+    // layout
+
+    /// DrawItemGfx 0x0046ee80: the item's frame with its top-left cell corner at (x, y). The rectangle is
+    /// the frame's own (every 1.14d inventory frame is 28 px per cell with no offset); without the art it
+    /// is that 28 px per cell.
+    fn itemSprite(self: *Drawer, a: std.mem.Allocator, it: *const wire.Item, kids: []const wire.Item, x: i32, y: i32, role: layout.Role) !?layout.Sprite {
+        const g = (try self.icons.gfx(a, it, kids)) orelse return null;
+        const path = try std.fmt.allocPrint(a, "data/global/items/{s}.dc6", .{g.file});
+        var rect = layout.Rect{ .x = x, .y = y, .w = 28 * @as(i32, g.w), .h = 28 * @as(i32, g.h) };
+        if (self.sheetAt(path)) |sheet| {
+            if (sheet.frames.len == 0) return null;
+            const f = &sheet.frames[0];
+            rect = .{ .x = x + f.offset_x, .y = y + f.offset_y, .w = @intCast(f.width), .h = @intCast(f.height) };
+        }
+        return .{
+            .rect = rect,
+            .ref = .{ .path = path, .frame = 0, .colormap = if (g.remap) |r| .{ .set = r.set, .row = r.row } else null, .role = role },
+            .alpha = if (g.ethereal) image.alpha_transparent else image.alpha_solid,
+            .ethereal = g.ethereal,
+        };
     }
 
-    /// The grid icon. The picture covers the item's cells (29 px each) plus the one column left of them
-    /// the leftmost sockets reach; `origin_x/y` is the top-left cell corner inside it.
-    pub fn icon(self: *Drawer, records: []const wire.Item, opts: icon_mod.Options) !Image {
-        var arena = std.heap.ArenaAllocator.init(self.gpa);
-        defer arena.deinit();
-        const a = arena.allocator();
-        if (records.len == 0) return Image.init(self.gpa, 1, 1);
-        const it = &records[0];
-        const kids = records[1..];
-        const g = (try self.icons.gfx(a, it, kids)) orelse return Image.init(self.gpa, 1, 1);
-        const margin: i32 = 1;
-        var img = try Image.init(self.gpa, @intCast(@as(i32, g.w) * icon_mod.cell + margin), @intCast(@as(i32, g.h) * icon_mod.cell));
-        img.origin_x = margin;
-        try self.drawAt(a, &img, records, opts, margin, 0);
-        return img;
-    }
-
-    fn drawAt(self: *Drawer, a: std.mem.Allocator, img: *Image, records: []const wire.Item, opts: icon_mod.Options, x: i32, y: i32) !void {
+    /// The grid part of a layout: the cell tints, the icon, the sockets and their fillers.
+    fn placeItem(self: *Drawer, a: std.mem.Allocator, l: *layout.Layout, records: []const wire.Item, opts: icon_mod.Options, x: i32, y: i32) !void {
         const it = &records[0];
         const kids = records[1..];
         const g = (try self.icons.gfx(a, it, kids)) orelse return;
         if (opts.background != .none) {
             const c = self.pal.rgb(image.nearest(&self.pal, opts.background.rgb()));
+            var cells: std.ArrayListUnmanaged(layout.Fill) = .empty;
             var row: i32 = 0;
             while (row < g.h) : (row += 1) {
                 var col: i32 = 0;
-                while (col < g.w) : (col += 1) img.fill(x + col * icon_mod.cell, y + row * icon_mod.cell, icon_mod.cell, icon_mod.cell, c, image.alpha_very_transparent);
+                while (col < g.w) : (col += 1) try cells.append(a, .{ .rect = .{ .x = x + col * icon_mod.cell, .y = y + row * icon_mod.cell, .w = icon_mod.cell, .h = icon_mod.cell }, .rgb = c, .alpha = image.alpha_very_transparent });
             }
+            l.cells = cells.items;
         }
-        try self.drawItem(a, img, it, kids, x, y);
+        l.icon = try self.itemSprite(a, it, kids, x, y, .item);
         if (!opts.sockets or !it.identified() or it.flags & wire.flag.SOCKETED == 0) return;
         const ref = self.t.itemRef(it.codeSlice()) orelse return;
         const bt = self.t.itemTable(ref.table);
         if (bt.int(ref.row, "hasinv") == 0 or bt.int(ref.row, "gemsockets") == 0) return;
+        var socks: std.ArrayListUnmanaged(layout.Sprite) = .empty;
         var k: usize = 0;
         var i: usize = 0;
         while (i < it.sockets) : (i += 1) {
             const p = icon_mod.socketPosition(it.sockets, g.w, g.h, i);
             const px = x + p[0];
             const py = y + p[1];
+            // gemsocket.dc6 hangs from (px - 1, py)
+            var r = layout.Rect{ .x = px - 1, .y = py - 28, .w = 28, .h = 28 };
             if (self.socket) |*s| if (s.frames.len != 0) {
                 const f = &s.frames[0];
-                img.blitBaseline(f, &self.pal, px - 1, py, null, image.alpha_very_transparent);
+                r = .{ .x = px - 1 + f.offset_x, .y = py + f.offset_y - @as(i32, @intCast(f.height)), .w = @intCast(f.width), .h = @intCast(f.height) };
             };
+            try socks.append(a, .{ .rect = r, .ref = .{ .path = socket_path, .role = .socket }, .alpha = image.alpha_very_transparent });
             if (k < kids.len) {
-                try self.drawItem(a, img, &kids[k], &.{}, px, py - icon_mod.cell);
+                if (try self.itemSprite(a, &kids[k], &.{}, px, py - icon_mod.cell, .filler)) |s| try socks.append(a, s);
                 k += 1;
+            }
+        }
+        l.sockets = socks.items;
+    }
+
+    fn newLayout(self: *Drawer, kind: layout.Kind) layout.Layout {
+        var l = layout.Layout{ .arena = std.heap.ArenaAllocator.init(self.gpa), .kind = kind, .width = 1, .height = 1 };
+        for (&l.text_rgb, 0..) |*c, i| c.* = formats.pl2.textColor(self.pl2, @enumFromInt(i)) catch .{ 0, 0, 0 };
+        l.line_pitch = self.metrics().pitch;
+        return l;
+    }
+
+    /// The icon's display list: the item's cells (29 px each) plus the one column left of them the
+    /// leftmost sockets reach; `origin_x/y` is the top-left cell corner.
+    pub fn layoutIcon(self: *Drawer, records: []const wire.Item, opts: icon_mod.Options) !layout.Layout {
+        var l = self.newLayout(.icon);
+        errdefer l.deinit();
+        const a = l.arena.allocator();
+        if (records.len == 0) return l;
+        const g = (try self.icons.gfx(a, &records[0], records[1..])) orelse return l;
+        const margin: i32 = 1;
+        l.width = @as(i32, g.w) * icon_mod.cell + margin;
+        l.height = @as(i32, g.h) * icon_mod.cell;
+        l.origin_x = margin;
+        try self.placeItem(a, &l, records, opts, margin, 0);
+        return l;
+    }
+
+    const Box = struct { w: i32, h: i32, over: i32, lines: []const []const u8 };
+
+    fn boxOf(self: *const Drawer, a: std.mem.Allocator, desc: itemdesc.Desc) !Box {
+        var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+        var it = std.mem.splitScalar(u8, desc.text, '\n');
+        while (it.next()) |l| try lines.append(a, l);
+        const m = self.metrics();
+        var widest: i32 = 0;
+        for (lines.items) |l| widest = @max(widest, self.lineWidth(l));
+        const box_h = @divTrunc(m.height_per_line * @as(i32, @intCast(lines.items.len)), 10);
+        // glyph cells are taller than the line pitch; room for the top line's cell
+        const cell_h: i32 = if (self.font.sheet.frames.len != 0) @intCast(self.font.sheet.frames[0].height) else 16;
+        const over = @max(0, cell_h - (box_h - m.lift - (@as(i32, @intCast(lines.items.len)) - 1) * m.pitch));
+        return .{ .w = widest + 8, .h = box_h, .over = over, .lines = lines.items };
+    }
+
+    /// The tooltip's display list. `origin_x/y` is the box's top-left, which sits lower than the top
+    /// when glyph cells reach above the box.
+    pub fn layoutTooltip(self: *Drawer, desc: itemdesc.Desc) !layout.Layout {
+        var l = self.newLayout(.tooltip);
+        errdefer l.deinit();
+        const a = l.arena.allocator();
+        if (desc.text.len == 0) return l;
+        const b = try self.boxOf(a, desc);
+        l.width = b.w;
+        l.height = b.h + b.over;
+        l.origin_y = b.over;
+        try self.placeText(a, &l, desc, b, 0, b.over);
+        return l;
+    }
+
+    /// The box and the lines of the D2Win tooltip draw 0x00503000, the box's top-left at (left, top).
+    fn placeText(self: *Drawer, a: std.mem.Allocator, l: *layout.Layout, desc: itemdesc.Desc, b: Box, left: i32, top: i32) !void {
+        const m = self.metrics();
+        l.box = .{ .rect = .{ .x = left, .y = top, .w = b.w, .h = b.h }, .rgb = self.pal.rgb(0), .alpha = image.alpha_less_transparent };
+        l.centered = desc.centered;
+        l.base_color = desc.base_color;
+        var out = try a.alloc(layout.Line, b.lines.len);
+        var color: u8 = desc.base_color;
+        const bottom = top + b.h;
+        for (b.lines, 0..) |text, k| {
+            const y = bottom - m.lift - @as(i32, @intCast(k)) * m.pitch;
+            const lw = self.lineWidth(text);
+            const x0 = if (desc.centered) left + ((b.w - lw) >> 1) else left;
+            var x = x0;
+            var spans: std.ArrayListUnmanaged(layout.Span) = .empty;
+            var glyphs: std.ArrayListUnmanaged(layout.Glyph) = .empty;
+            var chars: std.ArrayListUnmanaged(u8) = .empty;
+            var span_x = x;
+            var span_color = color;
+            const flush = struct {
+                fn f(al: std.mem.Allocator, sp: *std.ArrayListUnmanaged(layout.Span), gl: *std.ArrayListUnmanaged(layout.Glyph), ch: *std.ArrayListUnmanaged(u8), c: u8, sx: i32, end: i32) !void {
+                    if (ch.items.len == 0) return;
+                    try sp.append(al, .{ .color = c, .text = try ch.toOwnedSlice(al), .x = sx, .width = end - sx, .glyphs = try gl.toOwnedSlice(al) });
+                }
+            }.f;
+            var view = std.unicode.Utf8View.initUnchecked(text);
+            var cps = view.iterator();
+            while (cps.nextCodepoint()) |cp| {
+                if (cp == 0xff) {
+                    const save = cps.i;
+                    if (cps.nextCodepoint()) |n1| {
+                        if (n1 == 'c') {
+                            const v: i32 = if (cps.nextCodepoint()) |dg| @as(i32, @intCast(dg)) - '0' else 0;
+                            const nc: u8 = if (v > 12 or v < 0) 0 else @intCast(v);
+                            if (nc != color) {
+                                try flush(a, &spans, &glyphs, &chars, span_color, span_x, x);
+                                span_x = x;
+                                span_color = nc;
+                            }
+                            color = nc;
+                            continue;
+                        }
+                    } else {
+                        color = 0;
+                        break;
+                    }
+                    cps.i = save;
+                }
+                if (chars.items.len == 0) {
+                    span_x = x;
+                    span_color = color;
+                }
+                var enc: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(cp, &enc) catch 1;
+                try chars.appendSlice(a, enc[0..n]);
+                const g = self.font.glyph(cp);
+                if (g.frame < self.font.sheet.frames.len) {
+                    const f = &self.font.sheet.frames[g.frame];
+                    try glyphs.append(a, .{
+                        .code = cp,
+                        .frame = g.frame,
+                        .rect = .{ .x = x + f.offset_x, .y = y + f.offset_y - @as(i32, @intCast(f.height)), .w = @intCast(f.width), .h = @intCast(f.height) },
+                        .color = color,
+                        .advance = g.width,
+                    });
+                }
+                x += g.width;
+            }
+            try flush(a, &spans, &glyphs, &chars, span_color, span_x, x);
+            // the description's first line is the bottom one
+            out[b.lines.len - 1 - k] = .{ .x = x0, .baseline = y, .width = lw, .spans = spans.items };
+        }
+        l.lines = out;
+    }
+
+    /// The hover card's display list: the item as it sits in the grid when hovered (green cells, icon,
+    /// sockets) and its tooltip centred above it, the box bottom 2 px into the item's top edge.
+    pub fn layoutCard(self: *Drawer, records: []const wire.Item, opts: itemdesc.Options) !layout.Layout {
+        var l = self.newLayout(.card);
+        errdefer l.deinit();
+        const a = l.arena.allocator();
+        if (records.len == 0) return l;
+        const g = (try self.icons.gfx(a, &records[0], records[1..])) orelse return l;
+        const desc = try self.describe(a, records, opts);
+        const b = try self.boxOf(a, desc);
+        const item_w = @as(i32, g.w) * icon_mod.cell;
+        const item_h = @as(i32, g.h) * icon_mod.cell;
+        const box_left_rel = @divTrunc(item_w, 2) - (b.w >> 1);
+        const min_x = @min(box_left_rel, -1);
+        const max_x = @max(box_left_rel + b.w, item_w);
+        const box_top_rel = 2 - b.h;
+        const min_y = box_top_rel - b.over;
+        l.width = max_x - min_x;
+        l.height = item_h - min_y;
+        const ox = -min_x;
+        const oy = -min_y;
+        l.origin_x = ox;
+        l.origin_y = oy;
+        try self.placeItem(a, &l, records, .{ .background = .hovered, .sockets = true }, ox, oy);
+        try self.placeText(a, &l, desc, b, ox + box_left_rel, oy + box_top_rel);
+        return l;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // the default providers: the 1.14d DC6 art from the assets
+
+    pub fn defaults(self: *Drawer) raster.Providers {
+        return .{
+            .glyph = .{ .ctx = self, .draw = drawGlyph },
+            .sprite = .{ .ctx = self, .draw = drawSprite },
+        };
+    }
+
+    /// One DC6 frame into a tile, point-sampled to the tile's scale.
+    fn frameIntoTile(self: *const Drawer, f: *const formats.dc6.Frame, remap: ?[]const u8, scale: u32, t: raster.Tile) void {
+        var ty: u32 = 0;
+        while (ty < t.h) : (ty += 1) {
+            const sy = ty / scale;
+            if (sy >= f.height) break;
+            var tx: u32 = 0;
+            while (tx < t.w) : (tx += 1) {
+                const sx = tx / scale;
+                if (sx >= f.width) break;
+                const raw = f.indices[@as(usize, sy) * f.width + sx];
+                if (raw == 0) continue;
+                const idx = if (remap) |m| m[raw] else raw;
+                if (idx == 0) continue;
+                const c = self.pal.rgb(idx);
+                const o = (@as(usize, ty) * t.w + tx) * 4;
+                t.rgba[o] = c[0];
+                t.rgba[o + 1] = c[1];
+                t.rgba[o + 2] = c[2];
+                t.rgba[o + 3] = 255;
             }
         }
     }
 
+    fn drawGlyph(ctx: *anyopaque, font: []const u8, g: *const layout.Glyph, scale: u32, t: raster.Tile) bool {
+        const self: *Drawer = @ptrCast(@alignCast(ctx));
+        if (!std.mem.eql(u8, font, layout.font_name) or g.frame >= self.font.sheet.frames.len) return false;
+        const shift = formats.pl2.textShift(self.pl2, @enumFromInt(g.color)) catch null;
+        self.frameIntoTile(&self.font.sheet.frames[g.frame], shift, scale, t);
+        return true;
+    }
+
+    fn drawSprite(ctx: *anyopaque, sp: *const layout.Sprite, scale: u32, t: raster.Tile) bool {
+        const self: *Drawer = @ptrCast(@alignCast(ctx));
+        const sheet: *const formats.dc6.Dc6 = if (sp.ref.role == .socket) (if (self.socket) |*s| s else return false) else (self.sheetAt(sp.ref.path) orelse return false);
+        if (sp.ref.frame >= sheet.frames.len) return false;
+        self.frameIntoTile(&sheet.frames[sp.ref.frame], self.remapOf(sp.ref.colormap), scale, t);
+        return true;
+    }
+
     // ---------------------------------------------------------------------------------------------
-    // text
+    // the pictures: a layout drawn by the default providers
+
+    /// The grid icon (see `layoutIcon`).
+    pub fn icon(self: *Drawer, records: []const wire.Item, opts: icon_mod.Options) !Image {
+        var l = try self.layoutIcon(records, opts);
+        defer l.deinit();
+        return raster.rasterize(self.gpa, &l, .{}, self.defaults(), 1);
+    }
+
+    /// The tooltip box for a description (see `layoutTooltip`).
+    pub fn tooltip(self: *Drawer, desc: itemdesc.Desc) !Image {
+        var l = try self.layoutTooltip(desc);
+        defer l.deinit();
+        return raster.rasterize(self.gpa, &l, .{}, self.defaults(), 1);
+    }
+
+    /// The hover card (see `layoutCard`).
+    pub fn card(self: *Drawer, records: []const wire.Item, opts: itemdesc.Options) !Image {
+        var l = try self.layoutCard(records, opts);
+        defer l.deinit();
+        return raster.rasterize(self.gpa, &l, .{}, self.defaults(), 1);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // text metrics
 
     const Metrics = struct { pitch: i32, height_per_line: i32, lift: i32 };
 
@@ -254,105 +489,6 @@ pub const Drawer = struct {
         }
         return w;
     }
-
-    /// The tooltip box for a description. `origin_x/y` is the box's top-left in the picture, which may
-    /// be larger than the box where glyph cells reach past it.
-    pub fn tooltip(self: *Drawer, desc: itemdesc.Desc) !Image {
-        var lines: std.ArrayListUnmanaged([]const u8) = .empty;
-        defer lines.deinit(self.gpa);
-        var it = std.mem.splitScalar(u8, desc.text, '\n');
-        while (it.next()) |l| try lines.append(self.gpa, l);
-        if (desc.text.len == 0) return Image.init(self.gpa, 1, 1);
-        const m = self.metrics();
-        var widest: i32 = 0;
-        for (lines.items) |l| widest = @max(widest, self.lineWidth(l));
-        const box_w = widest + 8;
-        const box_h = @divTrunc(m.height_per_line * @as(i32, @intCast(lines.items.len)), 10);
-        // glyph cells are taller than the line pitch; leave room for the top line's cell
-        const cell_h: i32 = if (self.font.sheet.frames.len != 0) @intCast(self.font.sheet.frames[0].height) else 16;
-        const over = @max(0, cell_h - (box_h - m.lift - (@as(i32, @intCast(lines.items.len)) - 1) * m.pitch));
-        var img = try Image.init(self.gpa, @intCast(box_w), @intCast(box_h + over));
-        img.origin_y = over;
-        try self.drawTooltip(&img, desc, lines.items, 0, over, box_w, box_h);
-        return img;
-    }
-
-    fn drawTooltip(self: *Drawer, img: *Image, desc: itemdesc.Desc, lines: []const []const u8, left: i32, top: i32, box_w: i32, box_h: i32) !void {
-        const m = self.metrics();
-        img.fill(left, top, box_w, box_h, self.pal.rgb(0), image.alpha_less_transparent);
-        var color: u8 = desc.base_color;
-        const bottom = top + box_h;
-        for (lines, 0..) |l, k| {
-            const y = bottom - m.lift - @as(i32, @intCast(k)) * m.pitch;
-            const lw = self.lineWidth(l);
-            var x = if (desc.centered) left + ((box_w - lw) >> 1) else left;
-            var view = std.unicode.Utf8View.initUnchecked(l);
-            var cps = view.iterator();
-            while (cps.nextCodepoint()) |cp| {
-                if (cp == 0xff) {
-                    const save = cps.i;
-                    if (cps.nextCodepoint()) |n1| {
-                        if (n1 == 'c') {
-                            if (cps.nextCodepoint()) |dg| {
-                                const v: i32 = @as(i32, @intCast(dg)) - '0';
-                                color = if (v > 12 or v < 0) 0 else @intCast(v);
-                            } else color = 0;
-                            continue;
-                        }
-                    } else {
-                        color = 0;
-                        break;
-                    }
-                    cps.i = save;
-                }
-                const g = self.font.glyph(cp);
-                if (g.frame < self.font.sheet.frames.len) {
-                    const f = &self.font.sheet.frames[g.frame];
-                    const shift = formats.pl2.textShift(self.pl2, @enumFromInt(color)) catch null;
-                    img.blitBaseline(f, &self.pal, x, y, shift, image.alpha_solid);
-                }
-                x += g.width;
-            }
-        }
-    }
-
-    /// The hover card: the item as it sits in the grid when hovered (green cells, icon, sockets) and its
-    /// tooltip above it.
-    pub fn card(self: *Drawer, records: []const wire.Item, opts: itemdesc.Options) !Image {
-        var arena = std.heap.ArenaAllocator.init(self.gpa);
-        defer arena.deinit();
-        const a = arena.allocator();
-        if (records.len == 0) return Image.init(self.gpa, 1, 1);
-        const g = (try self.icons.gfx(a, &records[0], records[1..])) orelse return Image.init(self.gpa, 1, 1);
-        const desc = try self.describe(a, records, opts);
-        var lines: std.ArrayListUnmanaged([]const u8) = .empty;
-        var it = std.mem.splitScalar(u8, desc.text, '\n');
-        while (it.next()) |l| try lines.append(a, l);
-        const m = self.metrics();
-        var widest: i32 = 0;
-        for (lines.items) |l| widest = @max(widest, self.lineWidth(l));
-        const box_w = widest + 8;
-        const box_h = @divTrunc(m.height_per_line * @as(i32, @intCast(lines.items.len)), 10);
-        const item_w = @as(i32, g.w) * icon_mod.cell;
-        const item_h = @as(i32, g.h) * icon_mod.cell;
-        // placed as on hover: centred on the item, the box bottom two pixels below the item's top edge
-        const cell_h: i32 = if (self.font.sheet.frames.len != 0) @intCast(self.font.sheet.frames[0].height) else 16;
-        const over = @max(0, cell_h - (box_h - m.lift - (@as(i32, @intCast(lines.items.len)) - 1) * m.pitch));
-        const item_x0: i32 = 0;
-        const box_left_rel = @divTrunc(item_w, 2) - (box_w >> 1);
-        const min_x = @min(box_left_rel, item_x0 - 1);
-        const max_x = @max(box_left_rel + box_w, item_w);
-        const box_top_rel = 2 - box_h;
-        const min_y = box_top_rel - over;
-        const W: u32 = @intCast(max_x - min_x);
-        const H: u32 = @intCast(item_h - min_y);
-        var img = try Image.init(self.gpa, W, H);
-        const ox = -min_x;
-        const oy = -min_y;
-        img.origin_x = ox;
-        img.origin_y = oy;
-        try self.drawAt(a, &img, records, .{ .background = .hovered, .sockets = true }, ox, oy);
-        try self.drawTooltip(&img, desc, lines.items, ox + box_left_rel, oy + box_top_rel, box_w, box_h);
-        return img;
-    }
 };
+
+const socket_path = "data/global/ui/panel/gemsocket.dc6";

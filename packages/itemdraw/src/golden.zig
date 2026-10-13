@@ -227,3 +227,132 @@ test "the binding fixtures: records and the C ABI's text for them" {
         try compareOrUpdate(io, a, try std.fmt.allocPrint(a, "{s}.viewer.txt", .{base}), seen);
     }
 }
+
+fn archiveDrawer(gpa: std.mem.Allocator, a: std.mem.Allocator, io: std.Io, assets: *itemdraw.Assets) !*itemdraw.Drawer {
+    for ([_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" }) |m| {
+        const bytes = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}", .{ build_options.d2dir, m }));
+        try assets.addArchive(bytes);
+    }
+    return itemdraw.Drawer.init(gpa, assets, .{});
+}
+
+test "the display lists of the binding items as JSON, and their text from the same layout (needs -Dd2dir)" {
+    if (build_options.d2dir.len == 0) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var threaded = std.Io.Threaded.init_single_threaded;
+    const io = threaded.io();
+    var assets = itemdraw.Assets.init(gpa);
+    defer assets.deinit();
+    const drawer = try archiveDrawer(gpa, a, io, &assets);
+    defer drawer.deinit();
+    for (binding_items) |b| {
+        const g = (try groups(a, characters[b.char].bytes))[b.index];
+        var l = try drawer.layoutCard(g.records, .{});
+        defer l.deinit();
+        const js = try l.json(gpa);
+        defer gpa.free(js);
+        try compareOrUpdate(io, a, try std.fmt.allocPrint(a, "bindings/{s}.layout.json", .{b.name}), js);
+        // the alt text is the layout's lines, the same as the description read top down
+        const t = try l.text(gpa, 0);
+        defer gpa.free(t);
+        try std.testing.expectEqualStrings(try item.itemdesc.plain(a, try drawer.describe(a, g.records, .{})), t);
+        const capped = try l.text(gpa, 1024);
+        defer gpa.free(capped);
+        try std.testing.expect(capped.len <= 1024);
+    }
+}
+
+/// A provider that paints only the top-left `scale` x `scale` block of each glyph cell, in a colour made
+/// from the glyph's code, and each sprite's whole rectangle magenta: enough to see every cell land where
+/// the layout put it at any scale.
+const BoxProvider = struct {
+    fn glyphRgb(code: u21) [3]u8 {
+        return .{ @truncate(code *% 37), 200, @truncate(code *% 11) };
+    }
+    fn glyph(_: *anyopaque, _: []const u8, g: *const itemdraw.layout.Glyph, scale: u32, t: itemdraw.Tile) bool {
+        const c = glyphRgb(g.code);
+        var y: u32 = 0;
+        while (y < @min(scale, t.h)) : (y += 1) {
+            var x: u32 = 0;
+            while (x < @min(scale, t.w)) : (x += 1) {
+                const o = (y * t.w + x) * 4;
+                t.rgba[o] = c[0];
+                t.rgba[o + 1] = c[1];
+                t.rgba[o + 2] = c[2];
+                t.rgba[o + 3] = 255;
+            }
+        }
+        return true;
+    }
+    fn sprite(_: *anyopaque, _: *const itemdraw.layout.Sprite, _: u32, t: itemdraw.Tile) bool {
+        var i: usize = 0;
+        while (i < t.rgba.len) : (i += 4) {
+            t.rgba[i] = 255;
+            t.rgba[i + 1] = 0;
+            t.rgba[i + 2] = 255;
+            t.rgba[i + 3] = 255;
+        }
+        return true;
+    }
+};
+
+test "custom providers draw into the same layout at scale 2 and 4 (needs -Dd2dir)" {
+    if (build_options.d2dir.len == 0) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var threaded = std.Io.Threaded.init_single_threaded;
+    const io = threaded.io();
+    var assets = itemdraw.Assets.init(gpa);
+    defer assets.deinit();
+    const drawer = try archiveDrawer(gpa, a, io, &assets);
+    defer drawer.deinit();
+    var dummy: u8 = 0;
+    const custom = itemdraw.Providers{
+        .glyph = .{ .ctx = &dummy, .draw = BoxProvider.glyph },
+        .sprite = .{ .ctx = &dummy, .draw = BoxProvider.sprite },
+    };
+    const g = (try groups(a, characters[1].bytes))[41]; // Call to Arms, with five runes
+    var l = try drawer.layoutCard(g.records, .{});
+    defer l.deinit();
+    const before = try l.json(gpa);
+    defer gpa.free(before);
+    for ([_]u32{ 2, 4 }) |scale| {
+        var img = try itemdraw.rasterize(gpa, &l, custom, .{}, scale);
+        defer img.deinit(gpa);
+        const s: i32 = @intCast(scale);
+        try std.testing.expectEqual(@as(u32, @intCast(l.width * s)), img.w);
+        try std.testing.expectEqual(@as(u32, @intCast(l.height * s)), img.h);
+        var glyphs: usize = 0;
+        for (l.lines) |line| for (line.spans) |sp| for (sp.glyphs) |gl| {
+            const x: usize = @intCast(gl.rect.x * s);
+            const y: usize = @intCast(gl.rect.y * s);
+            const o = (y * img.w + x) * 4;
+            const want = BoxProvider.glyphRgb(gl.code);
+            try std.testing.expectEqualSlices(u8, &want, img.px[o..][0..3]);
+            try std.testing.expectEqual(@as(u8, 255), img.px[o + 3]);
+            glyphs += 1;
+        };
+        try std.testing.expect(glyphs > 100);
+        // the icon's rectangle is magenta under the box's overlap, at the bottom row of the item
+        const ic = l.icon.?;
+        const bx: usize = @intCast((ic.rect.x + 1) * s);
+        const by: usize = @intCast((ic.rect.y + ic.rect.h - 1) * s);
+        const ob = (by * img.w + bx) * 4;
+        try std.testing.expectEqual(@as(u8, 255), img.px[ob]);
+        try std.testing.expectEqual(@as(u8, 0), img.px[ob + 1]);
+        if (build_options.out.len != 0) {
+            const png = try img.png(gpa);
+            defer gpa.free(png);
+            try writeFile(io, try std.fmt.allocPrint(a, "{s}/custom-provider-x{d}.png", .{ build_options.out, scale }), png);
+        }
+    }
+    // drawing does not touch the layout
+    const after = try l.json(gpa);
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings(before, after);
+}

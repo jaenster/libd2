@@ -17,10 +17,18 @@ pub const assets = @import("assets.zig");
 pub const image = @import("image.zig");
 pub const icon = @import("icon.zig");
 pub const draw = @import("draw.zig");
+pub const layout = @import("layout.zig");
+pub const raster = @import("raster.zig");
 
 pub const Assets = assets.Assets;
 pub const Image = image.Image;
 pub const Drawer = draw.Drawer;
+pub const Layout = layout.Layout;
+pub const Providers = raster.Providers;
+pub const GlyphProvider = raster.GlyphProvider;
+pub const SpriteProvider = raster.SpriteProvider;
+pub const Tile = raster.Tile;
+pub const rasterize = raster.rasterize;
 pub const Options = draw.Options;
 pub const IconOptions = icon.Options;
 pub const Background = icon.Background;
@@ -35,6 +43,8 @@ test {
     _ = image;
     _ = icon;
     _ = draw;
+    _ = layout;
+    _ = raster;
     _ = @import("capi.zig");
     _ = @import("golden.zig");
 }
