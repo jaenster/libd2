@@ -892,7 +892,7 @@ pub const Describer = struct {
             const gr = self.t.gems.findByStr("code", k.codeSlice()) orelse continue;
             if (!any) try out.s(self.idText(sid.rune_quote));
             any = true;
-            try out.s(self.keyText(self.t.gems.str(gr, "letter")));
+            try out.s(self.t.gems.str(gr, "letter"));
         }
         if (any) {
             try out.s(self.idText(sid.rune_quote));
