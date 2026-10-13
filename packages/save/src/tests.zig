@@ -5,7 +5,7 @@
 const std = @import("std");
 const save = @import("lib.zig");
 
-const EPIC_SORC = @embedFile("testdata/EpicSorc.d2s");
+const EPIC_SORC = @import("libd2-testdata").epic_sorc;
 
 test "fixture is a valid 1.14d save" {
     try std.testing.expect(save.validate(EPIC_SORC));

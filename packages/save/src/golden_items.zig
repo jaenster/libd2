@@ -6,8 +6,8 @@ const std = @import("std");
 const save = @import("lib.zig");
 const itemtext = save.describe.itemtext;
 
-const sorc_bytes = @embedFile("testdata/seed/EpicSorc.d2s");
-const ama_bytes = @embedFile("testdata/seed/EpicAma.d2s");
+const sorc_bytes = @import("libd2-testdata").seed_epic_sorc;
+const ama_bytes = @import("libd2-testdata").seed_epic_ama;
 
 const Ctx = struct {
     arena: std.heap.ArenaAllocator,

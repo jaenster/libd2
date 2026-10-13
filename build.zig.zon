@@ -37,5 +37,6 @@
         "LICENSE",
         "docs",
         "scripts",
+        "testdata",
     },
 }

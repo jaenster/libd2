@@ -39,9 +39,12 @@ pub fn build(b: *std.Build) void {
     const opts = b.addOptions();
     opts.addOption([]const u8, "d2dir", b.option([]const u8, "d2dir", "Directory holding the 1.14d MPQs, for the golden tests") orelse "");
     opts.addOption([]const u8, "out", b.option([]const u8, "out", "Directory the golden tests write their PNGs to") orelse "");
-    // -Dupdate-golden rewrites src/testdata/golden-*.txt from what the code produces now, for review in the diff
+    // -Dupdate-golden rewrites testdata/itemdraw/ from what the code produces now, for review in the diff
     opts.addOption(bool, "update_golden", b.option(bool, "update-golden", "Rewrite the golden files instead of comparing") orelse false);
-    opts.addOption([]const u8, "testdata", b.path("src/testdata").getPath(b));
+    // the repository's shared test data; lazy, so a package fetched as a dependency never needs it
+    const td = b.lazyDependency("libd2_testdata", .{});
+    opts.addOption([]const u8, "testdata", if (td) |d| d.path("itemdraw").getPath(b) else "");
+    if (td) |d| tests.root_module.addImport("libd2-testdata", d.module("libd2-testdata"));
     tests.root_module.addOptions("build_options", opts);
     tests.root_module.addImport("d2-save", save);
     const run_tests = b.addRunArtifact(tests);

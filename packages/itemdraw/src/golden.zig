@@ -1,12 +1,12 @@
 //! Golden tests over real items: the two engine-played saves (EpicSorc, EpicAma) and a kit character
-//! (src/testdata/golden.kit, built with `charkit build golden.kit golden.d2s --name ItemDraw --seed 0x5eed`)
+//! (testdata/kits/golden.kit at the repository root, built into a save here)
 //! that adds set pieces worn and carried, a paladin shield, an ethereal runeword with charges, gemmed
 //! and socketed white items, loose runes, gems and jewels, a tome, a key and the cube.
 //!
 //! The text of every item is compared, top to bottom with its colours, with and without a viewer,
-//! against src/testdata/golden-text.txt; that needs no art. With -Dd2dir (the 1.14d MPQs) the icon, the
+//! against testdata/itemdraw/golden-text.txt; that needs no art. With -Dd2dir (the 1.14d MPQs) the icon, the
 //! tooltip and the card of every item are drawn as well, their RGBA hashed against
-//! src/testdata/golden-images.txt, and with -Dout written there as PNGs to look at.
+//! testdata/itemdraw/golden-images.txt, and with -Dout written there as PNGs to look at.
 //!
 //! -Dupdate-golden rewrites both files; the diff is the review.
 
@@ -18,11 +18,37 @@ const itemdraw = @import("lib.zig");
 
 const Character = struct { file: []const u8, bytes: []const u8, viewer: itemdraw.Viewer };
 
-const characters = [_]Character{
-    .{ .file = "EpicSorc", .bytes = @embedFile("testdata/EpicSorc.d2s"), .viewer = .{ .class = 1, .level = 99, .strength = 88, .dexterity = 25 } },
-    .{ .file = "EpicAma", .bytes = @embedFile("testdata/EpicAma.d2s"), .viewer = .{ .class = 0, .level = 91, .strength = 28, .dexterity = 81 } },
-    .{ .file = "golden", .bytes = @embedFile("testdata/golden.d2s"), .viewer = .{ .class = 3, .level = 90, .strength = 208, .dexterity = 80 } },
-};
+const testdata = @import("libd2-testdata");
+
+/// The kit character's save, built from its spec the way `charkit build golden.kit --name ItemDraw
+/// --seed 0x5eed` builds it (the build is deterministic), once per test run.
+var golden_save: ?[]u8 = null;
+
+fn goldenSave() ![]const u8 {
+    if (golden_save) |s| return s;
+    const gpa = std.heap.page_allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const spec = try save.charkit.parseSpec(arena.allocator(), testdata.golden_kit);
+    var maker = try save.kititem.Maker.init(gpa, .expansion, 0x5eed);
+    defer maker.deinit();
+    golden_save = try save.charkit.compose(gpa, spec, "ItemDraw", .{}, save.charkit.kitSource(&maker));
+    return golden_save.?;
+}
+
+fn chars() ![3]Character {
+    return .{
+        .{ .file = "EpicSorc", .bytes = testdata.seed_epic_sorc, .viewer = .{ .class = 1, .level = 99, .strength = 88, .dexterity = 25 } },
+        .{ .file = "EpicAma", .bytes = testdata.seed_epic_ama, .viewer = .{ .class = 0, .level = 91, .strength = 28, .dexterity = 81 } },
+        .{ .file = "golden", .bytes = try goldenSave(), .viewer = .{ .class = 3, .level = 90, .strength = 208, .dexterity = 80 } },
+    };
+}
+
+test "the kit character builds to the same save every time" {
+    const a = try goldenSave();
+    try std.testing.expectEqual(@as(usize, 1675), a.len);
+    try std.testing.expect(save.charkit.itemListFault((try save.parse(a)).items.bytes) == null);
+}
 
 const Group = struct { records: []const save.wire.Item, bytes: []const u8 };
 
@@ -117,7 +143,7 @@ test "every item of the golden characters describes as frozen, with and without 
     defer d.deinit();
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
-    for (characters) |c| {
+    for (try chars()) |c| {
         const gs = try groups(a, c.bytes);
         const viewer = try viewerOf(a, c, gs);
         for (gs, 0..) |g, i| {
@@ -151,7 +177,7 @@ test "every item of the golden characters draws as frozen (needs -Dd2dir)" {
     if (build_options.out.len != 0) std.Io.Dir.cwd().createDirPath(io, build_options.out) catch {};
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
-    for (characters) |c| {
+    for (try chars()) |c| {
         const gs = try groups(a, c.bytes);
         const viewer = try viewerOf(a, c, gs);
         for (gs, 0..) |g, i| {
@@ -181,7 +207,7 @@ test "every item of the golden characters draws as frozen (needs -Dd2dir)" {
 
 /// Items the language bindings check themselves against: their records and the text the C ABI gives for
 /// them (mode 2), neutral and seen by a level 80 sorceress with 100 strength and 50 dexterity. The Go
-/// and .NET tests carry copies of src/testdata/bindings/ and must reproduce these files byte for byte.
+/// and .NET tests read testdata/itemdraw/bindings/ and must reproduce these files byte for byte.
 const binding_items = [_]struct { char: usize, index: usize, name: []const u8 }{
     .{ .char = 1, .index = 8, .name = "thunderstroke" },
     .{ .char = 1, .index = 20, .name = "griffons-eye" },
@@ -212,7 +238,7 @@ test "the binding fixtures: records and the C ABI's text for them" {
     defer capi.d2itemdraw_destroy(ctx);
     if (build_options.update_golden) std.Io.Dir.cwd().createDirPath(io, build_options.testdata ++ "/bindings") catch {};
     for (binding_items) |b| {
-        const gs = try groups(a, characters[b.char].bytes);
+        const gs = try groups(a, (try chars())[b.char].bytes);
         const g = gs[b.index];
         const neutral = try capiText(ctx, a, g.bytes, null);
         const seen = try capiText(ctx, a, g.bytes, &binding_viewer);
@@ -249,7 +275,7 @@ test "the display lists of the binding items as JSON, and their text from the sa
     const drawer = try archiveDrawer(gpa, a, io, &assets);
     defer drawer.deinit();
     for (binding_items) |b| {
-        const g = (try groups(a, characters[b.char].bytes))[b.index];
+        const g = (try groups(a, (try chars())[b.char].bytes))[b.index];
         var l = try drawer.layoutCard(g.records, .{});
         defer l.deinit();
         const js = try l.json(gpa);
@@ -316,7 +342,7 @@ test "custom providers draw into the same layout at scale 2 and 4 (needs -Dd2dir
         .glyph = .{ .ctx = &dummy, .draw = BoxProvider.glyph },
         .sprite = .{ .ctx = &dummy, .draw = BoxProvider.sprite },
     };
-    const g = (try groups(a, characters[1].bytes))[41]; // Call to Arms, with five runes
+    const g = (try groups(a, (try chars())[1].bytes))[41]; // Call to Arms, with five runes
     var l = try drawer.layoutCard(g.records, .{});
     defer l.deinit();
     const before = try l.json(gpa);
@@ -380,7 +406,7 @@ test "the C ABI's layout, text and callback providers (needs -Dd2dir)" {
         const bytes = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}", .{ build_options.d2dir, m }));
         try std.testing.expectEqual(@as(i32, 0), capi.d2itemdraw_add_archive(ctx, bytes.ptr, bytes.len));
     }
-    const g = (try groups(a, characters[1].bytes))[20];
+    const g = (try groups(a, (try chars())[1].bytes))[20];
     const l = capi.d2itemdraw_layout(ctx, g.bytes.ptr, g.bytes.len, null, capi.kind_card, 0, 0) orelse return error.NoLayout;
     defer capi.d2itemdraw_layout_free(l);
     var jl: usize = 0;

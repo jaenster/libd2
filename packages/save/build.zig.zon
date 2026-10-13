@@ -11,6 +11,8 @@
         .d2_data = .{ .path = "../data" },
         .d2_item = .{ .path = "../item" },
         .d2_formats = .{ .path = "../formats" },
+        // the repository's shared test data; only the tests use it
+        .libd2_testdata = .{ .path = "../../testdata", .lazy = true },
     },
 
     .paths = .{"."},

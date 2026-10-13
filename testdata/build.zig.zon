@@ -1,0 +1,8 @@
+.{
+    .name = .libd2_testdata,
+    .version = "0.6.5",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xe7bb95cd3d1f4ec3,
+    .dependencies = .{},
+    .paths = .{"."},
+}
