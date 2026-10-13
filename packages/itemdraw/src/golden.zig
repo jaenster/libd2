@@ -356,3 +356,53 @@ test "custom providers draw into the same layout at scale 2 and 4 (needs -Dd2dir
     defer gpa.free(after);
     try std.testing.expectEqualStrings(before, after);
 }
+
+const CBox = struct {
+    var glyphs: usize = 0;
+    fn glyph(_: ?*anyopaque, g: *const capi.D2ItemDrawGlyphRef, scale: u32, w: u32, h: u32, rgba: [*]u8) callconv(.c) i32 {
+        if (w != @as(u32, @intCast(g.cell.w)) * scale or h != @as(u32, @intCast(g.cell.h)) * scale) return 0;
+        glyphs += 1;
+        @memset(rgba[0 .. w * h * 4], 255);
+        return 1;
+    }
+};
+
+test "the C ABI's layout, text and callback providers (needs -Dd2dir)" {
+    if (build_options.d2dir.len == 0) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var threaded = std.Io.Threaded.init_single_threaded;
+    const io = threaded.io();
+    const ctx = capi.d2itemdraw_create() orelse return error.NoContext;
+    defer capi.d2itemdraw_destroy(ctx);
+    for ([_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" }) |m| {
+        const bytes = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}", .{ build_options.d2dir, m }));
+        try std.testing.expectEqual(@as(i32, 0), capi.d2itemdraw_add_archive(ctx, bytes.ptr, bytes.len));
+    }
+    const g = (try groups(a, characters[1].bytes))[20];
+    const l = capi.d2itemdraw_layout(ctx, g.bytes.ptr, g.bytes.len, null, capi.kind_card, 0, 0) orelse return error.NoLayout;
+    defer capi.d2itemdraw_layout_free(l);
+    var jl: usize = 0;
+    const jp = capi.d2itemdraw_layout_json(l, &jl) orelse return error.NoJson;
+    try std.testing.expectEqualStrings(try readFile(io, a, build_options.testdata ++ "/bindings/griffons-eye.layout.json"), jp[0..jl]);
+    var t1: [2048]u8 = undefined;
+    var t2: [2048]u8 = undefined;
+    const n1 = capi.d2itemdraw_layout_text(l, 0, &t1, t1.len);
+    const n2 = capi.d2itemdraw_alt_text(ctx, g.bytes.ptr, g.bytes.len, null, 0, &t2, t2.len);
+    try std.testing.expect(n1 > 0);
+    try std.testing.expectEqualStrings(t1[0..@intCast(n1)], t2[0..@intCast(n2)]);
+    // the default raster through the ABI is the card the drawer makes
+    const img = capi.d2itemdraw_rasterize(ctx, l, null, 1) orelse return error.NoImage;
+    defer capi.d2itemdraw_image_free(img);
+    const card = capi.d2itemdraw_card(ctx, g.bytes.ptr, g.bytes.len, null) orelse return error.NoImage;
+    defer capi.d2itemdraw_image_free(card);
+    try std.testing.expectEqualSlices(u8, card.img.px, img.img.px);
+    // a C glyph callback at scale 4, sprites left to libd2
+    CBox.glyphs = 0;
+    const prov = capi.D2ItemDrawProviders{ .glyph = CBox.glyph };
+    const big = capi.d2itemdraw_rasterize(ctx, l, &prov, 4) orelse return error.NoImage;
+    defer capi.d2itemdraw_image_free(big);
+    try std.testing.expectEqual(@as(u32, @intCast(capi.d2itemdraw_layout_width(l) * 4)), capi.d2itemdraw_image_width(big));
+    try std.testing.expect(CBox.glyphs > 100);
+}

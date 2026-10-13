@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define D2ITEMDRAW_ABI_VERSION 1
+#define D2ITEMDRAW_ABI_VERSION 2
 
 typedef struct D2ItemDrawCtx D2ItemDrawCtx;
 typedef struct D2ItemDrawImage D2ItemDrawImage;
@@ -70,6 +70,73 @@ const uint8_t *d2itemdraw_image_rgba(const D2ItemDrawImage *img);
 /* PNG bytes, encoded on first call; valid until the image is freed. */
 const uint8_t *d2itemdraw_image_png(D2ItemDrawImage *img, size_t *out_len);
 void d2itemdraw_image_free(D2ItemDrawImage *img);
+
+/* ---- the display list and pluggable drawing ----
+ *
+ * A layout says where 1.14d puts everything (box, lines as glyph cells, the icon and socket frames), in
+ * the game's pixels, measured with the Font16 table. A rasterizer draws it at any scale through two
+ * providers; a provider paints one zeroed RGBA tile (the glyph cell or sprite rectangle times the
+ * scale) and returns non-zero, or returns 0 to leave it to libd2's own 1.14d DC6 art. */
+
+typedef struct D2ItemDrawLayout D2ItemDrawLayout;
+
+#define D2ITEMDRAW_KIND_ICON 0
+#define D2ITEMDRAW_KIND_TOOLTIP 1
+#define D2ITEMDRAW_KIND_CARD 2
+
+typedef struct D2ItemDrawRect {
+    int32_t x, y, w, h;
+} D2ItemDrawRect;
+
+typedef struct D2ItemDrawGlyphRef {
+    const char *font;    /* "font16" */
+    uint32_t code;       /* code point */
+    uint32_t frame;      /* Font16 DC6 frame */
+    uint32_t color;      /* text colour id 0..12 */
+    D2ItemDrawRect cell; /* in layout pixels */
+} D2ItemDrawGlyphRef;
+
+typedef struct D2ItemDrawSpriteRef {
+    const char *path;     /* "data/global/items/invamu1.dc6" */
+    uint32_t frame;
+    int32_t colormap_set; /* -1: no colour map */
+    int32_t colormap_row;
+    int32_t role;         /* 0 item, 1 socket frame, 2 socketed filler */
+    uint32_t ethereal;
+    D2ItemDrawRect rect;  /* in layout pixels */
+} D2ItemDrawSpriteRef;
+
+typedef int32_t (*d2itemdraw_glyph_fn)(void *user, const D2ItemDrawGlyphRef *glyph, uint32_t scale,
+                                       uint32_t w, uint32_t h, uint8_t *rgba);
+typedef int32_t (*d2itemdraw_sprite_fn)(void *user, const D2ItemDrawSpriteRef *sprite, uint32_t scale,
+                                        uint32_t w, uint32_t h, uint8_t *rgba);
+
+typedef struct D2ItemDrawProviders {
+    void *user;
+    d2itemdraw_glyph_fn glyph;   /* NULL: libd2's DC6 font */
+    d2itemdraw_sprite_fn sprite; /* NULL: libd2's DC6 inventory art */
+} D2ItemDrawProviders;
+
+/* kind: D2ITEMDRAW_KIND_*; background and sockets apply to the icon as in d2itemdraw_icon.
+ * Needs the art (font metrics, palette); NULL without it. */
+D2ItemDrawLayout *d2itemdraw_layout(D2ItemDrawCtx *ctx, const uint8_t *records, size_t len,
+                                    const D2ItemDrawOptions *opts, int32_t kind, int32_t background,
+                                    int32_t sockets);
+/* The display list as JSON; valid until the layout is freed. */
+const uint8_t *d2itemdraw_layout_json(D2ItemDrawLayout *layout, size_t *out_len);
+int32_t d2itemdraw_layout_width(const D2ItemDrawLayout *layout);
+int32_t d2itemdraw_layout_height(const D2ItemDrawLayout *layout);
+/* The layout's text, top to bottom, whole lines up to limit bytes (<= 0: 1024). Returns the length. */
+int32_t d2itemdraw_layout_text(const D2ItemDrawLayout *layout, int32_t limit, uint8_t *out, size_t cap);
+void d2itemdraw_layout_free(D2ItemDrawLayout *layout);
+
+/* The same text without a layout or any art (alt text): whole lines up to limit bytes (<= 0: 1024). */
+int32_t d2itemdraw_alt_text(D2ItemDrawCtx *ctx, const uint8_t *records, size_t len,
+                            const D2ItemDrawOptions *opts, int32_t limit, uint8_t *out, size_t cap);
+
+/* Draw a layout at scale (1 = the game's size). providers may be NULL. */
+D2ItemDrawImage *d2itemdraw_rasterize(D2ItemDrawCtx *ctx, const D2ItemDrawLayout *layout,
+                                      const D2ItemDrawProviders *providers, uint32_t scale);
 
 #ifdef __cplusplus
 }

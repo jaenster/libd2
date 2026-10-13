@@ -9,7 +9,7 @@ const std = @import("std");
 const lib = @import("lib.zig");
 const item = @import("d2-item");
 
-pub const abi_version: u32 = 1;
+pub const abi_version: u32 = 2;
 
 /// d2-core's process heap: smp_allocator natively, the coalescing free list on wasm.
 const gpa = @import("d2-core").heap.default;
@@ -248,6 +248,203 @@ pub export fn d2itemdraw_image_free(img: ?*Image) void {
     if (i.png) |p| gpa.free(p);
     i.img.deinit(gpa);
     gpa.destroy(i);
+}
+
+// -------------------------------------------------------------------------------------------------
+// layout and providers
+
+pub const kind_icon: i32 = 0;
+pub const kind_tooltip: i32 = 1;
+pub const kind_card: i32 = 2;
+
+pub const Layout = struct {
+    l: lib.Layout,
+    json: ?[]u8 = null,
+};
+
+pub const D2ItemDrawRect = extern struct { x: i32, y: i32, w: i32, h: i32 };
+
+/// The glyph a provider paints: font name (NUL-terminated), code point, Font16 frame, text colour id
+/// (0..12) and the glyph cell in layout pixels.
+pub const D2ItemDrawGlyphRef = extern struct {
+    font: [*:0]const u8,
+    code: u32,
+    frame: u32,
+    color: u32,
+    cell: D2ItemDrawRect,
+};
+
+/// The inventory frame a provider paints: game path (NUL-terminated), frame, colour map (-1: none),
+/// role (0 item, 1 socket frame, 2 socketed filler), ethereal, and the rectangle in layout pixels.
+pub const D2ItemDrawSpriteRef = extern struct {
+    path: [*:0]const u8,
+    frame: u32,
+    colormap_set: i32,
+    colormap_row: i32,
+    role: i32,
+    ethereal: u32,
+    rect: D2ItemDrawRect,
+};
+
+/// Paint into `rgba` (w*h*4 bytes, zeroed, straight alpha): the cell (or rectangle) at `scale`.
+/// Return non-zero when painted; zero hands the tile to libd2's own 1.14d provider.
+pub const GlyphFn = *const fn (user: ?*anyopaque, glyph: *const D2ItemDrawGlyphRef, scale: u32, w: u32, h: u32, rgba: [*]u8) callconv(.c) i32;
+pub const SpriteFn = *const fn (user: ?*anyopaque, sprite: *const D2ItemDrawSpriteRef, scale: u32, w: u32, h: u32, rgba: [*]u8) callconv(.c) i32;
+
+pub const D2ItemDrawProviders = extern struct {
+    user: ?*anyopaque = null,
+    glyph: ?GlyphFn = null,
+    sprite: ?SpriteFn = null,
+};
+
+/// The display list of an item: kind 0 icon (with `background` and `sockets` as in d2itemdraw_icon),
+/// 1 tooltip, 2 card. Needs the art (the font's metrics and the palette); NULL without it.
+pub export fn d2itemdraw_layout(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions, kind: i32, background: i32, sockets: i32) ?*Layout {
+    const c = ctx orelse return null;
+    const d = drawer(c, if (opts) |o| o.act else 1) orelse return null;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const recs = records(a, bytes, len) orelse return null;
+    const l = switch (kind) {
+        kind_icon => d.layoutIcon(recs, .{ .background = background_of(background), .sockets = sockets != 0 }),
+        kind_tooltip => blk: {
+            const desc = d.describe(a, recs, descOptions(opts)) catch return null;
+            break :blk d.layoutTooltip(desc);
+        },
+        else => d.layoutCard(recs, descOptions(opts)),
+    } catch return null;
+    const h = gpa.create(Layout) catch {
+        var x = l;
+        x.deinit();
+        return null;
+    };
+    h.* = .{ .l = l };
+    return h;
+}
+
+fn background_of(b: i32) lib.Background {
+    return switch (b) {
+        1 => .normal,
+        2 => .hovered,
+        3 => .unusable,
+        4 => .unidentified,
+        else => .none,
+    };
+}
+
+/// The display list as JSON (UTF-8). Valid until the layout is freed.
+pub export fn d2itemdraw_layout_json(layout: ?*Layout, out_len: ?*usize) ?[*]const u8 {
+    const h = layout orelse return null;
+    if (h.json == null) h.json = h.l.json(gpa) catch return null;
+    if (out_len) |l| l.* = h.json.?.len;
+    return h.json.?.ptr;
+}
+
+pub export fn d2itemdraw_layout_width(layout: ?*const Layout) i32 {
+    return if (layout) |h| h.l.width else 0;
+}
+
+pub export fn d2itemdraw_layout_height(layout: ?*const Layout) i32 {
+    return if (layout) |h| h.l.height else 0;
+}
+
+/// The layout's text, top to bottom, at most `limit` bytes (<= 0: 1024, what Discord takes as alt text).
+/// Writes at most `cap` bytes, returns the full length or a negative error.
+pub export fn d2itemdraw_layout_text(layout: ?*const Layout, limit: i32, out: ?[*]u8, cap: usize) i32 {
+    const h = layout orelse return -1;
+    return copyOut(h.l.text(gpa, limitOf(limit)) catch return -3, out, cap);
+}
+
+pub export fn d2itemdraw_layout_free(layout: ?*Layout) void {
+    const h = layout orelse return;
+    if (h.json) |j| gpa.free(j);
+    h.l.deinit();
+    gpa.destroy(h);
+}
+
+fn limitOf(limit: i32) usize {
+    return if (limit <= 0) 1024 else @intCast(limit);
+}
+
+fn copyOut(text: []u8, out: ?[*]u8, cap: usize) i32 {
+    defer gpa.free(text);
+    if (out) |dst| {
+        const n = @min(cap, text.len);
+        @memcpy(dst[0..n], text[0..n]);
+    }
+    return @intCast(text.len);
+}
+
+/// The alt text of an item: its description top to bottom, whole lines up to `limit` bytes (<= 0: 1024).
+/// The same lines the layout positions; it needs no art.
+pub export fn d2itemdraw_alt_text(ctx: ?*Ctx, bytes: ?[*]const u8, len: usize, opts: ?*const D2ItemDrawOptions, limit: i32, out: ?[*]u8, cap: usize) i32 {
+    const c = ctx orelse return -1;
+    var l = lib.Layout{ .arena = std.heap.ArenaAllocator.init(gpa), .kind = .tooltip, .width = 0, .height = 0 };
+    defer l.deinit();
+    const a = l.arena.allocator();
+    const recs = records(a, bytes, len) orelse return -2;
+    const desc = c.describer.describe(a, &recs[0], recs[1..], descOptions(opts)) catch return -3;
+    const ls = item.itemdesc.lines(a, desc) catch return -3;
+    var lines = a.alloc(lib.layout.Line, ls.len) catch return -3;
+    for (ls, 0..) |dl, i| {
+        var spans = a.alloc(lib.layout.Span, dl.spans.len) catch return -3;
+        for (dl.spans, 0..) |s, k| spans[k] = .{ .color = s.color, .text = s.text, .x = 0, .width = 0, .glyphs = &.{} };
+        lines[i] = .{ .x = 0, .baseline = 0, .width = 0, .spans = spans };
+    }
+    l.lines = lines;
+    return copyOut(l.text(gpa, limitOf(limit)) catch return -3, out, cap);
+}
+
+const Bridge = struct {
+    p: D2ItemDrawProviders,
+    path_buf: [256]u8 = undefined,
+
+    fn glyph(ctx: *anyopaque, font: []const u8, g: *const lib.layout.Glyph, scale: u32, t: lib.Tile) bool {
+        const self: *Bridge = @ptrCast(@alignCast(ctx));
+        const f = self.p.glyph orelse return false;
+        _ = font;
+        const ref = D2ItemDrawGlyphRef{
+            .font = lib.layout.font_name,
+            .code = g.code,
+            .frame = g.frame,
+            .color = g.color,
+            .cell = .{ .x = g.rect.x, .y = g.rect.y, .w = g.rect.w, .h = g.rect.h },
+        };
+        return f(self.p.user, &ref, scale, t.w, t.h, t.rgba.ptr) != 0;
+    }
+
+    fn sprite(ctx: *anyopaque, s: *const lib.layout.Sprite, scale: u32, t: lib.Tile) bool {
+        const self: *Bridge = @ptrCast(@alignCast(ctx));
+        const f = self.p.sprite orelse return false;
+        const n = @min(s.ref.path.len, self.path_buf.len - 1);
+        @memcpy(self.path_buf[0..n], s.ref.path[0..n]);
+        self.path_buf[n] = 0;
+        const ref = D2ItemDrawSpriteRef{
+            .path = self.path_buf[0..n :0],
+            .frame = s.ref.frame,
+            .colormap_set = if (s.ref.colormap) |c| c.set else -1,
+            .colormap_row = if (s.ref.colormap) |c| c.row else -1,
+            .role = @intFromEnum(s.ref.role),
+            .ethereal = @intFromBool(s.ethereal),
+            .rect = .{ .x = s.rect.x, .y = s.rect.y, .w = s.rect.w, .h = s.rect.h },
+        };
+        return f(self.p.user, &ref, scale, t.w, t.h, t.rgba.ptr) != 0;
+    }
+};
+
+/// Draw a layout at `scale` through `providers` (NULL, or a NULL callback: libd2's 1.14d DC6 art from
+/// the context's archives). A callback returning 0 also falls back to it.
+pub export fn d2itemdraw_rasterize(ctx: ?*Ctx, layout: ?*const Layout, providers: ?*const D2ItemDrawProviders, scale: u32) ?*Image {
+    const c = ctx orelse return null;
+    const h = layout orelse return null;
+    const fallback: lib.Providers = if (c.drawer) |d| d.defaults() else .{};
+    var bridge = Bridge{ .p = if (providers) |p| p.* else .{} };
+    const primary = lib.Providers{
+        .glyph = if (bridge.p.glyph != null) .{ .ctx = &bridge, .draw = Bridge.glyph } else null,
+        .sprite = if (bridge.p.sprite != null) .{ .ctx = &bridge, .draw = Bridge.sprite } else null,
+    };
+    return finish(lib.rasterize(gpa, &h.l, primary, fallback, scale) catch return null);
 }
 
 test "text without art: the description of a record built from the stock tables" {
