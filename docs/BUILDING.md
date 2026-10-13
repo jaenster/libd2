@@ -56,8 +56,11 @@ The Rust crate links one combined static library (`packages/wasm` built natively
 static library carries its own copy of the shared packages. npm ships two wasm modules: `libd2.wasm`
 (drlg, pf, net, util) and `items.wasm` (item, itemdraw), the second loaded only by `ItemDrawer`.
 
-Test fixtures every language reads live once, at `testdata/` in the repository root (saves, kits and
-`itemdraw/bindings`); the Zig packages get them as the `libd2_testdata` path dependency.
+Test data every language reads lives once, at `testdata/` in the repository root (saves, kits, the
+item-drawing goldens and layouts); the Zig packages get it as the `libd2_testdata` path dependency.
+What a generator can make is not committed: the kit character's save is composed in the test, and the
+binding fixtures (`testdata/itemdraw/bindings`, git-ignored) are written by `zig build fixtures` in
+packages/itemdraw, which CI runs before the Rust, Go, .NET and npm tests; without them those tests skip.
 
 ## Releases
 
