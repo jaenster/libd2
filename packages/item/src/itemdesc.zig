@@ -490,6 +490,14 @@ pub const Describer = struct {
             try out.s(self.keyText(self.t.sets.str(sr, "name")));
             try out.s(nl);
         }
+        var full = Text{ .gpa = a };
+        try self.setBonusByState(&full, it, set_key);
+        if (full.items().len != 0) {
+            try out.s(nl);
+            try out.s(color_code);
+            try out.s("4");
+            try out.s(full.items());
+        }
         try out.s(nl);
         var partial = Text{ .gpa = a };
         try self.setBonusLists(&partial, it);
@@ -504,6 +512,56 @@ pub const Describer = struct {
         try block_(&out, own.items(), 3);
         try out.s(stats.items());
         return .{ .text = out.items() };
+    }
+
+    /// SKILLDESC_AppendSetBonusTextByStateValue 0x004e6680: an equipped set item shows the bonuses its set
+    /// gives the wearer, the state list the engine builds from Sets.txt for the pieces worn: the two-piece
+    /// through five-piece lines for each count reached, and the full-set lines once every piece is worn.
+    fn setBonusByState(self: *const Describer, out: *Text, it: *Item, set_key: []const u8) !void {
+        const v = it.viewer orelse return;
+        if (it.host.dest != wire.Mode.equipped) return;
+        const sr = self.t.sets.findByStr("index", set_key) orelse return;
+        var members: usize = 0;
+        var worn: usize = 0;
+        for (self.set_rows, 0..) |r, set_id| {
+            if (!std.ascii.eqlIgnoreCase(self.t.set_items.str(r, "set"), set_key)) continue;
+            members += 1;
+            if (contains(v.set_items_worn, @intCast(set_id))) worn += 1;
+        }
+        if (worn < 2) return;
+        var rolled: std.ArrayListUnmanaged(properties.RolledStat) = .empty;
+        var seed = rng.Seed.init(1, 0x29a);
+        const sets = &self.t.sets;
+        var buf: [4][12]u8 = undefined;
+        var k: usize = 2;
+        while (k <= @min(worn, 5)) : (k += 1) {
+            for ([_]u8{ 'a', 'b' }) |ab| {
+                const code = sets.str(sr, std.fmt.bufPrint(&buf[0], "PCode{d}{c}", .{ k, ab }) catch unreachable);
+                if (code.len == 0) continue;
+                const par: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[1], "PParam{d}{c}", .{ k, ab }) catch unreachable));
+                const lo: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[2], "PMin{d}{c}", .{ k, ab }) catch unreachable));
+                const hi: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[3], "PMax{d}{c}", .{ k, ab }) catch unreachable));
+                try properties.applyProperty(it.a, &rolled, &seed, self.t, code, par, lo, hi, .{});
+            }
+        }
+        if (worn == members) {
+            var f: usize = 1;
+            while (f <= 8) : (f += 1) {
+                const code = sets.str(sr, std.fmt.bufPrint(&buf[0], "FCode{d}", .{f}) catch unreachable);
+                if (code.len == 0) continue;
+                const par: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[1], "FParam{d}", .{f}) catch unreachable));
+                const lo: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[2], "FMin{d}", .{f}) catch unreachable));
+                const hi: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[3], "FMax{d}", .{f}) catch unreachable));
+                try properties.applyProperty(it.a, &rolled, &seed, self.t, code, par, lo, hi, .{});
+            }
+        }
+        var list = StatList{};
+        for (rolled.items) |rs| {
+            const st: u16 = @intCast(rs.stat);
+            const vs: u5 = if (self.sd.row(st)) |r| @intCast(@min(self.t.item_stat_cost.int(r, "ValShift"), 16)) else 0;
+            try list.add(it.a, st, @intCast(@max(rs.layer, 0)), rs.value << vs);
+        }
+        try statdesc.describeList(&self.sd, out, &list, it.env(), true, false);
     }
 
     /// The partial set bonus lists of the item that the worn pieces switch on (SKILLDESC_AppendItemBuffText

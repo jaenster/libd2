@@ -1694,6 +1694,10 @@
   {3}+30 to Mana
   {3}All Resistances +15
   
+  {4}+25% Faster Hit Recovery
+  {4}Replenish Life +10
+  {4}65% Better Chance of Getting Magic Items
+  
   {4}Tal Rasha's Wrappings
   {2}Tal Rasha's Horadric Crest
   {2}Tal Rasha's Guardianship
@@ -1737,6 +1741,10 @@
   {3}Requirements -60%
   {2}+10% Faster Cast Rate
   
+  {4}+25% Faster Hit Recovery
+  {4}Replenish Life +10
+  {4}65% Better Chance of Getting Magic Items
+  
   {4}Tal Rasha's Wrappings
   {2}Tal Rasha's Horadric Crest
   {2}Tal Rasha's Guardianship
@@ -1769,6 +1777,10 @@
   {3}+42 to Mana
   {3}Lightning Resist +33%
   {2}+10% Faster Cast Rate
+  
+  {4}+25% Faster Hit Recovery
+  {4}Replenish Life +10
+  {4}65% Better Chance of Getting Magic Items
   
   {4}Tal Rasha's Wrappings
   {2}Tal Rasha's Horadric Crest
@@ -1809,6 +1821,10 @@
   {3}Requirements -20%
   {2}+10% Faster Cast Rate
   {2}+60 Defense
+  
+  {4}+25% Faster Hit Recovery
+  {4}Replenish Life +10
+  {4}65% Better Chance of Getting Magic Items
   
   {4}Tal Rasha's Wrappings
   {2}Tal Rasha's Horadric Crest
