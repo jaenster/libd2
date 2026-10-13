@@ -195,7 +195,7 @@ test "every item of the golden characters draws as frozen (needs -Dd2dir)" {
                 std.crypto.hash.sha2.Sha256.hash(p.px, &h, .{});
                 try out.print(a, "{s} {d:0>2} {s} {s} {d}x{d} {x}\n", .{ c.file, i, g.records[0].codeSlice(), k, p.w, p.h, h[0..8] });
                 if (build_options.out.len != 0) {
-                    const png = try p.png(gpa);
+                    const png = try itemdraw.png(gpa, &p);
                     defer gpa.free(png);
                     try writeFile(io, try std.fmt.allocPrint(a, "{s}/{s}-{d:0>2}-{s}-{s}.png", .{ build_options.out, c.file, i, g.records[0].codeSlice(), k }), png);
                 }
@@ -372,7 +372,7 @@ test "custom providers draw into the same layout at scale 2 and 4 (needs -Dd2dir
         try std.testing.expectEqual(@as(u8, 255), img.px[ob]);
         try std.testing.expectEqual(@as(u8, 0), img.px[ob + 1]);
         if (build_options.out.len != 0) {
-            const png = try img.png(gpa);
+            const png = try itemdraw.png(gpa, &img);
             defer gpa.free(png);
             try writeFile(io, try std.fmt.allocPrint(a, "{s}/custom-provider-x{d}.png", .{ build_options.out, scale }), png);
         }

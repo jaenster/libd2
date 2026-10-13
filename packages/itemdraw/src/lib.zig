@@ -14,14 +14,14 @@ const std = @import("std");
 const item = @import("d2-item");
 
 pub const assets = @import("assets.zig");
-pub const image = @import("image.zig");
+/// The picture type: d2-formats' RGBA canvas.
+pub const Image = @import("d2-formats").canvas.Canvas;
 pub const icon = @import("icon.zig");
 pub const draw = @import("draw.zig");
 pub const layout = @import("layout.zig");
 pub const raster = @import("raster.zig");
 
 pub const Assets = assets.Assets;
-pub const Image = image.Image;
 pub const Drawer = draw.Drawer;
 pub const Layout = layout.Layout;
 pub const Providers = raster.Providers;
@@ -40,11 +40,16 @@ pub const parseRecords = itemdesc.parseRecords;
 
 test {
     _ = assets;
-    _ = image;
+
     _ = icon;
     _ = draw;
     _ = layout;
     _ = raster;
     _ = @import("capi.zig");
     _ = @import("golden.zig");
+}
+
+/// A picture as PNG bytes, owned by the caller.
+pub fn png(gpa: std.mem.Allocator, img: *const Image) ![]u8 {
+    return @import("d2-util").png.encodeRgba(gpa, img.px, img.w, img.h);
 }

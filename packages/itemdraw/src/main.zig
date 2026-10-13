@@ -125,7 +125,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             else
                 try drawer.card(recs, opts);
             defer img.deinit(gpa);
-            const png = try img.png(gpa);
+            const png = try itemdraw.png(gpa, &img);
             defer gpa.free(png);
             const name = try std.fmt.allocPrint(a, "{s}/{d:0>2}-{s}-{s}.png", .{ out_dir, n, recs[0].codeSlice(), k });
             try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = name, .data = png });

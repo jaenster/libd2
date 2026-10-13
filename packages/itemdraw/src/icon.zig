@@ -19,8 +19,6 @@ const std = @import("std");
 const formats = @import("d2-formats");
 const item = @import("d2-item");
 const wire = item.wire;
-const image = @import("image.zig");
-const Image = image.Image;
 
 pub const cell: i32 = 29;
 

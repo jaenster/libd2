@@ -12,7 +12,7 @@
 
 const std = @import("std");
 const layout = @import("layout.zig");
-const Image = @import("image.zig").Image;
+const Image = @import("d2-formats").canvas.Canvas;
 
 /// A buffer to paint: `w*h*4` bytes of straight-alpha RGBA, rows top-down, zeroed.
 pub const Tile = struct { w: u32, h: u32, rgba: []u8 };
@@ -62,7 +62,7 @@ pub fn rasterize(gpa: std.mem.Allocator, l: *const layout.Layout, primary: Provi
                 if (fallback.glyph) |p| if (p.draw(p.ctx, layout.font_name, g, scale, t)) break :blk true;
                 break :blk false;
             };
-            if (drawn) composite(&img, t, g.rect.x * s, g.rect.y * s, 255);
+            if (drawn) img.composite(&Image{ .w = t.w, .h = t.h, .px = t.rgba }, g.rect.x * s, g.rect.y * s, 255);
         };
     }
     return img;
@@ -88,20 +88,5 @@ fn sprite(gpa: std.mem.Allocator, img: *Image, buf: *std.ArrayListUnmanaged(u8),
         break :blk false;
     };
     const s: i32 = @intCast(scale);
-    if (drawn) composite(img, t, sp.rect.x * s, sp.rect.y * s, sp.alpha);
-}
-
-/// Every painted pixel of `t` over the canvas at (x, y), its alpha times the draw mode's.
-fn composite(img: *Image, t: Tile, x: i32, y: i32, alpha: u8) void {
-    var row: u32 = 0;
-    while (row < t.h) : (row += 1) {
-        var col: u32 = 0;
-        while (col < t.w) : (col += 1) {
-            const o = (@as(usize, row) * t.w + col) * 4;
-            const ta: u32 = t.rgba[o + 3];
-            if (ta == 0) continue;
-            const a: u8 = @intCast((ta * alpha + 127) / 255);
-            img.put(x + @as(i32, @intCast(col)), y + @as(i32, @intCast(row)), t.rgba[o..][0..3].*, a);
-        }
-    }
+    if (drawn) img.composite(&Image{ .w = t.w, .h = t.h, .px = t.rgba }, sp.rect.x * s, sp.rect.y * s, sp.alpha);
 }

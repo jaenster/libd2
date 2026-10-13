@@ -238,7 +238,7 @@ pub export fn d2itemdraw_image_rgba(img: ?*const Image) ?[*]const u8 {
 /// The picture as a PNG, encoded on first use. Valid until the image is freed.
 pub export fn d2itemdraw_image_png(img: ?*Image, out_len: ?*usize) ?[*]const u8 {
     const i = img orelse return null;
-    if (i.png == null) i.png = i.img.png(gpa) catch return null;
+    if (i.png == null) i.png = lib.png(gpa, &i.img) catch return null;
     if (out_len) |l| l.* = i.png.?.len;
     return i.png.?.ptr;
 }

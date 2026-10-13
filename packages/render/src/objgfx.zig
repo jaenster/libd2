@@ -17,6 +17,7 @@ const std = @import("std");
 const dcc = @import("d2-formats").dcc;
 const cof = @import("d2-formats").cof;
 const dc6 = @import("d2-formats").dc6;
+const formats = @import("d2-formats");
 
 /// Object animation modes, indexed 0..7 to match Objects.txt FrameCnt0..7.
 pub const MODES = [8][]const u8{ "NU", "OP", "ON", "S1", "S2", "S3", "S4", "S5" };
@@ -182,41 +183,13 @@ pub fn composite(
     const cw: usize = @intCast(maxr - minl);
     const ch: usize = @intCast(maxb - mint);
 
-    // Composite indices, then map to RGBA.
-    const canvas = try alloc.alloc(u8, cw * ch);
-    defer alloc.free(canvas);
-    @memset(canvas, 0);
-    for (imgs.items) |im| {
-        const ox: usize = @intCast(im.left - minl);
-        const oy: usize = @intCast(im.top - mint);
-        const lw: usize = @intCast(im.w);
-        const lh: usize = @intCast(im.h);
-        var y: usize = 0;
-        while (y < lh) : (y += 1) {
-            var x: usize = 0;
-            while (x < lw) : (x += 1) {
-                const idx = im.indices[y * lw + x];
-                if (idx != 0) canvas[(oy + y) * cw + (ox + x)] = idx;
-            }
-        }
-    }
-
-    const rgba = try alloc.alloc(u8, cw * ch * 4);
-    for (canvas, 0..) |idx, i| {
-        const o = i * 4;
-        if (idx == 0) {
-            rgba[o] = 0;
-            rgba[o + 1] = 0;
-            rgba[o + 2] = 0;
-            rgba[o + 3] = 0;
-        } else {
-            const pi = @as(usize, idx) * 3;
-            rgba[o] = palette[pi + 2]; // R (palette is B,G,R)
-            rgba[o + 1] = palette[pi + 1]; // G
-            rgba[o + 2] = palette[pi]; // B
-            rgba[o + 3] = 255;
-        }
-    }
+    // Each layer solid over the last, back to front: an index wins where it is not 0, through the act
+    // palette; what no layer covers stays transparent.
+    var canvas = try formats.canvas.Canvas.init(alloc, @intCast(cw), @intCast(ch));
+    errdefer canvas.deinit(alloc);
+    const pal = try formats.palette.parseDat(palette);
+    for (imgs.items) |im| canvas.blitIndices(im.indices, @intCast(im.w), @intCast(im.h), &pal, im.left - minl, im.top - mint);
+    const rgba = canvas.px;
 
     return .{
         .width = @intCast(cw),
@@ -336,4 +309,38 @@ fn readFile(alloc: std.mem.Allocator, path: []const u8) ![]u8 {
     var threaded = std.Io.Threaded.init_single_threaded;
     const io = threaded.io();
     return std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(16 * 1024 * 1024));
+}
+
+test "layers drawn solid onto the canvas are the index composite mapped through the palette" {
+    const gpa = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(7);
+    const r = prng.random();
+    var pal_bytes: [768]u8 = undefined;
+    r.bytes(&pal_bytes);
+    const pal = try formats.palette.parseDat(&pal_bytes);
+    const W = 23;
+    const H = 17;
+    var layers: [4][]u8 = undefined;
+    var pos: [4][4]i32 = undefined; // left, top, w, h
+    for (&layers, 0..) |*l, i| {
+        const w: i32 = r.intRangeAtMost(i32, 1, 12);
+        const h: i32 = r.intRangeAtMost(i32, 1, 12);
+        pos[i] = .{ r.intRangeAtMost(i32, 0, W - w), r.intRangeAtMost(i32, 0, H - h), w, h };
+        l.* = try gpa.alloc(u8, @intCast(w * h));
+        for (l.*) |*p| p.* = if (r.boolean()) 0 else r.int(u8);
+    }
+    defer for (layers) |l| gpa.free(l);
+    // index space first, then the palette
+    var idx = [_]u8{0} ** (W * H);
+    for (layers, pos) |l, p| for (0..@intCast(p[3])) |y| for (0..@intCast(p[2])) |x| {
+        const v = l[y * @as(usize, @intCast(p[2])) + x];
+        if (v != 0) idx[(@as(usize, @intCast(p[1])) + y) * W + @as(usize, @intCast(p[0])) + x] = v;
+    };
+    var c = try formats.canvas.Canvas.init(gpa, W, H);
+    defer c.deinit(gpa);
+    for (layers, pos) |l, p| c.blitIndices(l, @intCast(p[2]), @intCast(p[3]), &pal, p[0], p[1]);
+    for (idx, 0..) |v, i| {
+        const want: [4]u8 = if (v == 0) .{ 0, 0, 0, 0 } else .{ pal_bytes[@as(usize, v) * 3 + 2], pal_bytes[@as(usize, v) * 3 + 1], pal_bytes[@as(usize, v) * 3], 255 };
+        try std.testing.expectEqualSlices(u8, &want, c.px[i * 4 ..][0..4]);
+    }
 }

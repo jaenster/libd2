@@ -13,12 +13,13 @@ const std = @import("std");
 const formats = @import("d2-formats");
 const item = @import("d2-item");
 const wire = item.wire;
-const image = @import("image.zig");
+const canvas = formats.canvas;
+const DrawMode = canvas.DrawMode;
 const layout = @import("layout.zig");
 const raster = @import("raster.zig");
 const icon_mod = @import("icon.zig");
 const Assets = @import("assets.zig").Assets;
-const Image = image.Image;
+const Image = canvas.Canvas;
 const itemdesc = item.itemdesc;
 
 pub const Options = struct {
@@ -184,7 +185,7 @@ pub const Drawer = struct {
         return .{
             .rect = rect,
             .ref = .{ .path = path, .frame = 0, .colormap = if (g.remap) |r| .{ .set = r.set, .row = r.row } else null, .role = role },
-            .alpha = if (g.ethereal) image.alpha_transparent else image.alpha_solid,
+            .alpha = if (g.ethereal) DrawMode.transparent.alpha() else DrawMode.solid.alpha(),
             .ethereal = g.ethereal,
         };
     }
@@ -195,12 +196,12 @@ pub const Drawer = struct {
         const kids = records[1..];
         const g = (try self.icons.gfx(a, it, kids)) orelse return;
         if (opts.background != .none) {
-            const c = self.pal.rgb(image.nearest(&self.pal, opts.background.rgb()));
+            const c = self.pal.rgb(formats.palette.nearest(&self.pal, opts.background.rgb()));
             var cells: std.ArrayListUnmanaged(layout.Fill) = .empty;
             var row: i32 = 0;
             while (row < g.h) : (row += 1) {
                 var col: i32 = 0;
-                while (col < g.w) : (col += 1) try cells.append(a, .{ .rect = .{ .x = x + col * icon_mod.cell, .y = y + row * icon_mod.cell, .w = icon_mod.cell, .h = icon_mod.cell }, .rgb = c, .alpha = image.alpha_very_transparent });
+                while (col < g.w) : (col += 1) try cells.append(a, .{ .rect = .{ .x = x + col * icon_mod.cell, .y = y + row * icon_mod.cell, .w = icon_mod.cell, .h = icon_mod.cell }, .rgb = c, .alpha = DrawMode.very_transparent.alpha() });
             }
             l.cells = cells.items;
         }
@@ -222,7 +223,7 @@ pub const Drawer = struct {
                 const f = &s.frames[0];
                 r = .{ .x = px - 1 + f.offset_x, .y = py + f.offset_y - @as(i32, @intCast(f.height)), .w = @intCast(f.width), .h = @intCast(f.height) };
             };
-            try socks.append(a, .{ .rect = r, .ref = .{ .path = socket_path, .role = .socket }, .alpha = image.alpha_very_transparent });
+            try socks.append(a, .{ .rect = r, .ref = .{ .path = socket_path, .role = .socket }, .alpha = DrawMode.very_transparent.alpha() });
             if (k < kids.len) {
                 if (try self.itemSprite(a, &kids[k], &.{}, px, py - icon_mod.cell, .filler)) |s| try socks.append(a, s);
                 k += 1;
@@ -288,7 +289,7 @@ pub const Drawer = struct {
     /// The box and the lines of the D2Win tooltip draw 0x00503000, the box's top-left at (left, top).
     fn placeText(self: *Drawer, a: std.mem.Allocator, l: *layout.Layout, desc: itemdesc.Desc, b: Box, left: i32, top: i32) !void {
         const m = self.metrics();
-        l.box = .{ .rect = .{ .x = left, .y = top, .w = b.w, .h = b.h }, .rgb = self.pal.rgb(0), .alpha = image.alpha_less_transparent };
+        l.box = .{ .rect = .{ .x = left, .y = top, .w = b.w, .h = b.h }, .rgb = self.pal.rgb(0), .alpha = DrawMode.less_transparent.alpha() };
         l.centered = desc.centered;
         l.base_color = desc.base_color;
         var out = try a.alloc(layout.Line, b.lines.len);
@@ -400,26 +401,8 @@ pub const Drawer = struct {
 
     /// One DC6 frame into a tile, point-sampled to the tile's scale.
     fn frameIntoTile(self: *const Drawer, f: *const formats.dc6.Frame, remap: ?[]const u8, scale: u32, t: raster.Tile) void {
-        var ty: u32 = 0;
-        while (ty < t.h) : (ty += 1) {
-            const sy = ty / scale;
-            if (sy >= f.height) break;
-            var tx: u32 = 0;
-            while (tx < t.w) : (tx += 1) {
-                const sx = tx / scale;
-                if (sx >= f.width) break;
-                const raw = f.indices[@as(usize, sy) * f.width + sx];
-                if (raw == 0) continue;
-                const idx = if (remap) |m| m[raw] else raw;
-                if (idx == 0) continue;
-                const c = self.pal.rgb(idx);
-                const o = (@as(usize, ty) * t.w + tx) * 4;
-                t.rgba[o] = c[0];
-                t.rgba[o + 1] = c[1];
-                t.rgba[o + 2] = c[2];
-                t.rgba[o + 3] = 255;
-            }
-        }
+        var view = Image{ .w = t.w, .h = t.h, .px = t.rgba };
+        view.blitAlpha(f.indices, f.width, f.height, &self.pal, 0, 0, remap, 255, scale);
     }
 
     fn drawGlyph(ctx: *anyopaque, font: []const u8, g: *const layout.Glyph, scale: u32, t: raster.Tile) bool {
