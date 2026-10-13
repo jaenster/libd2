@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     // standalone, because item's bulk is its excel tables and it shares almost nothing with the
     // map. So the set is chosen, not fixed, and a consumer who only generates maps does not ship
     // the item tables to say so.
-    const want = b.option([]const u8, "capi", "Subsystems to bundle: comma list of drlg,pf,item,net (default all)") orelse "drlg,pf,item,net";
+    const want = b.option([]const u8, "capi", "Subsystems to bundle: comma list of drlg,pf,item,net,itemdraw (default all)") orelse "drlg,pf,item,net,itemdraw";
     const has = struct {
         fn f(list: []const u8, name: []const u8) bool {
             var it = std.mem.splitScalar(u8, list, ',');
@@ -28,17 +28,20 @@ pub fn build(b: *std.Build) void {
     const with_pf = has(want, "pf");
     const with_item = has(want, "item");
     const with_net = has(want, "net");
+    const with_itemdraw = has(want, "itemdraw");
 
     const drlg = b.dependency("d2_drlg", .{ .target = target, .optimize = optimize });
     const pf = b.dependency("d2_pathfinding", .{ .target = target, .optimize = optimize });
     const item = b.dependency("d2_item", .{ .target = target, .optimize = optimize });
     const net = b.dependency("d2_net", .{ .target = target, .optimize = optimize });
+    const itemdraw = b.dependency("d2_itemdraw", .{ .target = target, .optimize = optimize });
 
     const opts = b.addOptions();
     opts.addOption(bool, "with_drlg", with_drlg);
     opts.addOption(bool, "with_pf", with_pf);
     opts.addOption(bool, "with_item", with_item);
     opts.addOption(bool, "with_net", with_net);
+    opts.addOption(bool, "with_itemdraw", with_itemdraw);
 
     const mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -52,6 +55,7 @@ pub fn build(b: *std.Build) void {
     mod.addImport("d2pf-capi", pf.module("d2pf-capi"));
     mod.addImport("d2item-capi", item.module("d2item-capi"));
     mod.addImport("d2net-capi", net.module("d2net-capi"));
+    mod.addImport("d2itemdraw-capi", itemdraw.module("d2itemdraw-capi"));
 
     if (target.result.cpu.arch.isWasm()) {
         // A reactor, not a command: no entry point, and every export kept.
@@ -74,5 +78,6 @@ pub fn build(b: *std.Build) void {
         if (with_pf) b.getInstallStep().dependOn(&b.addInstallHeaderFile(pf.path("include/d2pf.h"), "d2pf.h").step);
         if (with_item) b.getInstallStep().dependOn(&b.addInstallHeaderFile(item.path("include/d2item.h"), "d2item.h").step);
         if (with_net) b.getInstallStep().dependOn(&b.addInstallHeaderFile(net.path("include/d2net.h"), "d2net.h").step);
+        if (with_itemdraw) b.getInstallStep().dependOn(&b.addInstallHeaderFile(itemdraw.path("include/d2itemdraw.h"), "d2itemdraw.h").step);
     }
 }

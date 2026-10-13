@@ -18,4 +18,5 @@ comptime {
     if (opts.with_pf) _ = @import("d2pf-capi");
     if (opts.with_item) _ = @import("d2item-capi");
     if (opts.with_net) _ = @import("d2net-capi");
+    if (opts.with_itemdraw) _ = @import("d2itemdraw-capi");
 }

@@ -21,7 +21,7 @@
 //!
 //!   foundation   `util` (domain-free mechanics)   `data` (the excel tables)
 //!   leaves       `formats` (on-disk parsers, zero-dep)
-//!   domain       `core` (Seed, Stat, Unit, the Fog pool)  `item`  `save`
+//!   domain       `core` (Seed, Stat, Unit, the Fog pool)  `item`  `save`  `itemdraw`
 //!   world        `drlg` (map generation)  `world` (the live map)  `pathfinding`  `render`
 //!   protocol     `bnet` (Battle.net: before a game exists)  `net` (D2GS: once it does)
 //!   runtime      `game` (the simulation)  `client` (what a client has been told)
@@ -43,6 +43,10 @@ pub const item = @import("d2-item");
 
 /// The `.d2s` character save: the marker-delimited sections above the header.
 pub const save = @import("d2-save");
+
+/// An item drawn as the game draws it: the grid icon, the hover tooltip, both as on hover. The art
+/// comes from the caller's archives.
+pub const itemdraw = @import("d2-itemdraw");
 
 /// Map generation: the clean-room port of the 1.14d DRLG, byte-exact against the engine.
 pub const drlg = @import("d2-drlg");
@@ -77,6 +81,7 @@ test {
     _ = core;
     _ = item;
     _ = save;
+    _ = itemdraw;
     _ = drlg;
     _ = world;
     _ = pathfinding;

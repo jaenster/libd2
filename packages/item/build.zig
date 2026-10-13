@@ -101,6 +101,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "d2-core", .module = core_mod },
                 .{ .name = "d2-data", .module = data_mod },
                 .{ .name = "d2-util", .module = util_mod },
+                .{ .name = "d2-item", .module = items_mod },
             },
         });
         if (is_wasm) {
@@ -115,6 +116,7 @@ pub fn build(b: *std.Build) void {
             wasm.root_module.addImport("d2-core", core_mod);
             wasm.root_module.addImport("d2-data", data_mod);
             wasm.root_module.addImport("d2-util", util_mod);
+            wasm.root_module.addImport("d2-item", items_mod);
             wasm.entry = .disabled;
             wasm.rdynamic = true;
             b.installArtifact(wasm);
@@ -144,6 +146,8 @@ pub fn build(b: *std.Build) void {
             shared_lib.root_module.addImport("d2-core", core_mod);
             shared_lib.root_module.addImport("d2-data", data_mod);
             shared_lib.root_module.addImport("d2-util", util_mod);
+            static_lib.root_module.addImport("d2-item", items_mod);
+            shared_lib.root_module.addImport("d2-item", items_mod);
             b.installArtifact(static_lib);
             b.installArtifact(shared_lib);
             b.getInstallStep().dependOn(&b.addInstallHeaderFile(b.path("include/d2item.h"), "d2item.h").step);

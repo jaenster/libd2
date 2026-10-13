@@ -1288,9 +1288,11 @@ fn positionalFormat(out: *Text, tmpl: []const u8, args: []const []const u8) !voi
     }
 }
 
+/// UNICODE_FormatPossessiveName 0x005272b0, English: the name, then `'s ` (only `' ` after a name ending
+/// in a lower-case s), then the text.
 fn possessive(out: *Text, owner: []const u8, what: []const u8) !void {
     try out.s(owner);
-    try out.s("'s ");
+    try out.s(if (owner.len != 0 and owner[owner.len - 1] == 's') "' " else "'s ");
     try out.s(what);
 }
 

@@ -3,8 +3,8 @@
 //!   item-draw --mpq Patch_D2.mpq --mpq d2exp.mpq --mpq d2data.mpq --out DIR FILE.d2s|FILE.items
 //!             [--class N --level N --str N --dex N] [--act N]
 //!
-//! For every top-level item: `NN-code-icon.png`, `NN-code-tooltip.png`, `NN-code-card.png`, and one
-//! `items.txt` with each description top to bottom.
+//! For every top-level item: `NN-code.items` (its records), `NN-code-icon.png`, `NN-code-tooltip.png`,
+//! `NN-code-card.png`, and one `items.txt` with each description top to bottom and the engine's string.
 
 const std = @import("std");
 const itemdraw = @import("d2-itemdraw");
@@ -62,12 +62,23 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const a = arena.allocator();
     const bytes = readFile(io, gpa, path) catch fatal("cannot read {s}", .{path});
     var flat: std.ArrayListUnmanaged(save.wire.Item) = .empty;
+    // each record's own bytes, for the NN-code.items files the bindings' tests read
+    var raw: std.ArrayListUnmanaged([]const u8) = .empty;
     if (std.mem.endsWith(u8, path, ".d2s")) {
         const s = save.parse(bytes) catch fatal("{s} is not a save", .{path});
         var it = s.items.iterator();
-        while (it.next()) |w| try flat.append(a, w);
+        while (it.next()) |w| {
+            try flat.append(a, w);
+            try raw.append(a, s.items.bytes[it.pos - (w.bit_len + 7) / 8 .. it.pos]);
+        }
     } else {
         try flat.appendSlice(a, try itemdraw.parseRecords(a, bytes, 4096));
+        var pos: usize = 0;
+        for (flat.items) |w| {
+            const len = (w.bit_len + 7) / 8;
+            try raw.append(a, bytes[pos .. pos + len]);
+            pos += len;
+        }
     }
 
     // with a viewer, the set pieces in the file are the ones the character has, the equipped ones worn
@@ -89,7 +100,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     while (i < flat.items.len) : (n += 1) {
         const count = 1 + @min(flat.items[i].socketed_count, flat.items.len - i - 1);
         const recs = flat.items[i .. i + count];
+        const rec_bytes = try std.mem.concat(a, u8, raw.items[i .. i + count]);
         i += count;
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fmt.allocPrint(a, "{s}/{d:0>2}-{s}.items", .{ out_dir, n, recs[0].codeSlice() }), .data = rec_bytes });
         const opts = itemdraw.DescOptions{ .viewer = viewer };
         const desc = try drawer.describe(a, recs, opts);
         try listing.print(a, "== {d:0>2} {s}\n{s}\n", .{ n, recs[0].codeSlice(), try itemdraw.itemdesc.plain(a, desc) });
