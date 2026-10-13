@@ -487,9 +487,18 @@ pub const Describer = struct {
             const total = @divTrunc(base_ac * (100 + ed), 100) + flat;
             try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d}", .{ self.s.get("ItemStats1h"), total }), .color = if (ed != 0 or flat != 0 or eth) .blue else .white });
         }
-        if (max_dur > 0 and sum(entries, 152) == 0) {
+        // INV_FormatDurabilityText 0x00484e90 skips throwing weapons
+        const throwable = blk: {
+            var buf: [4096]u8 = undefined;
+            var fba = std.heap.FixedBufferAllocator.init(&buf);
+            const types = itemtype.typesForItem(fba.allocator(), &self.t, it.codeSlice()) catch break :blk false;
+            break :blk types.has("thro");
+        };
+        if (max_dur > 0 and sum(entries, 152) == 0 and !throwable) {
             const ofs = if (self.s.find("ItemStats1j")) |_| "of" else "of";
-            try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d} {s} {d}", .{ self.s.get("ItemStats1d"), cur_dur, ofs, max_dur }), .color = .white });
+            // the maximum includes item_maxdurability_percent of the base (op 13)
+            const shown_max = max_dur + @divTrunc(max_dur * sum(entries, 75), 100);
+            try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d} {s} {d}", .{ self.s.get("ItemStats1d"), cur_dur, ofs, shown_max }), .color = .white });
         }
         if (it.quantity > 0) try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d}", .{ self.s.get("ItemStats1i"), it.quantity }), .color = .white });
 
