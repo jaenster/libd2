@@ -23,7 +23,9 @@
 //!   waypoints all                        every waypoint of Acts I to V activated on all three difficulties
 //!   merc act=2 difficulty=nightmare style=defensive level=98
 //!   item <slot> | <kit line>             the player's item; slots: head amulet body rhand lhand rring lring belt
-//!                                        boots gloves swap-rhand swap-lhand, or `inv X,Y` (a cell of the inventory)
+//!                                        boots gloves swap-rhand swap-lhand, or `inv X,Y` (a cell of the inventory),
+//!                                        `stash X,Y` (a cell of the 6 by 8 stash) or `potion N` (belt cell N: column
+//!                                        N % 4, row N / 4)
 //!   merc-item <slot> | <kit line>        the mercenary's item; slots: head body rhand lhand
 //!
 //! Points: every level gives StatPerLevel stat points and one skill point; with the quests done each difficulty
@@ -84,7 +86,7 @@ pub const ItemSource = struct {
     make: *const fn (ctx: *anyopaque, gpa: std.mem.Allocator, line: []const u8, place: Place) anyerror!ItemRec,
 };
 
-pub const Slot = enum { head, amulet, body, rhand, lhand, rring, lring, belt, boots, gloves, swap_rhand, swap_lhand, inv };
+pub const Slot = enum { head, amulet, body, rhand, lhand, rring, lring, belt, boots, gloves, swap_rhand, swap_lhand, inv, stash, potion };
 
 fn bodyLoc(s: Slot) u8 {
     return switch (s) {
@@ -100,7 +102,7 @@ fn bodyLoc(s: Slot) u8 {
         .gloves => 10,
         .swap_rhand => 11,
         .swap_lhand => 12,
-        .inv => 0,
+        .inv, .stash, .potion => 0,
     };
 }
 
@@ -260,6 +262,17 @@ pub fn parseSpec(arena: std.mem.Allocator, text: []const u8) Error!Spec {
                 il.x = std.fmt.parseInt(u8, trim(cell[0..comma]), 10) catch return error.BadSlot;
                 il.y = std.fmt.parseInt(u8, trim(cell[comma + 1 ..]), 10) catch return error.BadSlot;
                 if (il.x >= 10 or il.y >= 4) return error.BadSlot;
+            } else if (std.mem.startsWith(u8, slot_text, "stash")) {
+                const cell = trim(slot_text[5..]);
+                const comma = std.mem.indexOfScalar(u8, cell, ',') orelse return error.BadSlot;
+                il.slot = .stash;
+                il.x = std.fmt.parseInt(u8, trim(cell[0..comma]), 10) catch return error.BadSlot;
+                il.y = std.fmt.parseInt(u8, trim(cell[comma + 1 ..]), 10) catch return error.BadSlot;
+                if (il.x >= 6 or il.y >= 8) return error.BadSlot;
+            } else if (std.mem.startsWith(u8, slot_text, "potion")) {
+                il.slot = .potion;
+                il.x = std.fmt.parseInt(u8, trim(slot_text[6..]), 10) catch return error.BadSlot;
+                if (il.x >= 16) return error.BadSlot;
             } else il.slot = slotByName(slot_text) orelse return error.BadSlot;
             if (std.mem.eql(u8, word, "merc-item")) {
                 switch (il.slot) {
@@ -473,12 +486,14 @@ pub fn compose(gpa: std.mem.Allocator, spec: Spec, name: []const u8, opts: Optio
     for (spec.items) |il| {
         const place: Place = switch (il.slot) {
             .inv => .{ .dest = 0, .x = il.x, .y = il.y, .page_raw = 1 },
+            .stash => .{ .dest = 0, .x = il.x, .y = il.y, .page_raw = 5 },
+            .potion => .{ .dest = 2, .x = il.x },
             else => .{ .dest = 1, .body_loc = bodyLoc(il.slot), .x = bodyLoc(il.slot) },
         };
         const made = source.make(source.ctx, gpa, il.kit, place) catch |e| return failItem(opts, il.kit, e);
         defer gpa.free(made.rec);
         try player.add(gpa, made);
-        if (il.slot != .inv and made.rec.len > 8) {
+        if (bodyLoc(il.slot) != 0 and made.rec.len > 8) {
             const it = itemOf(made.rec);
             if (reqStrength(gpa, it.codeSlice())) |req| {
                 const adj = if (it.flags & wire.flag.ETHEREAL != 0 and req > 10) req - 10 else req;
@@ -1014,6 +1029,39 @@ test "compose writes a save that reads back as the spec says" {
     try testing.expectEqual(@as(u32, 113), s.header.right_skill);
     // class order: Blessed Hammer is the 17th of the paladin's 30
     try testing.expectEqual(@as(u8, 22), s.skills.levels[16]);
+}
+
+test "stash cells and belt cells: the place bits an engine save gives them" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const spec = try parseSpec(arena.allocator(),
+        \\class barbarian
+        \\level 90
+        \\item stash 4,7 | item:r30
+        \\item potion 13 | item:rvl
+    );
+    try testing.expectEqual(Slot.stash, spec.items[0].slot);
+    try testing.expectEqual(@as(u8, 4), spec.items[0].x);
+    try testing.expectEqual(@as(u8, 7), spec.items[0].y);
+    try testing.expectEqual(Slot.potion, spec.items[1].slot);
+    try testing.expectEqual(@as(u8, 13), spec.items[1].x);
+    var maker = try kititem.Maker.init(testing.allocator, .expansion, 0x5eed);
+    defer maker.deinit();
+    const out = try compose(testing.allocator, spec, "TestBarb", .{}, kitSource(&maker));
+    defer testing.allocator.free(out);
+    const s = try sections.parse(out);
+    var it = s.items.iterator();
+    const stash = it.next().?;
+    try testing.expectEqual(@as(u8, 0), stash.dest);
+    try testing.expectEqual(@as(u8, 5), stash.page_raw);
+    try testing.expectEqual(@as(u16, 4), stash.x);
+    try testing.expectEqual(@as(u16, 7), stash.y);
+    const belt = it.next().?;
+    try testing.expectEqual(@as(u8, 2), belt.dest);
+    try testing.expectEqual(@as(u16, 13), belt.x);
+    // outside the 6 by 8 stash or the 16 belt cells
+    try testing.expectError(error.BadSlot, parseSpec(arena.allocator(), "class barbarian\nitem stash 6,0 | x"));
+    try testing.expectError(error.BadSlot, parseSpec(arena.allocator(), "class barbarian\nitem potion 16 | x"));
 }
 
 test "too many points are refused, and unspent ones stay unspent" {

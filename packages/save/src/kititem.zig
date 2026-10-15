@@ -270,7 +270,8 @@ pub const Maker = struct {
         const st = &m.t.set_items;
         var row: usize = st.rowCount();
         for (0..st.rowCount()) |r| {
-            if (std.ascii.eqlIgnoreCase(st.str(r, "index"), k.name)) {
+            // the table has names with a trailing space ("Immortal King's Soul Cage ")
+            if (std.ascii.eqlIgnoreCase(std.mem.trim(u8, st.str(r, "index"), " "), k.name)) {
                 row = r;
                 break;
             }
@@ -420,6 +421,8 @@ pub const Maker = struct {
     const Build = struct {
         it: wire.Item,
         seed: u32 = 0,
+        /// the kit's `qty`: the size of a stack of throwing weapons
+        qty: ?u16 = null,
         kids: std.ArrayListUnmanaged([]u8) = .empty,
 
         fn deinit(b: *Build, gpa: std.mem.Allocator) void {
@@ -450,8 +453,14 @@ pub const Maker = struct {
             it.has_variant = true;
             it.variant = if (k.variant) |v| (if (v >= n) return error.BadSpec else v) else @intCast(m.nextSeeds().unit.low % n);
         } else if (k.variant != null) return error.BadSpec;
+        // a stack (throwing weapons): no larger than the base's maxstack
+        if (k.qty) |q| {
+            const ref = m.t.itemRef(code) orelse return error.UnknownItem;
+            const max = m.t.itemTable(ref.table).int(ref.row, "maxstack");
+            if (q == 0 or q > max) return error.BadSpec;
+        }
         const seeds = m.nextSeeds();
-        return .{ .it = it, .seed = seeds.unit.low };
+        return .{ .it = it, .seed = seeds.unit.low, .qty = k.qty };
     }
 
     fn varGfx(m: *Maker, code: []const u8) ?u8 {
@@ -822,7 +831,7 @@ pub const Maker = struct {
         var ex = record.Extra{ .seed = b.seed };
         const code = b.it.codeSlice();
         if (core.itemtypes.lookup(code)) |t| if (t.stackable) {
-            ex.quantity = 1;
+            ex.quantity = b.qty orelse 1;
         };
         return m.finishWith(b, ex, code, name);
     }
@@ -1283,6 +1292,27 @@ test "tomes hold twenty scrolls, the Cube and a key are plain items" {
     var rune = try m.makeKit("item:r30");
     defer rune.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 14), rune.rec.len);
+}
+
+test "a stack of throwing weapons holds what the kit asks, up to the base's maxstack" {
+    var m = try Maker.init(testing.allocator, .expansion, 18);
+    defer m.deinit();
+    var d = try itemtext.Describer.init(testing.allocator);
+    defer d.deinit();
+    var jav = try m.makeKit("magic:7ja;prefix=Echoing;qty=60");
+    defer jav.deinit(testing.allocator);
+    var b = try back(&d, jav);
+    defer b.deinit();
+    try testing.expectEqual(@as(u16, 60), b.recs[0].quantity);
+    try testing.expectError(error.BadSpec, m.makeKit("magic:7ja;prefix=Echoing;qty=1000"));
+}
+
+test "a set item whose table name ends in a space is found by its name" {
+    var m = try Maker.init(testing.allocator, .expansion, 18);
+    defer m.deinit();
+    var cage = try m.makeKit("set:Immortal King's Soul Cage");
+    defer cage.deinit(testing.allocator);
+    try testing.expectEqual(@as(u8, 2), cage.w);
 }
 
 test "an amulet with the affixes named, each at the top of its range" {
