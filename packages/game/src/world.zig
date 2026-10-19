@@ -1,7 +1,7 @@
 //! DRLG (map generation) boundary for the standalone server.
 //!
 //! Thin adapter over the clean-room map generator at
-//! /Users/jaenster/code/zig/d2-drlg (imported as the `d2-drlg` module). It runs the
+//! /Users/jaenster/code/re/diablo2/d2-drlg (imported as the `d2-drlg` module). It runs the
 //! REAL, byte-exact D2 1.14d generation for a seed + level and reduces it to a
 //! LevelSummary (room/tile/collision counts + a sample of room rects) that the game
 //! host consumes. Faithful map generation — not a synthetic stand-in.

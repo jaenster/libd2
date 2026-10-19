@@ -39,7 +39,7 @@ pub fn main() !void {
     var threaded = std.Io.Threaded.init_single_threaded;
     const io = threaded.io();
     const cwd = std.Io.Dir.cwd();
-    const dir = if (getenv("D2_MPQ_DIR")) |z| std.mem.span(z) else "/Users/jaenster/code/d2-clean-114d";
+    const dir = if (getenv("D2_MPQ_DIR")) |z| std.mem.span(z) else "/Users/jaenster/code/re/diablo2/d2-clean-114d";
 
     const mpq_names = [_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" };
     var mpqs: std.ArrayList(HANDLE) = .empty;

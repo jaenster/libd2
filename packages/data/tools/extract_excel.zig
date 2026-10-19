@@ -93,7 +93,7 @@ pub fn main() !void {
     const io = threaded.io();
     const cwd = std.Io.Dir.cwd();
 
-    const default_dir = "/Users/jaenster/code/zig/d2gs/114clean";
+    const default_dir = "/Users/jaenster/code/re/diablo2/d2gs/114clean";
     const env_dir = if (getenv("D2_MPQ_DIR")) |z| std.mem.span(z) else default_dir;
 
     const mpq_names = [_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" };
