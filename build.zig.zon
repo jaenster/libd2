@@ -22,6 +22,7 @@
         .d2_bnet = .{ .path = "packages/bnet" },
         .d2_client = .{ .path = "packages/client" },
         .d2_render = .{ .path = "packages/render" },
+        .d2_gfx = .{ .path = "packages/gfx" },
     },
 
     .paths = .{

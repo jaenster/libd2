@@ -22,7 +22,7 @@
 //!   foundation   `util` (domain-free mechanics)   `data` (the excel tables)
 //!   leaves       `formats` (on-disk parsers, zero-dep)
 //!   domain       `core` (Seed, Stat, Unit, the Fog pool)  `item`  `save`
-//!   world        `drlg` (map generation)  `world` (the live map)  `pathfinding`  `render`
+//!   world        `drlg` (map generation)  `world` (the live map)  `pathfinding`  `render`  `gfx`
 //!   protocol     `bnet` (Battle.net: before a game exists)  `net` (D2GS: once it does)
 //!   runtime      `game` (the simulation)  `client` (what a client has been told)
 
@@ -56,6 +56,9 @@ pub const pathfinding = @import("d2-pathfinding");
 /// The automap and the DT1 tile-art render layer.
 pub const render = @import("d2-render");
 
+/// A scene drawn as the game's renderer draws it, on the CPU, and frames compared block by block.
+pub const gfx = @import("d2-gfx");
+
 /// Battle.net, before a game exists: BNCS logon and chat, MCP, BNFTP, and the hashes they carry.
 pub const bnet = @import("d2-bnet");
 
@@ -81,6 +84,7 @@ test {
     _ = world;
     _ = pathfinding;
     _ = render;
+    _ = gfx;
     _ = bnet;
     _ = net;
     _ = game;

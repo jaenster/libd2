@@ -1,0 +1,15 @@
+.{
+    .name = .d2_gfx,
+    .version = "0.6.5",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x4ac9f0776428a2ea,
+
+    // A scene drawn as the game's renderer draws it, on the CPU. Zero dependencies.
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

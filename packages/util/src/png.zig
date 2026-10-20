@@ -274,6 +274,98 @@ pub fn decodeIndexed(gpa: std.mem.Allocator, bytes: []const u8) !Indexed {
     return .{ .w = w, .h = h, .px = px };
 }
 
+pub const Rgba = struct {
+    w: u32,
+    h: u32,
+    /// w*h*4 bytes, R, G, B, A, top-down.
+    px: []u8,
+};
+
+/// Read an 8-bit truecolour PNG (RGB or RGBA, not interlaced) as RGBA; an RGB image reads with
+/// alpha 255. What a GL frame dump or a screenshot writes.
+pub fn decodeRgba(gpa: std.mem.Allocator, bytes: []const u8) !Rgba {
+    if (bytes.len < 8 or !std.mem.eql(u8, bytes[0..8], &signature)) return error.NotPng;
+    var off: usize = 8;
+    var w: u32 = 0;
+    var h: u32 = 0;
+    var channels: usize = 0;
+    var idat: std.ArrayListUnmanaged(u8) = .empty;
+    defer idat.deinit(gpa);
+    while (off + 12 <= bytes.len) {
+        const len = std.mem.readInt(u32, bytes[off..][0..4], .big);
+        const tag = bytes[off + 4 ..][0..4];
+        if (off + 12 + len > bytes.len) return error.TruncatedPng;
+        const body = bytes[off + 8 ..][0..len];
+        if (std.mem.eql(u8, tag, "IHDR")) {
+            if (len != 13) return error.BadPng;
+            w = std.mem.readInt(u32, body[0..4], .big);
+            h = std.mem.readInt(u32, body[4..8], .big);
+            if (body[8] != 8) return error.PngNotEightBit;
+            channels = switch (body[9]) {
+                2 => 3,
+                6 => 4,
+                else => return error.PngNotTruecolour,
+            };
+            if (body[12] != 0) return error.PngInterlaced;
+        } else if (std.mem.eql(u8, tag, "IDAT")) {
+            try idat.appendSlice(gpa, body);
+        } else if (std.mem.eql(u8, tag, "IEND")) break;
+        off += 12 + len;
+    }
+    if (w == 0 or h == 0) return error.BadPng;
+
+    const stride: usize = @as(usize, w) * channels;
+    var in: std.Io.Reader = .fixed(idat.items);
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    var d: flate.Decompress = .init(&in, .zlib, &.{});
+    _ = d.reader.streamRemaining(&aw.writer) catch return error.BadPng;
+    const raw = aw.written();
+    if (raw.len < (stride + 1) * h) return error.TruncatedPng;
+
+    const rows = try gpa.alloc(u8, stride * h);
+    defer gpa.free(rows);
+    for (0..h) |y| {
+        const filter = raw[y * (stride + 1)];
+        const src = raw[y * (stride + 1) + 1 ..][0..stride];
+        const dst = rows[y * stride ..][0..stride];
+        const prev: ?[]const u8 = if (y == 0) null else rows[(y - 1) * stride ..][0..stride];
+        for (0..stride) |x| {
+            const a: u8 = if (x >= channels) dst[x - channels] else 0;
+            const b: u8 = if (prev) |p| p[x] else 0;
+            const c: u8 = if (x >= channels) (if (prev) |p| p[x - channels] else 0) else 0;
+            dst[x] = src[x] +% switch (filter) {
+                0 => 0,
+                1 => a,
+                2 => b,
+                3 => @as(u8, @intCast((@as(u16, a) + b) / 2)),
+                4 => paeth(a, b, c),
+                else => return error.BadPng,
+            };
+        }
+    }
+    const px = try gpa.alloc(u8, @as(usize, w) * h * 4);
+    for (0..@as(usize, w) * h) |i| {
+        px[i * 4 + 0] = rows[i * channels + 0];
+        px[i * 4 + 1] = rows[i * channels + 1];
+        px[i * 4 + 2] = rows[i * channels + 2];
+        px[i * 4 + 3] = if (channels == 4) rows[i * channels + 3] else 255;
+    }
+    return .{ .w = w, .h = h, .px = px };
+}
+
+test "an RGBA PNG reads back to the same pixels" {
+    const gpa = std.testing.allocator;
+    var px: [9 * 4 * 4]u8 = undefined;
+    for (&px, 0..) |*p, i| p.* = @intCast((i * 53 + 7) % 256);
+    const png = try encodeRgbaDeflate(gpa, &px, 9, 4);
+    defer gpa.free(png);
+    const back = try decodeRgba(gpa, png);
+    defer gpa.free(back.px);
+    try std.testing.expectEqual(@as(u32, 9), back.w);
+    try std.testing.expectEqualSlices(u8, &px, back.px);
+}
+
 fn paeth(a: u8, b: u8, c: u8) u8 {
     const p: i16 = @as(i16, a) + b - c;
     const pa = @abs(p - a);

@@ -35,6 +35,17 @@ keys decode <key>        what a 16- or 26-character key decodes to
 this program. Verified against the game itself — blobs from the same `keystore` are accepted by the
 real `Bnclient.dll`, so what `show` prints is what the game would read.
 
+### `gfx` — a scene drawn as the renderer draws it, and frames compared
+
+Draws a scene file's views with `d2-gfx` on the CPU and judges two frames of one view block by
+block, the gate against the D2OpenGL renderer (docs/render.md).
+
+```sh
+gfx stats   SCENE                                the draws by pass and the DT1s
+gfx view    SCENE --views X,Y[;X,Y] --out DIR    view-X_Y.png per view (--gamma, --act-palettes, --folder)
+gfx compare A.png B.png [--out SIDE.png]         the 64 x 64 block gate; exit 1 when it fails
+```
+
 ### `sprite` — DC6, DCC and COF art, out of the archives and back in
 
 A headless CLI for pipelines: list and extract sprites from the MPQs, render a frame or a composed

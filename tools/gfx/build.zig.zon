@@ -1,0 +1,18 @@
+.{
+    .name = .d2_gfx_tool,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x24aa6ef212f26d86,
+
+    // Scenes drawn with d2-gfx, frames compared; PNGs through d2-util.
+    .dependencies = .{
+        .d2_gfx = .{ .path = "../../packages/gfx" },
+        .d2_util = .{ .path = "../../packages/util" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

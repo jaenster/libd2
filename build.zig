@@ -33,6 +33,7 @@ pub fn build(b: *std.Build) void {
         .{ .dep = "d2_bnet", .mod = "d2-bnet" },
         .{ .dep = "d2_client", .mod = "d2-client" },
         .{ .dep = "d2_render", .mod = "d2-render" },
+        .{ .dep = "d2_gfx", .mod = "d2-gfx" },
     };
     // The umbrella: one module named `libd2` with every package hanging off it by name, so a
     // consumer takes one dependency and one import instead of learning fourteen module names.
@@ -56,7 +57,7 @@ pub fn build(b: *std.Build) void {
     // `zig build test-umbrella` — proves the umbrella resolves every name it advertises.
     const umbrella_tests = b.addTest(.{ .root_module = umbrella });
 
-    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "item", "game", "net", "bnet", "data", "util", "world", "pathfinding", "save", "client" };
+    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "item", "game", "net", "bnet", "data", "util", "world", "pathfinding", "save", "client", "gfx" };
 
     const test_step = b.step("test", "Run every package's test suite");
     test_step.dependOn(&b.addRunArtifact(umbrella_tests).step);
