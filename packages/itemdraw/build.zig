@@ -78,6 +78,14 @@ pub fn build(b: *std.Build) void {
         const run = b.addRunArtifact(exe);
         if (b.args) |args| run.addArgs(args);
         b.step("run", "Draw the items of a save or record file to PNGs").dependOn(&run.step);
+
+        const mocks = b.addExecutable(.{ .name = "range-mocks", .root_module = b.createModule(.{
+            .root_source_file = b.path("src/range_mocks.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{ .{ .name = "d2-itemdraw", .module = mod }, .{ .name = "d2-save", .module = save } },
+        }) });
+        b.installArtifact(mocks);
     }
 
     // The C ABI, as the other packages ship it: a module the combined wasm links, and native libs.
