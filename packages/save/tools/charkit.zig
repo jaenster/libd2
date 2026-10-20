@@ -81,7 +81,9 @@ fn report(bytes: []const u8) !void {
     say("str {d} dex {d} vit {d} ene {d}  unspent stat points {d}, skill points {d}\n", .{ r.str, r.dex, r.vit, r.ene, r.unspent_stats, r.unspent_skills });
     say("life {d} mana {d} stamina {d}\n", .{ r.max_life, r.max_mana, r.max_stamina });
     say("skill points spent {d}\n", .{r.skill_points_spent});
-    say("quests of Acts I-V all done: {}, Act VI quest words used: {d}\n", .{ r.quests_done, r.act6_quest_words });
+    say("edition {s}, progression {d}\n", .{ if (r.classic) "classic" else "expansion", r.progression });
+    say("quests of Acts I-{s} all done: {}, Act VI quest words used: {d}\n", .{ if (r.classic) "IV" else "V", r.quests_done, r.act6_quest_words });
+    say("gold {d}, in the stash {d}\n", .{ r.gold, r.gold_stash });
     say("waypoints per difficulty: {d} {d} {d}\n", .{ r.waypoints[0], r.waypoints[1], r.waypoints[2] });
     say("items: player {d}, mercenary {d}; mercenary type {d}\n", .{ r.player_items, r.merc_items, r.merc_type });
     say("checksum ok: {}\n", .{r.checksum_ok});
@@ -89,9 +91,17 @@ fn report(bytes: []const u8) !void {
         const nm = h.name[0 .. std.mem.indexOfScalar(u8, &h.name, 0) orelse h.name.len];
         if (charkit.engineRefusal(bytes, nm)) |code| say("engine load check: REFUSED, code {d}\n", .{code}) else say("engine load check: ok\n", .{});
     if (save.parse(bytes)) |sv| {
-        if (charkit.itemListFault(sv.items.bytes)) |f| say("engine item load: REFUSED at top-level item {d}, byte {d} of the item section: {s}\n", .{ f.index, f.at, f.reason }) else say("engine item load: ok\n", .{});
+        if (charkit.itemListFaultIn(sv.items.bytes, !r.classic)) |f| say("engine item load: REFUSED at top-level item {d}, byte {d} of the item section: {s}\n", .{ f.index, f.at, f.reason }) else say("engine item load: ok\n", .{});
     } else |_| {}
     }
+}
+
+/// The item maker for a character of this edition: a Classic one makes only the pre-expansion rows, and saves them
+/// with the item version a Classic game gives its items (2; an expansion game 101).
+fn makerFor(classic: bool, seed: u32) !kititem.Maker {
+    var m = try kititem.Maker.init(gpa, if (classic) .classic else .expansion, seed);
+    if (classic) m.version = kititem.classic_item_version;
+    return m;
 }
 
 pub fn main(init: std.process.Init.Minimal) !void {
@@ -125,7 +135,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
         const spec = charkit.parseSpec(arena.allocator(), text) catch |e| fatal("spec: {s}", .{@errorName(e)});
-        var maker = try kititem.Maker.init(gpa, .expansion, seed);
+        const cur_classic = if (save.sections.d2s.parseHeader(cur)) |h| h.status & 0x20 == 0 else false;
+        var maker = try makerFor(spec.classic or cur_classic, seed);
         defer maker.deinit();
         var diag = charkit.Diag{};
         const out = charkit.patchItems(gpa, cur, spec, .{ .diag = &diag }, charkit.kitSource(&maker)) catch |e| {
@@ -151,7 +162,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const spec = charkit.parseSpec(arena.allocator(), text) catch |e| fatal("spec: {s}", .{@errorName(e)});
-    var maker = try kititem.Maker.init(gpa, .expansion, seed);
+    var maker = try makerFor(spec.classic, seed);
     defer maker.deinit();
     var diag = charkit.Diag{};
     const out = charkit.compose(gpa, spec, name, .{ .created = created, .diag = &diag }, charkit.kitSource(&maker)) catch |e| {

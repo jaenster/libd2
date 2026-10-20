@@ -13,6 +13,8 @@
 //! Spec format, one directive per line, `#` starts a comment:
 //!
 //!   class paladin                        amazon sorceress necromancer paladin barbarian druid assassin
+//!   edition classic                      a Classic character (the default is `expansion`): no expansion bit, the quests
+//!                                        and waypoints of Acts I to IV, no mercenary, and no "jf"/"kf" item sections
 //!   level 99
 //!   stats str=auto dex=80 ene=0 vit=rest total values; auto = what the equipped gear asks for; rest = every
 //!                                        point still unspent. A stat left out keeps the class's base.
@@ -22,6 +24,8 @@
 //!   quests complete                      every quest of Acts I to V done on all three difficulties (or `none`)
 //!   waypoints all                        every waypoint of Acts I to V activated on all three difficulties
 //!   merc act=2 difficulty=nightmare style=defensive level=98
+//!   gold 990000                          gold carried (the engine caps it at level * 10000)
+//!   gold-stash 2500000                   gold in the stash
 //!   item <slot> | <kit line>             the player's item; slots: head amulet body rhand lhand rring lring belt
 //!                                        boots gloves swap-rhand swap-lhand, or `inv X,Y` (a cell of the inventory),
 //!                                        `stash X,Y` (a cell of the 6 by 8 stash) or `potion N` (belt cell N: column
@@ -31,6 +35,7 @@
 //! Points: every level gives StatPerLevel stat points and one skill point; with the quests done each difficulty
 //! gives 5 stat points (Lam Esen's Tome) and 4 skill points (Den of Evil, Radament, Izual), and Potion of Life
 //! 20 life, which is what a level 99 character that did them all has: 505 stat points and 110 skill points.
+//! All of them are quests of Acts I to IV, so a Classic character gets the same.
 const std = @import("std");
 const data = @import("d2-data");
 const core = @import("d2-core");
@@ -161,6 +166,11 @@ pub const Spec = struct {
     merc: ?MercSpec = null,
     items: []const ItemLine = &.{},
     merc_items: []const ItemLine = &.{},
+    /// a Classic (pre-expansion) character: no expansion bit, Acts I to IV, no mercenary section
+    classic: bool = false,
+    /// gold carried and gold in the stash
+    gold: u32 = 0,
+    gold_stash: u32 = 0,
 };
 
 fn trim(s: []const u8) []const u8 {
@@ -228,6 +238,12 @@ pub fn parseSpec(arena: std.mem.Allocator, text: []const u8) Error!Spec {
             if (std.mem.eql(u8, rest, "complete")) spec.quests_done = true else if (std.mem.eql(u8, rest, "none")) spec.quests_done = false else return error.BadSpec;
         } else if (std.mem.eql(u8, word, "waypoints")) {
             if (std.mem.eql(u8, rest, "all")) spec.waypoints_all = true else if (std.mem.eql(u8, rest, "none")) spec.waypoints_all = false else return error.BadSpec;
+        } else if (std.mem.eql(u8, word, "edition")) {
+            if (std.mem.eql(u8, rest, "classic")) spec.classic = true else if (std.mem.eql(u8, rest, "expansion")) spec.classic = false else return error.BadSpec;
+        } else if (std.mem.eql(u8, word, "gold")) {
+            spec.gold = std.fmt.parseInt(u32, rest, 10) catch return error.BadSpec;
+        } else if (std.mem.eql(u8, word, "gold-stash")) {
+            spec.gold_stash = std.fmt.parseInt(u32, rest, 10) catch return error.BadSpec;
         } else if (std.mem.eql(u8, word, "merc")) {
             var m = MercSpec{};
             var it = std.mem.tokenizeAny(u8, rest, " \t");
@@ -401,6 +417,27 @@ const quests_done_words = [48]u16{
     0x9fed, 0x9ffd, 0x9ffd, 0x9ffd, 0x9ffd, 0x8001, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
 };
 
+/// The header's expansion bit (status byte 0x24).
+const d2s_status_expansion: u8 = 0x20;
+
+/// How many words of a difficulty's quest block a character that did everything has filled: Acts I to V (words 0..41)
+/// in the expansion, Acts I to IV (words 0..27: the intros, the quests and the "travelled to the next act" words up to
+/// Hell's Forge) in Classic, where word 28, "travelled to Act V", and the Act V block stay empty.
+fn questWords(classic: bool) usize {
+    return if (classic) 28 else 42;
+}
+
+/// The waypoints of Acts I to V (39) or, in Classic, of Acts I to IV (9 + 9 + 9 + 3).
+fn waypointCount(classic: bool) usize {
+    return if (classic) 30 else 39;
+}
+
+/// The most gold a character carries (level * 10000) and keeps in the stash (1.14d).
+pub fn goldMax(level: u8) u32 {
+    return @as(u32, level) * 10000;
+}
+pub const gold_stash_max: u32 = 2_500_000;
+
 /// The "w4" body of a character that met and greeted everyone.
 const npc_body = [49]u8{
     0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00,
@@ -475,6 +512,10 @@ fn failItem(opts: Options, line: []const u8, e: anyerror) Error {
 /// Make the whole save. The result is owned by the caller.
 pub fn compose(gpa: std.mem.Allocator, spec: Spec, name: []const u8, opts: Options, source: ItemSource) Error![]u8 {
     if (name.len == 0 or name.len > d2s.name_max) return error.BadName;
+    // Classic has no druid or assassin, and keeps no mercenary in the save
+    if (spec.classic and spec.class >= 5) return error.BadClass;
+    if (spec.classic and (spec.merc != null or spec.merc_items.len != 0)) return error.BadSpec;
+    if (spec.gold > goldMax(spec.level) or spec.gold_stash > gold_stash_max) return error.BadSpec;
     const base = try classBase(gpa, spec.class, spec.level);
 
     // the items first: the stats can depend on what is worn
@@ -563,9 +604,10 @@ pub fn compose(gpa: std.mem.Allocator, spec: Spec, name: []const u8, opts: Optio
     var hdr: [d2s.header_size]u8 = undefined;
     if (!d2s.newSave(&hdr, name, spec.class, 0, opts.created)) return error.BadName;
     h.* = d2s.parseHeader(&hdr).?;
-    h.status = opts.status;
+    h.status = if (spec.classic) opts.status & ~@as(u8, d2s_status_expansion) else opts.status;
     h.level = spec.level;
-    h.progression = if (spec.quests_done) 15 else 0;
+    // the title: five acts a difficulty in the expansion, four in Classic
+    h.progression = if (!spec.quests_done) 0 else if (spec.classic) 12 else 15;
     h.difficulty = if (spec.quests_done) .{ 0, 0, 0x80 } else .{ 0x80, 0, 0 };
     h.map_id = 0x24bb5888;
     if (spec.left_skill.len != 0) h.left_skill = try skillId(gpa, spec.left_skill);
@@ -584,7 +626,7 @@ pub fn compose(gpa: std.mem.Allocator, spec: Spec, name: []const u8, opts: Optio
     save.quests.head = .{ 0x06, 0, 0, 0, 0x2a, 0x01 };
     if (spec.quests_done) {
         for (&save.quests.blocks) |*blk| {
-            for (quests_done_words, 0..) |w, i| std.mem.writeInt(u16, blk[i * 2 ..][0..2], w, .little);
+            for (quests_done_words[0..questWords(spec.classic)], 0..) |w, i| std.mem.writeInt(u16, blk[i * 2 ..][0..2], w, .little);
         }
     }
     save.waypoints.version = 1;
@@ -595,7 +637,7 @@ pub fn compose(gpa: std.mem.Allocator, spec: Spec, name: []const u8, opts: Optio
     }
     save.waypoints.tail = 1;
     if (spec.waypoints_all) {
-        for (0..3) |d| for (0..39) |i| save.waypoints.set(@enumFromInt(d), @intCast(i), true);
+        for (0..3) |d| for (0..waypointCount(spec.classic)) |i| save.waypoints.set(@enumFromInt(d), @intCast(i), true);
     }
     save.npcs.body = npc_body;
 
@@ -614,23 +656,28 @@ pub fn compose(gpa: std.mem.Allocator, spec: Spec, name: []const u8, opts: Optio
     a.setRaw(11, stamina);
     a.setRaw(12, spec.level);
     a.setRaw(13, base.experience);
+    if (spec.gold > 0) a.setRaw(14, spec.gold);
+    if (spec.gold_stash > 0) a.setRaw(15, spec.gold_stash);
     save.attributes = a;
     save.skills = sk;
 
-    // the item tail: the player's list, the corpse list (empty), the mercenary's list and the golem flag
+    // the item tail: the player's list, the corpse list (empty), and in the expansion the mercenary's list and the
+    // golem flag (the engine reads and writes those two sections only in an expansion game)
     var tail: std.ArrayList(u8) = .empty;
     defer tail.deinit(gpa);
     tail.appendSlice(gpa, "JM") catch return error.OutOfMemory;
     tail.appendSlice(gpa, &std.mem.toBytes(@as(u16, @intCast(player.count)))) catch return error.OutOfMemory;
     tail.appendSlice(gpa, player.bytes.items) catch return error.OutOfMemory;
     tail.appendSlice(gpa, "JM\x00\x00") catch return error.OutOfMemory;
-    tail.appendSlice(gpa, "jf") catch return error.OutOfMemory;
-    if (spec.merc != null) {
-        tail.appendSlice(gpa, "JM") catch return error.OutOfMemory;
-        tail.appendSlice(gpa, &std.mem.toBytes(@as(u16, @intCast(merc.count)))) catch return error.OutOfMemory;
-        tail.appendSlice(gpa, merc.bytes.items) catch return error.OutOfMemory;
+    if (!spec.classic) {
+        tail.appendSlice(gpa, "jf") catch return error.OutOfMemory;
+        if (spec.merc != null) {
+            tail.appendSlice(gpa, "JM") catch return error.OutOfMemory;
+            tail.appendSlice(gpa, &std.mem.toBytes(@as(u16, @intCast(merc.count)))) catch return error.OutOfMemory;
+            tail.appendSlice(gpa, merc.bytes.items) catch return error.OutOfMemory;
+        }
+        tail.appendSlice(gpa, "kf\x00") catch return error.OutOfMemory;
     }
-    tail.appendSlice(gpa, "kf\x00") catch return error.OutOfMemory;
     save.items = .{ .bytes = tail.items };
 
     const out = gpa.alloc(u8, save.byteLen()) catch return error.OutOfMemory;
@@ -783,6 +830,11 @@ pub const Readback = struct {
     merc_items: u16,
     merc_type: u16,
     checksum_ok: bool,
+    /// no expansion bit: the quests and waypoints are counted for Acts I to IV
+    classic: bool = false,
+    progression: u8 = 0,
+    gold: u32 = 0,
+    gold_stash: u32 = 0,
 };
 
 /// Where the engine's player item load (PLRSAVE_LoadItemListFromStream @0x5335e0) would stop with its error.
@@ -834,12 +886,21 @@ fn walkList(items: []const u8, start: usize, end: *usize) ?ItemFault {
 /// then in an expansion save "jf" and the mercenary's list and "kf" and the golem flag. Null when it all loads and
 /// ends at the end of the file.
 pub fn itemListFault(items: []const u8) ?ItemFault {
+    return itemListFaultIn(items, true);
+}
+
+/// `itemListFault` for a save of either edition: a Classic save ends after the corpse list.
+pub fn itemListFaultIn(items: []const u8, expansion: bool) ?ItemFault {
     var pos: usize = 0;
     if (walkList(items, 0, &pos)) |f| return f;
     if (pos + 4 > items.len or !std.mem.eql(u8, items[pos..][0..2], "JM")) return .{ .index = 0, .at = pos, .reason = "no corpse list after the player list" };
     if (std.mem.readInt(u16, items[pos + 2 ..][0..2], .little) > 1) return .{ .index = 0, .at = pos, .reason = "corpse count above one" };
     if (std.mem.readInt(u16, items[pos + 2 ..][0..2], .little) == 1) return null; // a corpse's items are not walked here
     pos += 4;
+    if (!expansion) {
+        if (pos != items.len) return .{ .index = 0, .at = pos, .reason = "bytes after the corpse list of a Classic save" };
+        return null;
+    }
     if (pos + 2 > items.len or !std.mem.eql(u8, items[pos..][0..2], "jf")) return .{ .index = 0, .at = pos, .reason = "no mercenary section (jf)" };
     pos += 2;
     var end: usize = 0;
@@ -873,11 +934,14 @@ pub fn readback(bytes: []const u8) !Readback {
     const a = s.attributes.attributes();
     var spent: u32 = 0;
     for (s.skills.levels) |l| spent += l;
+    const classic = s.header.status & d2s_status_expansion == 0;
+    const filled = questWords(classic);
     var done = true;
     var act6: u32 = 0;
     for (0..3) |d| {
         for (0..42) |i| {
-            if (std.mem.readInt(u16, s.quests.blocks[d][i * 2 ..][0..2], .little) != quests_done_words[i]) done = false;
+            const want: u16 = if (i < filled) quests_done_words[i] else 0;
+            if (std.mem.readInt(u16, s.quests.blocks[d][i * 2 ..][0..2], .little) != want) done = false;
         }
         for (42..48) |i| {
             if (std.mem.readInt(u16, s.quests.blocks[d][i * 2 ..][0..2], .little) != 0) act6 += 1;
@@ -912,6 +976,10 @@ pub fn readback(bytes: []const u8) !Readback {
         .merc_items = merc_items,
         .merc_type = s.header.merc_type,
         .checksum_ok = d2s.verifyChecksum(bytes),
+        .classic = classic,
+        .progression = s.header.progression,
+        .gold = a.gold,
+        .gold_stash = a.goldbank,
     };
 }
 
@@ -1029,6 +1097,54 @@ test "compose writes a save that reads back as the spec says" {
     try testing.expectEqual(@as(u32, 113), s.header.right_skill);
     // class order: Blessed Hammer is the 17th of the paladin's 30
     try testing.expectEqual(@as(u8, 22), s.skills.levels[16]);
+}
+
+test "a Classic character: no expansion bit, Acts I to IV, no mercenary sections, and gold" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const spec = try parseSpec(arena.allocator(),
+        \\class paladin
+        \\edition classic
+        \\level 99
+        \\stats str=70 dex=110 vit=rest
+        \\skills smite=20
+        \\quests complete
+        \\waypoints all
+        \\gold 990000
+        \\gold-stash 1000000
+    );
+    try testing.expect(spec.classic);
+    const out = try compose(testing.allocator, spec, "ClassicPally", .{}, fake_source);
+    defer testing.allocator.free(out);
+    const h = d2s.parseHeader(out).?;
+    try testing.expectEqual(@as(u8, 0), h.status & 0x20);
+    try testing.expectEqual(@as(u8, 12), h.progression);
+    const r = try readback(out);
+    try testing.expect(r.classic and r.quests_done and r.checksum_ok);
+    // the same points as the expansion: every one of them is a quest of Acts I to IV
+    try testing.expectEqual(@as(u32, 25 + (505 - 45 - 90)), r.vit);
+    try testing.expectEqual(@as(u32, 90), r.unspent_skills);
+    try testing.expectEqual([3]u32{ 30, 30, 30 }, r.waypoints);
+    try testing.expectEqual(@as(u32, 990000), r.gold);
+    try testing.expectEqual(@as(u32, 1000000), r.gold_stash);
+    // nothing of Act V: "travelled to Act V" and the Act V block stay empty
+    const s = try sections.parse(out);
+    for (0..3) |d| for (28..48) |i| try testing.expectEqual(@as(u16, 0), std.mem.readInt(u16, s.quests.blocks[d][i * 2 ..][0..2], .little));
+    // the item section ends after the (empty) corpse list
+    try testing.expect(std.mem.endsWith(u8, s.items.bytes, "JM\x00\x00JM\x00\x00"));
+    try testing.expectEqual(@as(?ItemFault, null), itemListFaultIn(s.items.bytes, false));
+    try testing.expect(itemListFaultIn(s.items.bytes, true) != null);
+}
+
+test "Classic refuses a mercenary, a druid, and more gold than the level carries" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const merc = try parseSpec(arena.allocator(), "class paladin\nedition classic\nmerc act=2 difficulty=nightmare style=defensive level=98\n");
+    try testing.expectError(error.BadSpec, compose(testing.allocator, merc, "NoMerc", .{}, fake_source));
+    const druid = try parseSpec(arena.allocator(), "class druid\nedition classic\n");
+    try testing.expectError(error.BadClass, compose(testing.allocator, druid, "NoDruid", .{}, fake_source));
+    const rich = try parseSpec(arena.allocator(), "class paladin\nlevel 10\ngold 100001\n");
+    try testing.expectError(error.BadSpec, compose(testing.allocator, rich, "TooRich", .{}, fake_source));
 }
 
 test "stash cells and belt cells: the place bits an engine save gives them" {

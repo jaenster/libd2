@@ -78,6 +78,9 @@ pub const flags_identified: u32 = 0x00800010;
 pub const flags_simple: u32 = 0x00a00010;
 /// The item version the game writes (1.14d).
 pub const item_version: u16 = 101;
+/// The item version a Classic game gives the items it makes (the game's item format: 101 in an expansion game, 2 in a
+/// Classic one).
+pub const classic_item_version: u16 = 2;
 /// The item page of a shared stash page's items, as the record keeps it (page + 1).
 pub const page_raw_stash: u8 = 5;
 pub const page_raw_inventory: u8 = 1;
