@@ -33,6 +33,9 @@ const properties = @import("properties.zig");
 const rng = @import("rng.zig");
 const itemtype = @import("itemtype.zig");
 const statdesc = @import("statdesc.zig");
+const ranges_mod = @import("ranges.zig");
+pub const range = ranges_mod;
+const affix = @import("affix.zig");
 
 const StatList = statdesc.StatList;
 const Text = statdesc.Text;
@@ -59,6 +62,8 @@ pub const Options = struct {
     /// The item is in the viewer's own inventory panel (page 0): tomes and quest items show their
     /// right-click lines.
     own_inventory: bool = true,
+    /// Each rolled stat line followed by the range it can roll in (ranges.zig).
+    ranges: ranges_mod.Style = .off,
 };
 
 pub const Desc = struct {
@@ -253,6 +258,12 @@ pub const Describer = struct {
         return self.generalCard(arena, &it);
     }
 
+    /// What each of the item's own stats can roll in (ranges.zig), from the rows it and its sockets were made from.
+    pub fn rangesFor(self: *const Describer, arena: std.mem.Allocator, host: *const wire.Item, kids: []const wire.Item) !range.Ranges {
+        const it = try Item.init(self, arena, host, kids, .{ .ranges = .grey });
+        return it.rolls orelse .{};
+    }
+
     // ---------------------------------------------------------------------------------------------
     // the general card (LoadItemDesc)
 
@@ -356,7 +367,7 @@ pub const Describer = struct {
             try unident.s(nl);
         } else {
             if (h.dest != wire.Mode.socketed) try self.quantityLine(&stat_cost, it);
-            try statdesc.describeList(&self.sd, &props, &it.list, it.env(), true, true);
+            try statdesc.describeList(&self.sd, &props, &it.list, it.ownEnv(), true, true);
         }
         try self.spellDesc(&stat_cost, it);
 
@@ -508,7 +519,7 @@ pub const Describer = struct {
         }
         var own = Text{ .gpa = a };
         if (h.flags & wire.flag.SOCKETED != 0) try self.etherealSocketed(&own, h);
-        try statdesc.describeList(&self.sd, &own, &it.list, it.env(), true, true);
+        try statdesc.describeList(&self.sd, &own, &it.list, it.ownEnv(), true, true);
         try block_(&out, own.items(), 3);
         try out.s(stats.items());
         return .{ .text = out.items() };
@@ -765,7 +776,29 @@ pub const Describer = struct {
             try out.s("3");
         }
         try out.int(ac);
+        if (it.opts.ranges != .off) try defenseRange(out, it, ac);
         try out.s(self.idText(sid.newline));
+    }
+
+    /// The base defense is rolled minac..maxac (x3/2 ethereal), plus what the rows add flat. An item with enhanced
+    /// defense gets none: the percentage is applied to a base the record does not keep apart.
+    fn defenseRange(out: *Text, it: *Item, ac: i32) !void {
+        if (it.host.quality == .low or it.list.get(16, 0) != 0) return;
+        var lo: i32 = @intCast(it.bt.int(it.row, "minac"));
+        var hi: i32 = @intCast(it.bt.int(it.row, "maxac"));
+        if (it.host.version == 0 and hi > lo) hi -= 1; // 1.06 never rolled the top (d2up prepatch.zig)
+        if (it.host.ethereal()) {
+            lo = @divTrunc(lo * 3, 2);
+            hi = @divTrunc(hi * 3, 2);
+        }
+        var rolls = hi != lo;
+        if (it.rolls) |*r| if (r.get(31, 0)) |f| {
+            lo += f.lo;
+            hi += f.hi;
+            rolls = rolls or f.rolls;
+        };
+        var buf: [64]u8 = undefined;
+        try out.s(ranges_mod.annotate(&buf, it.opts.ranges, ac, lo, hi, rolls, false, "\x01"));
     }
 
     fn blockLine(self: *const Describer, out: *Text, it: *Item) !void {
@@ -1089,6 +1122,8 @@ const Item = struct {
     /// The own list, the runeword list and the socket fillers, merged (what the walk and the numbers read).
     list: StatList,
     base_stats: [512]i32,
+    /// What each own stat can roll in, when the options ask for it.
+    rolls: ?ranges_mod.Ranges = null,
 
     fn init(d: *const Describer, a: std.mem.Allocator, h: *const wire.Item, kids: []const wire.Item, opts: Options) !Item {
         var it: Item = undefined;
@@ -1100,6 +1135,7 @@ const Item = struct {
         it.viewer = opts.viewer;
         it.ref = d.t.itemRef(h.codeSlice());
         it.list = .{};
+        it.rolls = null;
         @memset(&it.base_stats, 0);
         const ref = it.ref orelse return it;
         it.bt = d.t.itemTable(ref.table);
@@ -1129,6 +1165,7 @@ const Item = struct {
             }
         }
         it.loadBase();
+        if (opts.ranges != .off) it.rolls = try it.rangesOf(apply);
         return it;
     }
 
@@ -1240,6 +1277,62 @@ const Item = struct {
         return .{ .str = @intCast(rs + adj_s), .dex = @intCast(rd + adj_d), .str_txt = rs, .dex_txt = rd };
     }
 
+    /// The environment of the item's own stat lines: `env` and the ranges they roll in.
+    fn ownEnv(it: *const Item) statdesc.Env {
+        var e = it.env();
+        if (it.rolls) |*r| {
+            e.ranges = r;
+            e.range_style = it.opts.ranges;
+        }
+        return e;
+    }
+
+    /// The rows the item and what sits in it were made from, at both ends of their ranges (ranges.zig).
+    fn rangesOf(it: *const Item, apply: properties.SocketTarget) !ranges_mod.Ranges {
+        const d = it.d;
+        const h = it.host;
+        var b = ranges_mod.Builder{
+            .gpa = it.a,
+            .t = d.t,
+            .ctx = .{ .code = h.codeSlice(), .item_level = h.ilvl, .is_expansion = h.version >= 100 },
+            .prepatch = h.quality == .rare and h.version == 0,
+        };
+        try affixesOf(&b, d, h);
+        if (it.unique_row) |r| try b.props(&d.t.unique_items, r, 12);
+        if (it.set_row) |r| try b.props(&d.t.set_items, r, if (h.version >= 100) 9 else 2);
+        if (h.flags & wire.flag.RUNEWORD != 0) {
+            var codes: std.ArrayListUnmanaged([]const u8) = .empty;
+            for (it.kids) |*k| try codes.append(it.a, k.codeSlice());
+            if (try affix.detectRuneword(it.a, d.t, &it.types, codes.items)) |id| try b.runeword(id - 1);
+        }
+        for (it.kids) |*k| {
+            if (k.compact) {
+                try b.filler(k.codeSlice(), apply);
+            } else {
+                const save = b.prepatch;
+                b.prepatch = k.quality == .rare and k.version == 0;
+                try affixesOf(&b, d, k);
+                b.prepatch = save;
+            }
+        }
+        return b.out;
+    }
+
+    fn affixesOf(b: *ranges_mod.Builder, d: *const Describer, h: *const wire.Item) !void {
+        switch (h.quality) {
+            .magic => {
+                if (h.prefix != 0 and h.prefix - 1 < d.prefix_rows.len) try b.mods(&d.t.magic_prefix, d.prefix_rows[h.prefix - 1]);
+                if (h.suffix != 0 and h.suffix - 1 < d.suffix_rows.len) try b.mods(&d.t.magic_suffix, d.suffix_rows[h.suffix - 1]);
+            },
+            .rare, .crafted, .tempered => {
+                for (h.rare_prefixes) |p| if (p != 0 and p - 1 < d.prefix_rows.len) try b.mods(&d.t.magic_prefix, d.prefix_rows[p - 1]);
+                for (h.rare_suffixes) |s| if (s != 0 and s - 1 < d.suffix_rows.len) try b.mods(&d.t.magic_suffix, d.suffix_rows[s - 1]);
+            },
+            else => {},
+        }
+        if (h.automagic != 0 and h.automagic - 1 < d.auto_magic.rowCount()) try b.mods(&d.auto_magic, h.automagic - 1);
+    }
+
     fn env(it: *const Item) statdesc.Env {
         return .{
             .player_level = it.level(),
@@ -1300,7 +1393,15 @@ fn block_(out: *Text, text: []const u8, color: u8) !void {
     if (text.len == 0) return;
     try out.s(color_code);
     try out.buf.append(out.gpa, '0' + color);
-    try out.s(text);
+    // a range after a stat line ends in `\x01`: back to this block's colour (ranges.zig)
+    var rest = text;
+    while (std.mem.indexOfScalar(u8, rest, 1)) |k| {
+        try out.s(rest[0..k]);
+        try out.s(color_code);
+        try out.buf.append(out.gpa, '0' + color);
+        rest = rest[k + 1 ..];
+    }
+    try out.s(rest);
 }
 
 fn numberLine(out: *Text, label: []const u8, sp: []const u8, v: i64, nl: []const u8) !void {

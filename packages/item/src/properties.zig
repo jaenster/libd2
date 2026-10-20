@@ -93,6 +93,22 @@ pub fn applyProperty(
     max: i32,
     ctx: PropContext,
 ) !void {
+    return applyPropertyTagged(gpa, out, null, seed, t, code, param, min, max, ctx);
+}
+
+/// `applyProperty`, also writing to `funcs` (when given) the property function each stat of `out` came from.
+pub fn applyPropertyTagged(
+    gpa: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(RolledStat),
+    funcs: ?*std.ArrayListUnmanaged(i64),
+    seed: *rng.Seed,
+    t: *const tables.Tables,
+    code: []const u8,
+    param: i32,
+    min: i32,
+    max: i32,
+    ctx: PropContext,
+) !void {
     const pt = &t.properties;
     const prow = pt.findByStr("code", code) orelse return; // unknown property code
     var fbuf: [8]u8 = undefined;
@@ -105,6 +121,7 @@ pub fn applyProperty(
         if (!hasHandler(func)) break;
         const stat_name = pt.str(prow, std.fmt.bufPrint(&sbuf, "stat{d}", .{slot + 1}) catch unreachable);
         const val: i32 = @intCast(pt.int(prow, std.fmt.bufPrint(&vbuf, "val{d}", .{slot + 1}) catch unreachable));
+        const before = out.items.len;
         const applied = try applyFunc(gpa, out, seed, t, .{
             .func = func,
             .stat = statId(t, stat_name),
@@ -115,6 +132,7 @@ pub fn applyProperty(
             .max = max,
             .ctx = ctx,
         });
+        if (funcs) |f| for (before..out.items.len) |_| try f.append(gpa, func);
         if (slot == 0) chained = applied;
     }
 }

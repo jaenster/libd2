@@ -47,6 +47,7 @@ test {
     _ = raster;
     _ = @import("capi.zig");
     _ = @import("golden.zig");
+    _ = @import("ranges_test.zig");
 }
 
 /// A picture as PNG bytes, owned by the caller.

@@ -34,6 +34,7 @@ pub const strings = @import("strings.zig");
 pub const itemtext = @import("itemtext.zig");
 pub const statdesc = @import("statdesc.zig");
 pub const itemdesc = @import("itemdesc.zig");
+pub const ranges = @import("ranges.zig");
 pub const render = @import("render.zig");
 pub const wire = @import("d2-core").wire;
 

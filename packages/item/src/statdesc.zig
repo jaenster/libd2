@@ -25,6 +25,7 @@ const tables = @import("tables.zig");
 const strings = @import("strings.zig");
 const itemtype = @import("itemtype.zig");
 const d2data = @import("d2-data");
+const ranges = @import("ranges.zig");
 
 /// The string id a failed key lookup resolves to (`dummy`, "an evil force").
 pub const missing_string: u16 = 5382;
@@ -116,6 +117,10 @@ pub const Env = struct {
     time_of_day: ?i32 = null,
     /// The Indestructible fallback applies (txt durability without a maximum and no stat 152).
     indestructible_fallback: bool = false,
+    /// What each stat of the list can roll in, and how to write it after the line (ranges.zig). A `\x01` in the
+    /// text stands for the colour of the block the lines go into, which the card puts there.
+    ranges: ?*const ranges.Ranges = null,
+    range_style: ranges.Style = .off,
 };
 
 /// The tables the descriptions read, resolved once.
@@ -844,6 +849,66 @@ fn damageSpecial(c: *const Ctx, out: *Text, d: *Damage, stat: u16, env: Env) !bo
     }
 }
 
+/// The range of one stat in the units its line shows: the rows' values carry no value shift (properties.zig emits them
+/// as the row has them), the item's stats do. Null when no row gives it, or a per-level op computes the value from the
+/// character's level (the row value is not what the line shows).
+fn shownRange(c: *const Ctx, stat: u16, param: u16, env: Env) ?ranges.Range {
+    const rs = env.ranges orelse return null;
+    const rg = rs.get(stat, param) orelse return null;
+    const r = c.row(stat) orelse return null;
+    const isc = &c.t.item_stat_cost;
+    const op = isc.int(r, "op");
+    if (op >= 2 and op <= 5) return null;
+    const vs: u5 = @intCast(@min(isc.int(r, "ValShift"), 31));
+    return .{
+        .lo = shownValue(c, stat, rg.lo << vs, env),
+        .hi = shownValue(c, stat, rg.hi << vs, env),
+        .rolls = rg.rolls,
+    };
+}
+
+/// The range written after one stat's line, or nothing.
+fn rangeText(c: *const Ctx, buf: []u8, e: Entry, env: Env) []const u8 {
+    const rg = shownRange(c, e.stat, e.param, env) orelse return buf[0..0];
+    // item_req_percent: a lower requirement is the better roll
+    return ranges.annotate(buf, env.range_style, shownValue(c, e.stat, e.value, env), rg.lo, rg.hi, rg.rolls, e.stat == 91, "\x01");
+}
+
+/// The range after a line SKILLDESC_BuildStatDescription wrote for several stats: enhanced damage (one value, the two
+/// stats rolled together), and a damage range (its minimum and its maximum each roll on their own).
+fn specialRangeText(c: *const Ctx, buf: []u8, list: *const StatList, stat: u16, env: Env) []const u8 {
+    if (env.ranges == null) return buf[0..0];
+    const pair_of: ?[2]u16 = switch (stat) {
+        18 => null,
+        21, 22, 23 => .{ 21, 22 },
+        48 => .{ 48, 49 },
+        50 => .{ 50, 51 },
+        52 => .{ 52, 53 },
+        54 => .{ 54, 55 },
+        else => return buf[0..0],
+    };
+    const p = pair_of orelse {
+        const rg = shownRange(c, 18, 0, env) orelse return buf[0..0];
+        return ranges.annotate(buf, env.range_style, list.get(18, 0), rg.lo, rg.hi, rg.rolls, false, "\x01");
+    };
+    // a two-handed weapon's damage sits in 23 and 24 (Damage.of)
+    const two = p[0] == 21 and list.get(21, 0) == 0;
+    const lo_stat: u16 = if (two) 23 else p[0];
+    const hi_stat: u16 = if (two) 24 else p[1];
+    const a = shownRange(c, lo_stat, 0, env) orelse return buf[0..0];
+    const b = shownRange(c, hi_stat, 0, env) orelse return buf[0..0];
+    return ranges.annotatePair(buf, env.range_style, .{ list.get(lo_stat, 0), list.get(hi_stat, 0) }, a, b, "\x01");
+}
+
+/// A range into the line just written, before the newline its string ends in.
+fn insertRange(out: *Text, ann: []const u8) !void {
+    if (ann.len == 0) return;
+    const b = &out.buf;
+    var at = b.items.len;
+    if (at > 0 and b.items[at - 1] == '\n') at -= 1;
+    try b.insertSlice(out.gpa, at, ann);
+}
+
 /// SKILLDESC_BuildStatListDesc 0x004e49c0 with the undead and Indestructible lines of
 /// SKILLDESC_BuildStatBuffDesc 0x004e60a0. Appends the property lines of `list` to `out` in engine order
 /// (lowest priority first). `newline` is the line mode: true ends every line with a newline, false
@@ -862,10 +927,15 @@ pub fn describeList(c: *const Ctx, out: *Text, list: *const StatList, env: Env, 
     }
     var d = Damage.of(list);
     var had_line = false;
+    var special_buf: [96]u8 = undefined;
     for (c.order) |stat| {
         for (list.ofStat(stat)) |e| {
             if (e.value == 0) continue;
-            if (try damageSpecial(c, out, &d, stat, env)) continue;
+            const before = out.items().len;
+            if (try damageSpecial(c, out, &d, stat, env)) {
+                if (out.items().len > before) try insertRange(out, specialRangeText(c, &special_buf, list, stat, env));
+                continue;
+            }
             const line = (try describeStat(c, a, list, e, env)) orelse continue;
             if (stat == 23 and list.get(21, 0) != 0) continue;
             if (stat == 24 and list.get(22, 0) != 0) continue;
@@ -874,6 +944,8 @@ pub fn describeList(c: *const Ctx, out: *Text, list: *const StatList, env: Env, 
                 try out.s(c.idText(id.space));
             }
             try out.s(line);
+            var ann: [64]u8 = undefined;
+            try out.s(rangeText(c, &ann, e, env));
             if (newline) try out.s(c.idText(id.newline));
             had_line = true;
         }

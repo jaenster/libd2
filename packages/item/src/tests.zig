@@ -22,5 +22,6 @@ test {
     _ = @import("itemtext.zig");
     _ = @import("statdesc.zig");
     _ = @import("itemdesc.zig");
+    _ = @import("ranges.zig");
     _ = @import("lib.zig");
 }
