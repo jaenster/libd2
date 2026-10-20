@@ -223,7 +223,25 @@ pub const SelectOpts = struct {
     found: ?*FoundUniques = null,
     /// pItemGenCtx+0x40 — force this 1-based row instead of rolling (preset/TC-link drops).
     forced_id: u16 = 0,
+    /// The item's version: 0 takes ITEM_RollUniqueItem's legacy path (see `legacyUnique`).
+    item_version: u16 = 101,
 };
+
+/// ITEM_RollUniqueItem 0x5566b0 for an item of version 0 (a pre-1.07 item; no 1.14d game makes one, a
+/// Classic game makes version 2): the first row of version below 100, enabled, past the ladder gate,
+/// of the base's code, that the game has not found yet (a quest base takes it even so). `lvl` and
+/// `rarity` are not read, the item seed is not drawn, and the row is not marked found.
+fn legacyUnique(t: *const tables.Tables, code: []const u8, opts: SelectOpts) u16 {
+    const ut = &t.unique_items;
+    for (0..ut.rowCount()) |row| {
+        if (ut.int(row, "version") >= 100 or ut.int(row, "enabled") == 0) continue;
+        if (!opts.is_ladder and ut.int(row, "ladder") != 0) continue;
+        if (!codeEq(ut.str(row, "code"), code)) continue;
+        if (opts.found) |found| if (found.isSet(row) and !opts.is_quest) continue;
+        return @intCast(row + 1);
+    }
+    return 0;
+}
 
 /// ITEM_RollUniqueItem @0x5566b0 — select the specific UniqueItems.txt row for a base `code` that rolled
 /// unique quality. The candidate filter runs in the engine's order: `version` gate, `enabled`, `code` ==
@@ -244,6 +262,7 @@ pub fn rollUniqueItem(
     opts: SelectOpts,
 ) !u16 {
     const ut = &t.unique_items;
+    if (opts.item_version == 0) return legacyUnique(t, code, opts);
     var pool: std.ArrayListUnmanaged(Cand) = .empty;
     defer pool.deinit(gpa);
     var sum: i32 = 0;
@@ -398,7 +417,9 @@ pub fn rollMagicPrefixSuffix(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const 
         n += 1;
     }
     sctx.used_groups = groups[0..n];
-    const sfx = try rollMagicAffix(gpa, seed, &t.magic_suffix, sctx, -1, 0, false);
+    // ITEM_RollMagicPrefixSuffix 0x5565e0: an empty prefix forces the suffix (no 50% gate), so a magic
+    // item has at least one affix whenever any row fits.
+    const sfx = try rollMagicAffix(gpa, seed, &t.magic_suffix, sctx, -1, 0, pfx.id == 0);
     return .{ .prefix = pfx, .suffix = sfx };
 }
 

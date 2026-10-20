@@ -248,6 +248,60 @@ pub const Tables = struct {
         return null;
     }
 
+    /// The ItemRatio row GAME_GetItemQuality 0x558640 reads for base `code`: TXT_QualityRatio_GetLine
+    /// 0x637910 is always called with the version limit 100 (`push 0x64` at 0x5586d7, whatever the game's
+    /// mode), so among the rows whose `Uber` and `Class Specific` match the item it takes the one of the
+    /// highest `Version` (the last of equal versions). That is the version 1 row in Classic games too:
+    /// the version 0 rows are never read. `Uber` is ITEMS_CheckIfUpgradeable 0x62b4d0 (an armor or
+    /// weapon that is its own exceptional or elite form, not a quest item, not a throwing potion);
+    /// `Class Specific` is TXT_Items_CheckIfHasClass 0x629f70 (its type has a class).
+    pub fn ratioFor(self: *const Tables, code: []const u8) ?[16]i32 {
+        const ref = self.itemRef(code) orelse return null;
+        const tbl = self.itemTable(ref.table);
+        const uber: i64 = @intFromBool(self.isUpgradeable(code));
+        const type_row = self.itype_by_code.get(tbl.str(ref.row, "type"));
+        const class_specific: i64 = if (type_row) |tr| @intFromBool(self.item_types.str(tr, "Class").len != 0) else 0;
+        var best: ?usize = null;
+        var best_version: i64 = -1;
+        for (0..self.item_ratio.rowCount()) |r| {
+            if (self.item_ratio.int(r, "Uber") != uber or self.item_ratio.int(r, "Class Specific") != class_specific) continue;
+            const v = self.item_ratio.int(r, "Version");
+            if (v > 100 or v < best_version) continue;
+            best = r;
+            best_version = v;
+        }
+        const r = best orelse return null;
+        return self.ratioColumns(r);
+    }
+
+    /// ITEMS_CheckIfUpgradeable 0x62b4d0.
+    pub fn isUpgradeable(self: *const Tables, code: []const u8) bool {
+        const ref = self.itemRef(code) orelse return false;
+        if (ref.table == .misc) {
+            // the equivalence test below covers every armor and weapon; misc rows are neither
+            return false;
+        }
+        const tbl = self.itemTable(ref.table);
+        const own = tbl.str(ref.row, "code");
+        if (!std.mem.eql(u8, tbl.str(ref.row, "ubercode"), own) and !std.mem.eql(u8, tbl.str(ref.row, "ultracode"), own)) return false;
+        if (std.mem.eql(u8, tbl.str(ref.row, "type"), "tpot")) return false;
+        return tbl.int(ref.row, "quest") == 0;
+    }
+
+    fn ratioColumns(self: *const Tables, r: usize) [16]i32 {
+        const cols = [16][]const u8{
+            "Unique",    "UniqueDivisor",    "UniqueMin",
+            "Rare",      "RareDivisor",      "RareMin",
+            "Set",       "SetDivisor",       "SetMin",
+            "Magic",     "MagicDivisor",     "MagicMin",
+            "HiQuality", "HiQualityDivisor", "Normal",
+            "NormalDivisor",
+        };
+        var out: [16]i32 = undefined;
+        for (cols, 0..) |c, i| out[i] = @intCast(self.item_ratio.int(r, c));
+        return out;
+    }
+
     pub fn itemTable(self: *const Tables, tag: ItemTable) *const txt.Table {
         return switch (tag) {
             .weapons => &self.weapons,

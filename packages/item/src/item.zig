@@ -67,8 +67,23 @@ pub const RollOpts = struct {
     socket_tier: sockets.SocketTier = .cap3,
     /// The DROPPING unit's level — the gold amount is derived from it.
     drop_level: i32 = 0,
-    /// The player's found-uniques bitmask; a unique already found fails its roll and downgrades.
+    /// The game's found-uniques bitmask (D2GameStrc.fUniqueSpawn: one per game, not per player); a unique
+    /// already found fails its roll and downgrades.
     found_uniques: ?*affix.FoundUniques = null,
+    /// Move the treasure class up its group chain to `mlvl` (TC_GetParsedTreasureClassByLevel). The engine
+    /// does it only where `treasure.upgradesTreasureClass` says so (Expansion, above Normal, a monster
+    /// neither boss nor NoRatio); the default keeps this package's earlier behaviour.
+    upgrade_tc: bool = true,
+    /// A Find Item drop (bIsItemFindDrop): the walk adds no NoDrop.
+    item_find: bool = false,
+    /// The item version the game stamps (pGame->wItemFormat, set by GAME_CreateBattleNetGame 0x530930 and
+    /// GAME_CreateSingleplayerGame 0x530bf0: 2 in Classic, 101 in Expansion); null takes it from
+    /// `is_expansion`. Version 0 is the pre-1.07 item, rolled by the legacy paths.
+    item_version: ?u16 = null,
+
+    pub fn itemVersion(self: RollOpts) u16 {
+        return self.item_version orelse if (self.is_expansion) 101 else 2;
+    }
 };
 
 /// The two seeds SUnit::CreateUnit gives a fresh item unit.
@@ -100,14 +115,18 @@ pub fn rollDrop(
     var drops: std.ArrayListUnmanaged(Drop) = .empty;
     errdefer drops.deinit(gpa);
 
-    const tc = tc_set.byLevel(tc_name, mlvl) orelse return drops.toOwnedSlice(gpa);
+    const tc = (if (opts.upgrade_tc) tc_set.byLevel(tc_name, mlvl) else tc_set.byName(tc_name)) orelse return drops.toOwnedSlice(gpa);
 
     var picks: std.ArrayListUnmanaged(treasure.Pick) = .empty;
     defer picks.deinit(gpa);
-    try treasure.resolve(tc_set, drop_seed, tc, mlvl, .{ .is_expansion = opts.is_expansion, .players = opts.players }, .{}, &picks, gpa, 0);
+    const qctx: DropQualityCtx = .{ .t = t, .mlvl = mlvl, .magic_find = opts.magic_find };
+    try treasure.resolve(tc_set, drop_seed, tc, mlvl, .{
+        .is_expansion = opts.is_expansion,
+        .players = opts.players,
+        .bypass_no_drop = opts.item_find,
+        .quality_roll = .{ .ctx = &qctx, .roll = DropQualityCtx.roll },
+    }, .{}, &picks, gpa, 0);
 
-    const ratio_row = t.ratioRow(if (opts.is_expansion) 1 else 0, 0, 0) orelse return error.NoItemRatio;
-    const ratio = quality.Ratio{ .v = ratio_row };
     const drop_level = if (opts.drop_level != 0) opts.drop_level else mlvl;
 
     for (picks.items) |pk| {
@@ -141,21 +160,13 @@ pub fn rollDrop(
             // roll is skipped entirely.
             d.quality = pk.forced_quality;
         } else {
-            const qmods = [4]i32{ pk.mods.magic, pk.mods.rare, pk.mods.set, pk.mods.unique };
-            d.quality = quality.gameGetItemQuality(drop_seed, &ratio, .{
-                .qlvl = flags.qlvl,
-                .victim_level = mlvl,
-                .magic_find = opts.magic_find,
-                .quality_mods = qmods,
-                .is_type_normal = flags.is_type_normal,
-                .is_type_magic = flags.is_type_magic,
-                .is_type_rare = flags.is_type_rare,
-                .is_base_unique = flags.is_base_unique,
-                .is_quest = flags.is_quest,
-            });
+            // rolled at the pick, on the walk's seed (DropQualityCtx)
+            d.quality = pk.quality;
+            if (d.quality == .invalid) return error.NoItemRatio;
         }
 
-        try applyQualityAndAffixes(gpa, &seeds, t, &ratio, &d, flags, opts, pk.forced_id);
+        const legacy_ratio = quality.Ratio{ .v = t.ratioRow(0, 0, 0) orelse return error.NoItemRatio };
+        try applyQualityAndAffixes(gpa, &seeds, t, &legacy_ratio, &d, flags, opts, pk.forced_id);
         d.quantity = try rollStackQuantity(gpa, &seeds.item, t, &d);
 
         try drops.append(gpa, d);
@@ -164,9 +175,8 @@ pub fn rollDrop(
     return drops.toOwnedSlice(gpa);
 }
 
-/// ITEM_ApplyQualityAndAffixes 0x557450. The drop-time quality is already on `d`; the item's OWN
-/// quality cascade still runs first and is then overridden — it advances the mod seed either way, so
-/// skipping it desyncs every later roll. After the type overrides the tier is attempted, and on failure
+/// ITEM_ApplyQualityAndAffixes 0x557450. The drop-time quality is already on `d`; the item's own
+/// quality cascade (ITEM_RollItemQuality 0x556f60) runs only for a version 0 item, see below. After the type overrides the tier is attempted, and on failure
 /// the engine walks a per-tier fallback chain, each step restoring the saved seed and re-rolling (and
 /// discarding) the quality before trying the next tier.
 pub fn applyQualityAndAffixes(
@@ -189,7 +199,11 @@ pub fn applyQualityAndAffixes(
         .is_misc = types.has("misc"),
         .is_quest = flags.is_quest,
     };
-    _ = quality.rollItemQuality(&seeds.item, ratio, qp);
+    // ITEM_RollItemQuality 0x556f60 returns the context's quality without a draw for an item of any
+    // version but 0 (every drop of a 1.14d game: version 2 in Classic, 101 in Expansion), so only a
+    // version 0 item spends the item seed on the cascade (with the version 0 ItemRatio rows).
+    const cascade = opts.itemVersion() == 0;
+    if (cascade) _ = quality.rollItemQuality(&seeds.item, ratio, qp);
 
     // Item-type overrides, in the engine's order.
     if (flags.is_type_magic) {
@@ -229,7 +243,7 @@ pub fn applyQualityAndAffixes(
     for (chain, 0..) |tier, i| {
         if (i > 0) {
             seeds.item = rng.Seed.init(saved, 0x29a);
-            _ = quality.rollItemQuality(&seeds.item, ratio, qp);
+            if (cascade) _ = quality.rollItemQuality(&seeds.item, ratio, qp);
             saved = seeds.item.low;
         }
         d.quality = tier;
@@ -285,6 +299,7 @@ fn rollTier(
         .is_quest = false,
         .found = opts.found_uniques,
         .forced_id = forced_id,
+        .item_version = opts.itemVersion(),
     };
     switch (d.quality) {
         .unique => {
@@ -583,28 +598,30 @@ test "ethereal appears on weapons/armour at roughly the engine's 5%" {
     try testing.expect(!r.ethereal);
 }
 
-test "the item-seed quality cascade runs even when the drop already forced a quality" {
+test "the item-seed quality cascade runs for a version 0 item only" {
     var t = try tables.Tables.load(testing.allocator);
     defer t.deinit();
-    const ratio = quality.Ratio{ .v = t.ratioRow(1, 0, 0).? };
+    const ratio = quality.Ratio{ .v = t.ratioRow(0, 0, 0).? };
     const flags = itemFlags(&t, "cap");
 
-    // Running the discarded cascade is what puts the affix rolls on the right seed: dropping it
-    // would leave the mod seed one or more advances behind.
+    // ITEM_RollItemQuality 0x556f60 returns the context's quality at once for every version but 0, so a
+    // drop of a 1.14d game (version 2 or 101) starts its magic roll on the untouched item seed.
+    var runs: [2]rng.Seed = undefined;
+    for ([_]u16{ 101, 0 }, 0..) |v, i| {
+        var d = Drop{ .kind = .item, .quality = .magic, .item_level = 40 };
+        setCode(&d, "cap");
+        var seeds = ItemSeeds{ .unit = rng.Seed.init(1, 0x29a), .item = rng.Seed.init(0x4242, 0x29a) };
+        try applyQualityAndAffixes(testing.allocator, &seeds, &t, &ratio, &d, flags, .{ .item_version = v }, 0);
+        runs[i] = seeds.item;
+    }
+    try testing.expect(runs[0].low != runs[1].low);
+
     var d = Drop{ .kind = .item, .quality = .magic, .item_level = 40 };
     setCode(&d, "cap");
-    var seeds = ItemSeeds{ .unit = rng.Seed.init(1, 0x29a), .item = rng.Seed.init(0x4242, 0x29a) };
-    try applyQualityAndAffixes(testing.allocator, &seeds, &t, &ratio, &d, flags, .{}, 0);
-
-    var probe = rng.Seed.init(0x4242, 0x29a);
-    _ = quality.rollItemQuality(&probe, &ratio, .{
-        .ilvl = 40,
-        .qlvl = flags.qlvl,
-        .is_expansion = true,
-        .is_misc = false,
-        .is_quest = false,
-    });
-    try testing.expect(probe.low != 0x4242); // the cascade really does advance the seed
+    var direct = ItemSeeds{ .unit = rng.Seed.init(1, 0x29a), .item = rng.Seed.init(0x4242, 0x29a) };
+    var e = d;
+    try applyQualityAndAffixes(testing.allocator, &direct, &t, &ratio, &e, flags, .{}, 0);
+    try testing.expectEqual(runs[0].low, direct.item.low);
 }
 
 test "high MF shifts quality upward over many drops" {
@@ -633,4 +650,50 @@ test "high MF shifts quality upward over many drops" {
         };
     }
     try testing.expect(rare_plus_mf >= rare_plus_none);
+}
+
+/// GAME_GetItemQuality 0x558640 for a picked base, as the TC walk calls it (treasure.QualityRoll).
+const DropQualityCtx = struct {
+    t: *const tables.Tables,
+    mlvl: i32,
+    magic_find: i32,
+
+    fn roll(ctx: *const anyopaque, seed: *rng.Seed, code: []const u8, mods: model.QualityMods) Quality {
+        const self: *const DropQualityCtx = @ptrCast(@alignCast(ctx));
+        if (self.t.itemRef(code) == null) return .normal;
+        const flags = itemFlags(self.t, code);
+        const ratio = quality.Ratio{ .v = self.t.ratioFor(code) orelse return .invalid };
+        return quality.gameGetItemQuality(seed, &ratio, .{
+            .qlvl = flags.qlvl,
+            .victim_level = self.mlvl,
+            .magic_find = self.magic_find,
+            .quality_mods = .{ mods.magic, mods.rare, mods.set, mods.unique },
+            .is_type_normal = flags.is_type_normal,
+            .is_type_magic = flags.is_type_magic,
+            .is_type_rare = flags.is_type_rare,
+            .is_base_unique = flags.is_base_unique,
+            .is_quest = flags.is_quest,
+        });
+    }
+};
+
+test "the drop-time quality is rolled at each pick, between the walk's draws" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    var set = try treasure.build(testing.allocator, &t);
+    defer set.deinit();
+    // the same seeds give the same drop, and every item carries a rolled quality
+    var s1 = rng.Seed.init(321, 0x29a);
+    var g1 = rng.Seed.init(654, 0x29a);
+    const a = try rollDrop(testing.allocator, &s1, &g1, &t, &set, "Andarielq (H)", 75, .{ .is_expansion = false, .upgrade_tc = false });
+    defer testing.allocator.free(a);
+    var s2 = rng.Seed.init(321, 0x29a);
+    var g2 = rng.Seed.init(654, 0x29a);
+    const b = try rollDrop(testing.allocator, &s2, &g2, &t, &set, "Andarielq (H)", 75, .{ .is_expansion = false, .upgrade_tc = false });
+    defer testing.allocator.free(b);
+    try testing.expectEqual(a.len, b.len);
+    for (a, b) |x, y| {
+        try testing.expectEqual(x.quality, y.quality);
+        if (x.kind == .item) try testing.expect(x.quality != .invalid);
+    }
 }

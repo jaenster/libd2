@@ -190,7 +190,9 @@ fn normalTail(seed: *rng.Seed, ratio: *const Ratio, lvl_diff: i32) Quality {
         if (seed.pick(@bitCast(sup)) >= 0x80) {
             const norm = (ratio.get(14) - divFloor(lvl_diff, ratio.get(15))) * 0x80;
             if (norm < 1) return .normal;
-            return if (seed.pick(@bitCast(norm)) < 0x80) .low else .normal;
+            // 0x558974: `cmp eax, 0x80; sbb eax, eax; neg eax; add eax, 1` -- a draw below 128 is 2
+            // (normal), anything else 1 (low quality).
+            return if (seed.pick(@bitCast(norm)) < 0x80) .normal else .low;
         }
     }
     return .superior;

@@ -13,6 +13,7 @@ test {
     _ = @import("properties.zig");
     _ = @import("sockets.zig");
     _ = @import("item.zig");
+    _ = @import("dropsim.zig");
     _ = @import("dc6.zig");
     _ = @import("d2-util").png;
     _ = @import("graphic.zig");

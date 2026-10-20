@@ -70,14 +70,18 @@ engine does.
 - **crafted / tempered** are cube recipes, not drops (`GAME_GetItemQuality` never
   rolls them). Their affix roll is wired (both use the rare roller), but the cube
   recipe that produces them lives outside this package.
-- per-entry TC quality modifiers (`cu=`/`cs=`/`cr=`/`cm=`/`ce=`/`cg=`) are parsed
-  by the engine but never read by the drop path; only `mul=` changes an outcome
-  and only that one is modelled.
-- the NoDrop party scale uses the documented `ratio^players` curve; the engine's
-  exact float→int rounding at the end of that computation was not recoverable
-  from the decompile.
-- classic (non-expansion) resolution carries its own cumulative weights but is far
-  less exercised than the expansion path.
+- per-entry TC quality modifiers (`cu=`/`cs=`/`cr=`/`cm=`) are read only by a Classic
+  walk (0x55a6d0) and are modelled there; the two drop-flag ones (`ce=`/`cg=`) are not.
+  No shipped cell uses any of them.
+- the item and gold seeds are faithful in order, but the roll-exact claim has never been
+  checked against a run of the real code (`dropsim.zig` counts rates, not seeds).
+
+### The Classic walk
+- the Classic weights, the thrown re-pick (10 per walk, then a Long Sword), the refusal of
+  version 100+ bases, the version 1 ItemRatio rows, and the rule that only Expansion games
+  above Normal move a treasure class up its group, are modelled (see `treasure.zig`).
+- `dropsim.zig` runs many kills of a class through `rollDrop` and counts by quality,
+  unique, set and base, for a drop calculator.
 
 ## Build
 

@@ -48,6 +48,15 @@ pub const Entry = struct {
     /// its exact row are forced — GAME_GetItemQuality never runs for these.
     link_quality: model.Quality = .invalid,
     link_id: u16 = 0,
+    /// The per-entry quality modifiers of the cell (`cm=`, `cr=`, `cs=`, `cu=`, `ce=`, `cg=`;
+    /// TC_ParseTreasureClassEntry 0x654440 stores them at +0xE..+0x18 of the entry). Only a Classic
+    /// game reads them (SERVER_ITEM_RollItemToDrop 0x55a6d0): picking such an item entry raises the
+    /// current class's running modifiers to at least these, for this pick and every later pick of it.
+    entry_mods: QualityMods = .{},
+    /// The base item's own ItemTypes row is Throwable: a Classic game picks again (0x55a6d0).
+    throwable: bool = false,
+    /// The base item's Items.txt version: a Classic game drops nothing for 100 and up (0x55a6d0).
+    item_version: i32 = 0,
 };
 
 pub const ParsedTC = struct {
@@ -95,6 +104,16 @@ pub const Pick = struct {
     /// Forced quality + 1-based UniqueItems/SetItems row for a TC unique/set link entry.
     forced_quality: model.Quality = .invalid,
     forced_id: u16 = 0,
+    /// The drop-time quality, when the walk was given a `QualityRoll`: rolled at the pick, on the walk's seed,
+    /// as 0x55a6d0 does (between this pick's draw and the next).
+    quality: model.Quality = .invalid,
+};
+
+/// GAME_GetItemQuality for one picked base, on the walk's own seed: the engine rolls it right after the pick,
+/// before the next pick's draw (and before the Classic thrown re-pick, so a thrown pick spends its draws too).
+pub const QualityRoll = struct {
+    ctx: *const anyopaque,
+    roll: *const fn (ctx: *const anyopaque, seed: *rng.Seed, code: []const u8, mods: QualityMods) model.Quality,
 };
 
 pub const TCSet = struct {
@@ -160,6 +179,7 @@ pub fn build(gpa: std.mem.Allocator, t: *const tables.Tables) !TCSet {
             const parsed = parseEntryField(field);
             const link = resolveLink(t, parsed.code);
             const code = if (link) |l| l.base_code else parsed.code;
+            const base = baseFacts(t, code);
             try b.add(a, .{
                 .name = try a.dupe(u8, code),
                 .prob = prob,
@@ -167,6 +187,9 @@ pub fn build(gpa: std.mem.Allocator, t: *const tables.Tables) !TCSet {
                 .link_quality = if (link) |l| l.quality else .invalid,
                 .link_id = if (link) |l| l.id else 0,
                 .expansion_only = if (link != null) true else entryIsExpansionOnly(t, &list, &by_name, parsed.code),
+                .entry_mods = parsed.mods,
+                .throwable = base.throwable,
+                .item_version = base.version,
             });
         }
 
@@ -194,25 +217,42 @@ pub fn build(gpa: std.mem.Allocator, t: *const tables.Tables) !TCSet {
     return .{ .list = try list.toOwnedSlice(a), .by_name = by_name, .arena = arena };
 }
 
-/// An Item column is `code[,key=value]*`; the only modifier that changes a drop's
-/// outcome here is "mul" (the gold quantity multiplier). The quality modifiers
-/// (cu/cs/cr/cm/ce/cg/ma/mg) are per-entry overrides the engine keeps alongside the
-/// TC-level ones — not modelled per entry.
-fn parseEntryField(field: []const u8) struct { code: []const u8, mul: i32 } {
+/// An Item column is `code[,key=value]*` (TC_ParseTreasureClassEntry 0x654440): `mul` (and `ma`/`mg`,
+/// which land in the same field) is the gold quantity multiplier; `cm`/`cr`/`cs`/`cu`/`ce`/`cg` are the
+/// entry's own quality modifiers, which only a Classic game reads.
+fn parseEntryField(field: []const u8) struct { code: []const u8, mul: i32, mods: QualityMods } {
     var rest = std.mem.trim(u8, field, "\"");
     var code = rest;
     var mul: i32 = 0;
+    var mods: QualityMods = .{};
     if (std.mem.indexOfScalar(u8, rest, ',')) |c| {
         code = rest[0..c];
         rest = rest[c + 1 ..];
         var it = std.mem.splitScalar(u8, rest, ',');
         while (it.next()) |mod| {
             const eq = std.mem.indexOfScalar(u8, mod, '=') orelse continue;
-            if (!std.mem.eql(u8, mod[0..eq], "mul")) continue;
-            mul = std.fmt.parseInt(i32, mod[eq + 1 ..], 10) catch 0;
+            const key = mod[0..eq];
+            const v = std.fmt.parseInt(i32, mod[eq + 1 ..], 10) catch 0;
+            if (std.mem.eql(u8, key, "mul") or std.mem.eql(u8, key, "ma") or std.mem.eql(u8, key, "mg")) mul = v;
+            if (std.mem.eql(u8, key, "cm")) mods.magic = v;
+            if (std.mem.eql(u8, key, "cr")) mods.rare = v;
+            if (std.mem.eql(u8, key, "cs")) mods.set = v;
+            if (std.mem.eql(u8, key, "cu")) mods.unique = v;
         }
     }
-    return .{ .code = code, .mul = mul };
+    return .{ .code = code, .mul = mul, .mods = mods };
+}
+
+/// What the Classic walk needs to know of an entry's base item: its version and whether its own type
+/// (not an Equiv parent: TXT_ItemTypes_CheckIfTypeIsThrowable 0x628860) is Throwable.
+fn baseFacts(t: *const tables.Tables, code: []const u8) struct { version: i32, throwable: bool } {
+    const ref = t.itemRef(code) orelse return .{ .version = 0, .throwable = false };
+    const tbl = t.itemTable(ref.table);
+    const type_row = t.itype_by_code.get(tbl.str(ref.row, "type"));
+    return .{
+        .version = @intCast(tbl.int(ref.row, "version")),
+        .throwable = if (type_row) |r| t.item_types.int(r, "Throwable") != 0 else false,
+    };
 }
 
 /// TC_ParseTreasureClassEntry tries any cell of 5+ characters against the UniqueItems and then the
@@ -284,6 +324,8 @@ fn generateItemTypeClasses(
                     .name = ic.code,
                     .prob = @max(rarity, 1),
                     .expansion_only = ic.version >= 100,
+                    .throwable = t.item_types.int(@intCast(ic.type_idx), "Throwable") != 0,
+                    .item_version = ic.version,
                 });
             }
 
@@ -305,21 +347,42 @@ fn generateItemTypeClasses(
     }
 }
 
-/// Effective NoDrop after party scaling (players>=1). players==1 -> unchanged.
+/// The NoDrop weight after the player scale (SERVER_ITEM_RollItemToDrop 0x55a6d0): for `players`
+/// above 1, NoDrop' = trunc(TW * r^n / (1 - r^n)) with r = NoDrop / (NoDrop + TW), the power taken by
+/// repeated x87 multiplication and the quotient truncated (`_ftol`); 0 when r^n is 1. `players` is the
+/// effective count `effectivePlayers` gives.
 pub fn scaledNoDrop(no_drop: i32, total_weight: i32, players: i32) i32 {
     if (players <= 1 or no_drop <= 0) return no_drop;
-    const denom: f64 = @floatFromInt(no_drop + total_weight);
-    const r: f64 = @as(f64, @floatFromInt(no_drop)) / denom;
-    var factor: f64 = 1.0;
-    var i: i32 = 0;
-    while (i < players) : (i += 1) factor *= r;
-    if (1.0 - factor == 0.0) return 0;
-    const eff = @as(f64, @floatFromInt(total_weight)) * factor / (1.0 - factor);
-    return @intFromFloat(@round(eff));
+    const r: f64 = @as(f64, @floatFromInt(no_drop)) / @as(f64, @floatFromInt(no_drop + total_weight));
+    var pow: f64 = r;
+    var i: i32 = 1;
+    while (i < players) : (i += 1) pow *= r;
+    const keep = 1.0 - pow;
+    if (keep == 0.0) return 0;
+    return @intFromFloat(@trunc((1.0 - keep) * @as(f64, @floatFromInt(total_weight)) / keep));
+}
+
+/// The player count the NoDrop scale uses (0x55a6d0): the killer's party members counted by
+/// CountDeadPartyMembers (1 for no party or one member, at most 8), plus half (rounded down) of the
+/// other players in the game, capped by the monster's `monster_playercount` stat (floored at 1), which
+/// the game sets from its player count when the monster spawns.
+pub fn effectivePlayers(players_in_game: i32, party_near: i32, monster_playercount: i32) i32 {
+    const near: i32 = if (party_near < 2) 1 else @min(party_near, 8);
+    const n = near + @divTrunc(players_in_game - near, 2);
+    return @min(n, @max(monster_playercount, 1));
+}
+
+/// Whether the dropping monster's treasure class is moved up its group chain to the monster's level
+/// (SERVER_ITEM_RollItemAndGetTreasureClass 0x55afa0): only in an Expansion game, above Normal, for a
+/// monster whose MonStats row is neither `boss` nor `noRatio`. A nested class is never moved
+/// (0x55a6d0 asks TC_GetParsedTreasureClassByLevel 0x654e00 for level 0).
+pub fn upgradesTreasureClass(is_expansion: bool, difficulty: u8, boss: bool, no_ratio: bool) bool {
+    return is_expansion and difficulty != 0 and !boss and !no_ratio;
 }
 
 pub const ResolveOpts = struct {
     is_expansion: bool = true,
+    /// The effective player count (`effectivePlayers`).
     players: i32 = 1,
     max_depth: u32 = 64,
     /// Find-Item drops bypass NoDrop entirely (bIsItemFindDrop).
@@ -327,7 +390,19 @@ pub const ResolveOpts = struct {
     /// The engine stops the whole walk once this many items exist; a monster death
     /// passes no unit table, which SERVER_ITEM_RollItemToDrop turns into 6.
     max_items: i32 = 6,
+    /// Roll each item's quality at its pick (`Pick.quality`); null leaves it to the caller.
+    quality_roll: ?QualityRoll = null,
 };
+
+/// What one walk keeps across its nested classes: the Classic re-picks of thrown items are counted
+/// over the whole walk (0x55a6d0's nThrowableCount), not per class.
+pub const WalkState = struct {
+    thrown_repicks: i32 = 0,
+};
+
+/// The base a Classic walk drops in place of an eleventh thrown item: 0x55aeb5 converts the code
+/// `lsd ` (a Long Sword).
+pub const classic_thrown_fallback = "lsd";
 
 /// Resolve one full drop from a TC: performs `picks` weighted rolls, recursing
 /// into sub-TCs. Appends each concrete pick (item/gold) to `out`. Advances
@@ -343,16 +418,34 @@ pub fn resolve(
     gpa: std.mem.Allocator,
     depth: u32,
 ) !void {
+    var state: WalkState = .{};
+    return resolveWalk(set, seed, tc, mlvl, opts, parent_mods, out, gpa, depth, &state);
+}
+
+pub fn resolveWalk(
+    set: *const TCSet,
+    seed: *rng.Seed,
+    tc: *const ParsedTC,
+    mlvl: i32,
+    opts: ResolveOpts,
+    parent_mods: QualityMods,
+    out: *std.ArrayListUnmanaged(Pick),
+    gpa: std.mem.Allocator,
+    depth: u32,
+    state: *WalkState,
+) !void {
+    _ = mlvl;
     if (depth >= opts.max_depth) return;
     const total_weight = tc.totalWeight(opts.is_expansion);
     if (total_weight == 0) return;
 
-    // Propagate quality mods: child inherits max(parent, own) per tier.
-    const mods = QualityMods{
-        .magic = @max(parent_mods.magic, tc.mods.magic),
-        .rare = @max(parent_mods.rare, tc.mods.rare),
-        .set = @max(parent_mods.set, tc.mods.set),
-        .unique = @max(parent_mods.unique, tc.mods.unique),
+    // A pushed class takes each of the parent's modifiers unless the parent's is 0 or lower than its
+    // own (0x55abf0); the root class takes its own.
+    var mods = if (depth == 0) tc.mods else QualityMods{
+        .magic = inherit(parent_mods.magic, tc.mods.magic),
+        .rare = inherit(parent_mods.rare, tc.mods.rare),
+        .set = inherit(parent_mods.set, tc.mods.set),
+        .unique = inherit(parent_mods.unique, tc.mods.unique),
     };
 
     // Picks: |Picks|, floored at 1. Negative additionally switches the selection
@@ -372,31 +465,64 @@ pub fn resolve(
             if (total_weight <= wanted) return;
             remaining -= 1;
         } else {
-            const total = total_weight + no_drop;
+            const total = if (opts.bypass_no_drop) total_weight else total_weight + no_drop;
             const index: i32 = if (total < 1) 0 else @bitCast(seed.pick(@intCast(total)));
             remaining -= 1;
-            if (index < no_drop) continue; // NoDrop won this pick
-            wanted = index - no_drop;
+            if (!opts.bypass_no_drop and index < no_drop) continue; // NoDrop won this pick
+            wanted = if (opts.bypass_no_drop) index else index - no_drop;
         }
 
         const e = selectEntry(tc, wanted, opts.is_expansion) orelse continue;
 
-        if (set.byLevel(e.name, mlvl)) |sub| {
-            // Nested TC: recurse.
-            try resolve(set, seed, sub, mlvl, opts, mods, out, gpa, depth + 1);
+        if (set.byName(e.name)) |sub| {
+            // Nested TC: recurse, never level-moved.
+            try resolveWalk(set, seed, sub, 0, opts, mods, out, gpa, depth + 1, state);
         } else if (isGold(e.name)) {
             try out.append(gpa, .{ .kind = .gold, .code = "gld", .quantity_mult = e.mul, .mods = mods });
         } else {
+            var code = e.name;
+            var rolled: model.Quality = .invalid;
+            if (!opts.is_expansion) {
+                // Classic: a base of version 100 or more drops nothing; the entry's own modifiers raise
+                // the class's; a thrown base is picked again, ten times per walk, then a Long Sword.
+                if (e.item_version > 99) continue;
+                mods = .{
+                    .magic = @max(mods.magic, e.entry_mods.magic),
+                    .rare = @max(mods.rare, e.entry_mods.rare),
+                    .set = @max(mods.set, e.entry_mods.set),
+                    .unique = @max(mods.unique, e.entry_mods.unique),
+                };
+            }
+            if (opts.quality_roll) |qr| if (e.link_quality == .invalid) {
+                rolled = qr.roll(qr.ctx, seed, e.name, mods);
+            };
+            if (!opts.is_expansion) {
+                if (e.throwable) {
+                    if (state.thrown_repicks < 10) {
+                        state.thrown_repicks += 1;
+                        remaining += 1;
+                        continue;
+                    }
+                    state.thrown_repicks += 1;
+                    code = classic_thrown_fallback;
+                }
+            }
             try out.append(gpa, .{
                 .kind = .item,
-                .code = e.name,
+                .code = code,
                 .quantity_mult = e.mul,
                 .mods = mods,
                 .forced_quality = e.link_quality,
                 .forced_id = e.link_id,
+                .quality = rolled,
             });
         }
     }
+}
+
+fn inherit(parent: i32, own: i32) i32 {
+    if (parent == 0) return own;
+    return if (own <= parent) parent else own;
 }
 
 /// The last entry whose exclusive cumulative weight is <= `wanted` (the engine's
@@ -595,4 +721,62 @@ test "party scaling reduces NoDrop as players increase" {
     try testing.expectEqual(@as(i32, 100), scaledNoDrop(100, 100, 1));
     try testing.expectEqual(@as(i32, 33), scaledNoDrop(100, 100, 2));
     try testing.expect(scaledNoDrop(100, 100, 5) < scaledNoDrop(100, 100, 2));
+}
+
+test "Classic counts no Expansion entry: Andarielq (H) weighs 22 of 23, and its Key of Terror never drops" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    var set = try build(testing.allocator, &t);
+    defer set.deinit();
+    const tc = set.byName("Andarielq (H)").?;
+    try testing.expectEqual(@as(i32, 23), tc.total_weight);
+    try testing.expectEqual(@as(i32, 22), tc.total_weight_classic);
+    var n: u32 = 0;
+    while (n < 2000) : (n += 1) {
+        var s = rng.Seed.init(n *% 2654435761 +% 1, 0x29a);
+        var out: std.ArrayListUnmanaged(Pick) = .empty;
+        defer out.deinit(testing.allocator);
+        try resolve(&set, &s, tc, 75, .{ .is_expansion = false }, .{}, &out, testing.allocator, 0);
+        for (out.items) |p| {
+            try testing.expect(!std.mem.eql(u8, p.code, "tes"));
+            if (t.itemRef(p.code)) |ref| try testing.expect(t.itemTable(ref.table).int(ref.row, "version") < 100);
+        }
+    }
+}
+
+test "Classic picks again for a thrown base, ten times in a walk, then drops a Long Sword" {
+    var t = try tables.Tables.load(testing.allocator);
+    defer t.deinit();
+    var set = try build(testing.allocator, &t);
+    defer set.deinit();
+    var entries = [_]Entry{.{ .name = "tkf", .prob = 1, .cum = 0, .cum_classic = 0, .throwable = true }};
+    const leaf = ParsedTC{ .name = "thrown", .group = 0, .level = 0, .picks = 3, .no_drop = 0, .total_weight = 1, .total_weight_classic = 1, .entries = &entries, .mods = .{} };
+    var s = rng.Seed.init(7, 0x29a);
+    var out: std.ArrayListUnmanaged(Pick) = .empty;
+    defer out.deinit(testing.allocator);
+    try resolve(&set, &s, &leaf, 10, .{ .is_expansion = false }, .{}, &out, testing.allocator, 0);
+    // picks 1..10 are thrown and picked again; the 11th, 12th and 13th draws are Long Swords
+    try testing.expectEqual(@as(usize, 3), out.items.len);
+    for (out.items) |p| try testing.expectEqualStrings("lsd", p.code);
+    // Expansion keeps the thrown base
+    var s2 = rng.Seed.init(7, 0x29a);
+    var out2: std.ArrayListUnmanaged(Pick) = .empty;
+    defer out2.deinit(testing.allocator);
+    try resolve(&set, &s2, &leaf, 10, .{ .is_expansion = true }, .{}, &out2, testing.allocator, 0);
+    try testing.expectEqual(@as(usize, 3), out2.items.len);
+    try testing.expectEqualStrings("tkf", out2.items[0].code);
+}
+
+test "the player scale truncates, and the effective count is the party plus half the rest" {
+    // r = 19/41, n = 2: 22 * r^2 / (1 - r^2) = 6.04... -> 6
+    try testing.expectEqual(@as(i32, 6), scaledNoDrop(19, 22, 2));
+    try testing.expectEqual(@as(i32, 19), scaledNoDrop(19, 22, 1));
+    try testing.expectEqual(@as(i32, 1), effectivePlayers(1, 1, 1));
+    try testing.expectEqual(@as(i32, 4), effectivePlayers(8, 1, 8)); // alone among 8: 1 + 7/2
+    try testing.expectEqual(@as(i32, 8), effectivePlayers(8, 8, 8));
+    try testing.expectEqual(@as(i32, 3), effectivePlayers(8, 8, 3)); // the monster's count caps it
+    try testing.expect(!upgradesTreasureClass(false, 2, false, false));
+    try testing.expect(!upgradesTreasureClass(true, 0, false, false));
+    try testing.expect(!upgradesTreasureClass(true, 2, true, false));
+    try testing.expect(upgradesTreasureClass(true, 2, false, false));
 }
