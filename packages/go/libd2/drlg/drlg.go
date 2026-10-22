@@ -42,18 +42,18 @@ var ErrClosed = errors.New("libd2/drlg: generator is closed")
 // goroutines is safe but not concurrent. Give each goroutine its own to actually parallelise.
 type Generator struct {
 	mu    sync.Mutex
-	api   *api
+	api   *API
 	ctx   uintptr
 	names map[int32]string
 }
 
 // New loads the game tables. Close it when you are done with them.
 func New() (*Generator, error) {
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		return nil, err
 	}
-	ctx := a.ctxCreate()
+	ctx := a.CtxCreate()
 	if ctx == 0 {
 		return nil, errors.New("libd2/drlg: could not load the game tables")
 	}
@@ -65,7 +65,7 @@ func (g *Generator) Close() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.ctx != 0 {
-		g.api.ctxDestroy(g.ctx)
+		g.api.CtxDestroy(g.ctx)
 		g.ctx = 0
 	}
 	return nil
@@ -79,16 +79,16 @@ func (g *Generator) Core() core.Ptr {
 	if g.ctx == 0 {
 		return 0
 	}
-	return core.Ptr(g.api.ctxCore(g.ctx))
+	return core.Ptr(g.api.CtxCore(g.ctx))
 }
 
 // ABIVersion is the C ABI version of the native library in use.
 func ABIVersion() (uint32, error) {
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		return 0, err
 	}
-	return a.abiVersion(), nil
+	return a.AbiVersion(), nil
 }
 
 type options struct {
@@ -127,13 +127,13 @@ func (g *Generator) GenerateAct(seed uint32, difficulty Difficulty, act int, opt
 		return nil, ErrClosed
 	}
 
-	handle := g.api.genAct(g.ctx, seed, int32(difficulty), int32(act))
+	handle := g.api.GenAct(g.ctx, seed, int32(difficulty), int32(act))
 	if handle == 0 {
 		return nil, fmt.Errorf("libd2/drlg: generating act %d for seed %d (%s) failed", act+1, seed, difficulty)
 	}
-	defer g.api.actFree(handle)
+	defer g.api.ActFree(handle)
 
-	count := g.api.actLevelCount(handle)
+	count := g.api.ActLevelCount(handle)
 	if count < 0 {
 		return nil, fmt.Errorf("libd2/drlg: reading the level count of act %d failed (%d)", act+1, count)
 	}
@@ -150,30 +150,30 @@ func (g *Generator) GenerateAct(seed uint32, difficulty Difficulty, act int, opt
 }
 
 func (g *Generator) readLevel(handle uintptr, index int32, o options) (Level, error) {
-	id := g.api.actLevelID(handle, index)
+	id := g.api.ActLevelId(handle, index)
 
 	var ox, oy, w, h int32
-	if rc := g.api.actLevelOrigin(handle, index, &ox, &oy); rc < 0 {
+	if rc := g.api.ActLevelOrigin(handle, index, unsafe.Pointer(&ox), unsafe.Pointer(&oy)); rc < 0 {
 		return Level{}, fmt.Errorf("libd2/drlg: reading the origin of level index %d failed (%d)", index, rc)
 	}
-	if rc := g.api.actLevelSize(handle, index, &w, &h); rc < 0 {
+	if rc := g.api.ActLevelSize(handle, index, unsafe.Pointer(&w), unsafe.Pointer(&h)); rc < 0 {
 		return Level{}, fmt.Errorf("libd2/drlg: reading the size of level index %d failed (%d)", index, rc)
 	}
 
 	rooms, err := readSlice[Room]("rooms", index, func(out unsafe.Pointer, capacity int32) int32 {
-		return g.api.actRooms(handle, index, out, capacity)
+		return g.api.ActRooms(handle, index, out, capacity)
 	})
 	if err != nil {
 		return Level{}, err
 	}
 	presets, err := readSlice[PresetUnit]("presets", index, func(out unsafe.Pointer, capacity int32) int32 {
-		return g.api.actLevelPresets(handle, index, out, capacity)
+		return g.api.ActLevelPresets(handle, index, out, capacity)
 	})
 	if err != nil {
 		return Level{}, err
 	}
 	adjacents, err := readSlice[Adjacent]("adjacents", index, func(out unsafe.Pointer, capacity int32) int32 {
-		return g.api.actLevelAdjacents(handle, index, out, capacity)
+		return g.api.ActLevelAdjacents(handle, index, out, capacity)
 	})
 	if err != nil {
 		return Level{}, err
@@ -182,8 +182,8 @@ func (g *Generator) readLevel(handle uintptr, index int32, o options) (Level, er
 	l := Level{
 		ID:        id,
 		Name:      g.levelName(id),
-		Type:      Type(g.api.actLevelType(handle, index)),
-		Placed:    g.api.actLevelPlaced(handle, index) == 1,
+		Type:      Type(g.api.ActLevelDrlgType(handle, index)),
+		Placed:    g.api.ActLevelPlaced(handle, index) == 1,
 		OriginX:   ox,
 		OriginY:   oy,
 		Width:     w,
@@ -195,7 +195,7 @@ func (g *Generator) readLevel(handle uintptr, index int32, o options) (Level, er
 
 	if o.collision {
 		cells, cw, ch, err := readGrid[uint16]("collision", index, func(out unsafe.Pointer, capacity int32, gw, gh *int32) int32 {
-			return g.api.actLevelCollision(handle, index, out, capacity, gw, gh)
+			return g.api.ActLevelCollision(handle, index, out, capacity, unsafe.Pointer(gw), unsafe.Pointer(gh))
 		})
 		if err != nil {
 			return Level{}, err
@@ -206,7 +206,7 @@ func (g *Generator) readLevel(handle uintptr, index int32, o options) (Level, er
 	}
 	if o.walk {
 		cells, cw, ch, err := readGrid[uint8]("walk", index, func(out unsafe.Pointer, capacity int32, gw, gh *int32) int32 {
-			return g.api.actLevelWalk(handle, index, out, capacity, gw, gh)
+			return g.api.ActLevelWalk(handle, index, out, capacity, unsafe.Pointer(gw), unsafe.Pointer(gh))
 		})
 		if err != nil {
 			return Level{}, err
@@ -225,7 +225,7 @@ func (g *Generator) levelName(id int32) string {
 		return n
 	}
 	n := readString(func(buf unsafe.Pointer, capacity int32) int32 {
-		return g.api.levelName(g.ctx, id, buf, capacity)
+		return g.api.LevelName(g.ctx, id, buf, capacity)
 	})
 	g.names[id] = n
 	return n
@@ -233,23 +233,23 @@ func (g *Generator) levelName(id int32) string {
 
 // ObjectName is an Objects.txt row's name, for the TxtFileNo of an Object preset unit.
 func ObjectName(txtFileNo int32) (string, error) {
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		return "", err
 	}
 	return readString(func(buf unsafe.Pointer, capacity int32) int32 {
-		return a.objectName(txtFileNo, buf, capacity)
+		return a.ObjectName(txtFileNo, buf, capacity)
 	}), nil
 }
 
 // ObjectDesc is an Objects.txt row's description column.
 func ObjectDesc(txtFileNo int32) (string, error) {
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		return "", err
 	}
 	return readString(func(buf unsafe.Pointer, capacity int32) int32 {
-		return a.objectDesc(txtFileNo, buf, capacity)
+		return a.ObjectDesc(txtFileNo, buf, capacity)
 	}), nil
 }
 

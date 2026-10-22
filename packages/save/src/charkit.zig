@@ -1205,7 +1205,7 @@ test "mercenary experience is the engine's curve" {
 test "the example spec makes a level 99 paladin with its gear, and the same bytes every time" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const spec = try parseSpec(arena.allocator(), @embedFile("testdata/paladin.kit"));
+    const spec = try parseSpec(arena.allocator(), @import("libd2-testdata").paladin_kit);
 
     var maker = try kititem.Maker.init(testing.allocator, .expansion, 0x5eed);
     defer maker.deinit();
@@ -1283,7 +1283,7 @@ fn setCodeBits(rec: []u8, code: []const u8) void {
 test "patching a played save rewrites the mercenary's items and a wrong-base item and leaves the rest alone" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const text = @embedFile("testdata/paladin.kit");
+    const text = @import("libd2-testdata").paladin_kit;
     const spec = try parseSpec(arena.allocator(), text);
     var maker = try kititem.Maker.init(testing.allocator, .expansion, 0x5eed);
     defer maker.deinit();

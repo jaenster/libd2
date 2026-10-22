@@ -33,6 +33,7 @@ pub fn build(b: *std.Build) void {
         .{ .dep = "d2_bnet", .mod = "d2-bnet" },
         .{ .dep = "d2_client", .mod = "d2-client" },
         .{ .dep = "d2_render", .mod = "d2-render" },
+        .{ .dep = "d2_itemdraw", .mod = "d2-itemdraw" },
     };
     // The umbrella: one module named `libd2` with every package hanging off it by name, so a
     // consumer takes one dependency and one import instead of learning fourteen module names.
@@ -56,7 +57,7 @@ pub fn build(b: *std.Build) void {
     // `zig build test-umbrella` — proves the umbrella resolves every name it advertises.
     const umbrella_tests = b.addTest(.{ .root_module = umbrella });
 
-    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "item", "game", "net", "bnet", "data", "util", "world", "pathfinding", "save", "client" };
+    const packages = [_][]const u8{ "formats", "drlg", "render", "core", "item", "game", "net", "bnet", "data", "util", "world", "pathfinding", "save", "client", "itemdraw" };
 
     const test_step = b.step("test", "Run every package's test suite");
     test_step.dependOn(&b.addRunArtifact(umbrella_tests).step);
@@ -80,4 +81,18 @@ pub fn build(b: *std.Build) void {
     verify_sub.setCwd(b.path("packages/drlg"));
     verify_sub.setName("verify:drlg");
     verify_step.dependOn(&verify_sub.step);
+
+    // The raw language bindings are generated from the C headers (tools/bindgen): `bindings` rewrites
+    // them, `check-bindings` fails when a header or a capi.zig changed and they were not regenerated.
+    const root = b.path(".").getPath(b);
+    const gen = b.addSystemCommand(&.{ "zig", "build", "run", "--" });
+    gen.setCwd(b.path("tools/bindgen"));
+    gen.addArg(root);
+    gen.setName("bindgen");
+    b.step("bindings", "Regenerate the raw Rust, Go, .NET and TypeScript bindings").dependOn(&gen.step);
+    const check = b.addSystemCommand(&.{ "zig", "build", "run", "--" });
+    check.setCwd(b.path("tools/bindgen"));
+    check.addArgs(&.{ root, "--check" });
+    check.setName("check-bindings");
+    b.step("check-bindings", "Fail when the generated bindings are out of date").dependOn(&check.step);
 }

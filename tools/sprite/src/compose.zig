@@ -70,7 +70,7 @@ pub fn renderGrid(gpa: std.mem.Allocator, cells: []const Cell, cols: u32, pal: *
         for (cells, 0..) |cell, i| {
             const ox: i32 = @as(i32, @intCast((i % cols) * cw)) - b.x0;
             const oy: i32 = @as(i32, @intCast((i / cols) * ch)) - b.y0;
-            for (cell) |d| drawIndexed(img, W, H, d, ox, oy);
+            for (cell) |d| formats.canvas.drawIndexed(img, W, H, d.px, d.w, d.h, ox + d.x, oy + d.y, d.shift);
         }
         return pngx.encodeIndexed(gpa, img, W, H, &pal.rgb);
     }
@@ -85,22 +85,6 @@ pub fn renderGrid(gpa: std.mem.Allocator, cells: []const Cell, cols: u32, pal: *
         }
     }
     return pngx.encodeRgbaDeflate(gpa, canvas.px, W, H);
-}
-
-fn drawIndexed(img: []u8, W: u32, H: u32, d: Draw, ox: i32, oy: i32) void {
-    for (0..d.h) |row| {
-        const y = oy + d.y + @as(i32, @intCast(row));
-        if (y < 0 or y >= H) continue;
-        for (0..d.w) |col| {
-            const raw = d.px[row * d.w + col];
-            if (raw == 0) continue;
-            const idx = if (d.shift) |t| t[raw] else raw;
-            if (idx == 0) continue;
-            const x = ox + d.x + @as(i32, @intCast(col));
-            if (x < 0 or x >= W) continue;
-            img[@as(usize, @intCast(y)) * W + @as(usize, @intCast(x))] = idx;
-        }
-    }
 }
 
 const char_tokens = [_][]const u8{ "am", "so", "ne", "pa", "ba", "dz", "ai" };

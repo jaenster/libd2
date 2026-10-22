@@ -411,7 +411,7 @@ fn parseBody(r: *BitReader, is_save: bool) Item {
 fn appendDurability(r: *BitReader, it: *Item) void {
     const maxdur_row = isc.get(73) orelse return; // maxdurability
     const maxdur = r.read(@intCast(maxdur_row.save_bits));
-    it.addStat(.{ .id = 73, .value = @as(i32, @intCast(maxdur)) -% maxdur_row.save_add });
+    it.addStat(.{ .id = 73, .value = @as(i32, @intCast(maxdur)) -% maxdur_row.save_add, .list = it.cur_list });
     if (maxdur != 0) _ = addGeneric(r, it, 72); // durability
 }
 

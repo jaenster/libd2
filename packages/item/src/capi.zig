@@ -7,7 +7,9 @@
 //! the opaque Ctx; each roll uses a throwaway arena copied into the caller buffer.
 
 const std = @import("std");
-const lib = @import("lib.zig");
+// Imported as a MODULE, not a relative file: the combined wasm also links d2-itemdraw, which reaches
+// the same lib.zig through the "d2-item" module, and a file may belong to only one module.
+const lib = @import("d2-item");
 
 /// Mirrors `model.Drop`, flattened to C. Field order/types MUST match d2item.h.
 pub const D2ItemDrop = extern struct {

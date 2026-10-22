@@ -1051,7 +1051,7 @@ test "Enigma: the runeword's own list is the one an engine save carries, at the 
     }
 
     // the list of an Enigma the engine wrote, stat for stat (its defense bonus is the top of 750-775)
-    const sv = try sections.parse(@embedFile("testdata/seed/EpicSorc.d2s"));
+    const sv = try sections.parse(@import("libd2-testdata").epic_sorc);
     var di = sv.items.iterator();
     var donor: ?wire.Item = null;
     while (di.next()) |p| if (p.runeword_id == 20539) {

@@ -21,3 +21,15 @@ export type {AreaId} from './areas.ts';
 
 export {rasterize, twoTone, View, Minimap, wallSegments, floorRuns, walkableBounds, EDGE_CAP} from './render.ts';
 export type {Raster, Rgba, Paint} from './render.ts';
+
+export {ItemDrawer, Layout, rasterizeLayout} from './itemdraw.ts';
+export type {
+  Viewer, TextMode, Background, LayoutKind, ItemImage, LayoutData, Fill, Sprite, Glyph, Span, Line, Rect,
+  Tile, GlyphProvider, SpriteProvider,
+} from './itemdraw.ts';
+
+// The raw C ABI, for what the classes above do not wrap: every export of every library (generated
+// from the C headers), and the two modules that carry them.
+export * as abi from './abi.ts';
+export {load as loadRaw, loadItems as loadItemsRaw, MODULES} from './wasm.ts';
+export type {Exports} from './abi.ts';

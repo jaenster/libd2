@@ -32,6 +32,8 @@ pub const png = @import("d2-util").png;
 pub const graphic = @import("graphic.zig");
 pub const strings = @import("strings.zig");
 pub const itemtext = @import("itemtext.zig");
+pub const statdesc = @import("statdesc.zig");
+pub const itemdesc = @import("itemdesc.zig");
 pub const render = @import("render.zig");
 pub const wire = @import("d2-core").wire;
 

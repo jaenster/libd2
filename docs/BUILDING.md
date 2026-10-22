@@ -29,6 +29,39 @@ The packages are libc-free, so the wasm build is `wasm32-freestanding` — it
 imports nothing and instantiates in any wasm runtime (Node, browser) with no WASI
 shim.
 
+## Language bindings
+
+The raw layer of every binding is generated from the C headers by `tools/bindgen` (Zig):
+
+```sh
+zig build bindings          # rewrite the generated files
+zig build check-bindings    # fail if a header changed without them (CI runs this)
+```
+
+Before emitting anything it checks each `include/*.h` against its package's `src/capi.zig`, read
+with the Zig parser: every declared function is exported with the same parameter count and return,
+every export is declared, and the `*_ABI_VERSION` define equals what `*_abi_version()` returns.
+
+|language|generated|hand-written on top|
+|-|-|-|
+|Rust|`packages/rust/libd2/src/sys/*.rs` (externs, structs, `EXPECTED_ABI`), `tests/generated_abi.rs`|`drlg`, `itemdraw` modules; `sys` is public for the rest|
+|Go|`packages/go/libd2/<pkg>/zz_abi.go` (purego API struct, consts, structs, `abiVersion`), `zz_abi_test.go`|`drlg`, `item`, `pathfinding`, `itemdraw`; `net` and `util` expose the generated API|
+|.NET|`packages/dotnet/LibD2/<Ns>/Native.g.cs` (P/Invoke, structs, `ExpectedAbi`), `LibD2.Tests/GeneratedAbi.g.cs`|`MapGenerator`, `ItemDrawer`; `Native` is public for the rest|
+|npm|`packages/npm/libd2/src/abi.ts` (`Exports`, consts, wasm32 `LAYOUT`, `EXPECTED_ABI`), `test/abi.generated.test.ts`|the game/area/route API, `ItemDrawer`; `abi`, `loadRaw`, `loadItemsRaw` for the rest|
+
+Each generated smoke test checks that every declared function is exported, that the library reports
+the generated ABI, and (Rust, Go, .NET) that every struct has the C size.
+
+The Rust crate links one combined static library (`packages/wasm` built natively), because each Zig
+static library carries its own copy of the shared packages. npm ships two wasm modules: `libd2.wasm`
+(drlg, pf, net, util) and `items.wasm` (item, itemdraw), the second loaded only by `ItemDrawer`.
+
+Test data every language reads lives once, at `testdata/` in the repository root (saves, kits, the
+item-drawing goldens and layouts); the Zig packages get it as the `libd2_testdata` path dependency.
+What a generator can make is not committed: the kit character's save is composed in the test, and the
+binding fixtures (`testdata/itemdraw/bindings`, git-ignored) are written by `zig build fixtures` in
+packages/itemdraw, which CI runs before the Rust, Go, .NET and npm tests; without them those tests skip.
+
 ## Releases
 
 One version for the whole library: `build.zig.zon`'s `.version`, mirrored in every

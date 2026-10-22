@@ -6,8 +6,8 @@ const std = @import("std");
 const save = @import("lib.zig");
 const itemtext = save.describe.itemtext;
 
-const sorc_bytes = @embedFile("testdata/seed/EpicSorc.d2s");
-const ama_bytes = @embedFile("testdata/seed/EpicAma.d2s");
+const sorc_bytes = @import("libd2-testdata").epic_sorc;
+const ama_bytes = @import("libd2-testdata").epic_ama;
 
 const Ctx = struct {
     arena: std.heap.ArenaAllocator,
@@ -80,6 +80,7 @@ test "a runeword, personalised, with its runes in the sockets (stash page 0,0)" 
     try std.testing.expectEqualStrings("Ber Rune", v.socketed[2].name);
     try expectLines(v, &.{
         "Defense: 1373",
+        "Durability: 70 of 72",
         "Required Strength: 103",
         "Required Level: 65",
         "+2 to All Skills",
@@ -174,6 +175,7 @@ test "an ethereal unique, and a javelin's damage, quantity and class skill lines
     try std.testing.expect(boots.ethereal);
     try expectLines(boots, &.{
         "Defense: 267",
+        "Durability: 14 of 14",
         "Required Strength: 91",
         "Required Level: 64",
         "Ethereal (Cannot be Repaired)",

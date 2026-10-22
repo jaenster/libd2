@@ -43,7 +43,7 @@ var ErrClosed = errors.New("libd2/pathfinding: world is closed")
 // give each goroutine its own World to actually parallelise.
 type World struct {
 	mu    sync.Mutex
-	api   *api
+	api   *API
 	world uintptr
 	// gen is held so the generator cannot be collected while its tables are in use here.
 	gen *drlg.Generator
@@ -55,7 +55,7 @@ func New(g *drlg.Generator, seed uint32, difficulty drlg.Difficulty) (*World, er
 	if g == nil {
 		return nil, errors.New("libd2/pathfinding: a generator is required")
 	}
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func New(g *drlg.Generator, seed uint32, difficulty drlg.Difficulty) (*World, er
 	if core == 0 {
 		return nil, drlg.ErrClosed
 	}
-	w := a.worldCreate(uintptr(core), seed, int32(difficulty))
+	w := a.WorldCreate(uintptr(core), seed, int32(difficulty))
 	if w == 0 {
 		return nil, fmt.Errorf("libd2/pathfinding: could not build a world for seed %d (%s)", seed, difficulty)
 	}
@@ -76,7 +76,7 @@ func (w *World) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.world != 0 {
-		w.api.worldDestroy(w.world)
+		w.api.WorldDestroy(w.world)
 		w.world = 0
 	}
 	return nil
@@ -84,11 +84,11 @@ func (w *World) Close() error {
 
 // ABIVersion is the C ABI version of the native library in use.
 func ABIVersion() (uint32, error) {
-	a, err := load()
+	a, err := Load()
 	if err != nil {
 		return 0, err
 	}
-	return a.abiVersion(), nil
+	return a.AbiVersion(), nil
 }
 
 // LoadAct generates an act into the world and indexes its levels. act is 0-based: 0 is Act I.
@@ -101,7 +101,7 @@ func (w *World) LoadAct(act int) error {
 	if act < 0 || act > 4 {
 		return fmt.Errorf("libd2/pathfinding: act is 0 (Act I) to 4 (Act V), got %d", act)
 	}
-	if rc := w.api.worldLoadAct(w.world, int32(act)); rc < 0 {
+	if rc := w.api.WorldLoadAct(w.world, int32(act)); rc < 0 {
 		return fmt.Errorf("libd2/pathfinding: loading act %d failed (%d)", act+1, rc)
 	}
 	return nil
@@ -120,7 +120,7 @@ func (w *World) Route(from, to Pos, opts *Options) (*Route, error) {
 	}
 
 	var (
-		cOpts cOptions
+		cOpts D2PfOptions
 		cPtr  unsafe.Pointer
 	)
 	if opts != nil {
@@ -128,14 +128,14 @@ func (w *World) Route(from, to Pos, opts *Options) (*Route, error) {
 		cPtr = unsafe.Pointer(&cOpts)
 	}
 
-	handle := w.api.route(w.world, from.Level, from.X, from.Y, to.Level, to.X, to.Y, cPtr)
+	handle := w.api.Route(w.world, from.Level, from.X, from.Y, to.Level, to.X, to.Y, cPtr)
 	runtime.KeepAlive(cOpts)
 	if handle == 0 {
 		return nil, nil
 	}
-	defer w.api.routeFree(handle)
+	defer w.api.RouteFree(handle)
 
-	legCount := w.api.routeLegCount(handle)
+	legCount := w.api.RouteLegCount(handle)
 	if legCount < 0 {
 		return nil, fmt.Errorf("libd2/pathfinding: reading the route's leg count failed (%d)", legCount)
 	}
@@ -147,8 +147,8 @@ func (w *World) Route(from, to Pos, opts *Options) (*Route, error) {
 			return nil, err
 		}
 		r.Legs = append(r.Legs, Leg{
-			Level: w.api.routeLegLevel(handle, i),
-			Exit:  w.api.routeLegExit(handle, i),
+			Level: w.api.RouteLegLevel(handle, i),
+			Exit:  w.api.RouteLegExit(handle, i),
 			Moves: moves,
 		})
 	}
@@ -163,7 +163,7 @@ func (w *World) LevelRoute(from, to int32) ([]int32, error) {
 	if w.world == 0 {
 		return nil, ErrClosed
 	}
-	n := w.api.levelRoute(w.world, from, to, nil, 0)
+	n := w.api.LevelRoute(w.world, from, to, nil, 0)
 	if n < 0 {
 		return nil, fmt.Errorf("libd2/pathfinding: routing level %d to %d failed (%d)", from, to, n)
 	}
@@ -171,7 +171,7 @@ func (w *World) LevelRoute(from, to int32) ([]int32, error) {
 		return nil, nil
 	}
 	buf := make([]int32, n)
-	got := w.api.levelRoute(w.world, from, to, unsafe.Pointer(&buf[0]), n)
+	got := w.api.LevelRoute(w.world, from, to, unsafe.Pointer(&buf[0]), n)
 	runtime.KeepAlive(buf)
 	if got < 0 {
 		return nil, fmt.Errorf("libd2/pathfinding: routing level %d to %d failed (%d)", from, to, got)
@@ -190,7 +190,7 @@ func (w *World) Walkable(level, x, y int32) bool {
 	if w.world == 0 {
 		return false
 	}
-	return w.api.walkable(w.world, level, x, y) == 1
+	return w.api.Walkable(w.world, level, x, y) == 1
 }
 
 // LineOfSight reports whether sight runs between two level-local subtiles. mask selects what
@@ -201,7 +201,7 @@ func (w *World) LineOfSight(level, fromX, fromY, toX, toY int32, mask uint16) bo
 	if w.world == 0 {
 		return false
 	}
-	return w.api.lineOfSight(w.world, level, fromX, fromY, toX, toY, mask) == 1
+	return w.api.LineOfSight(w.world, level, fromX, fromY, toX, toY, mask) == 1
 }
 
 // NearestPassable is the closest cell to (x, y) a walking player fits in, searched outward to
@@ -216,14 +216,14 @@ func (w *World) NearestPassable(level, x, y, radius int32) (nx, ny int32, ok boo
 		return 0, 0, false
 	}
 	var ox, oy int32
-	if w.api.nearestPassable(w.world, level, x, y, radius, &ox, &oy) != 1 {
+	if w.api.NearestPassable(w.world, level, x, y, radius, unsafe.Pointer(&ox), unsafe.Pointer(&oy)) != 1 {
 		return 0, 0, false
 	}
 	return ox, oy, true
 }
 
-func readMoves(a *api, route uintptr, leg int32) ([]Move, error) {
-	n := a.routeLegMoves(route, leg, nil, 0)
+func readMoves(a *API, route uintptr, leg int32) ([]Move, error) {
+	n := a.RouteLegMoves(route, leg, nil, 0)
 	if n < 0 {
 		return nil, fmt.Errorf("libd2/pathfinding: reading the moves of leg %d failed (%d)", leg, n)
 	}
@@ -231,7 +231,7 @@ func readMoves(a *api, route uintptr, leg int32) ([]Move, error) {
 		return nil, nil
 	}
 	buf := make([]Move, n)
-	got := a.routeLegMoves(route, leg, unsafe.Pointer(&buf[0]), n)
+	got := a.RouteLegMoves(route, leg, unsafe.Pointer(&buf[0]), n)
 	runtime.KeepAlive(buf)
 	if got < 0 {
 		return nil, fmt.Errorf("libd2/pathfinding: reading the moves of leg %d failed (%d)", leg, got)
@@ -271,7 +271,7 @@ func (w *World) PlaceUnit(level int32, unitID uint32, t UnitType, sizeX, x, y in
 	if w.world == 0 {
 		return ErrClosed
 	}
-	if rc := w.api.unitPlace(w.world, level, unitID, uint8(t), sizeX, x, y); rc != 0 {
+	if rc := w.api.UnitPlace(w.world, level, unitID, uint8(t), sizeX, x, y); rc != 0 {
 		return fmt.Errorf("libd2/pathfinding: placing unit %d on level %d failed (%d)", unitID, level, rc)
 	}
 	return nil
@@ -284,7 +284,7 @@ func (w *World) RemoveUnit(level int32, unitID uint32) error {
 	if w.world == 0 {
 		return ErrClosed
 	}
-	if rc := w.api.unitLift(w.world, level, unitID); rc != 0 {
+	if rc := w.api.UnitLift(w.world, level, unitID); rc != 0 {
 		return fmt.Errorf("libd2/pathfinding: remove unit failed (%d)", rc)
 	}
 	return nil
@@ -297,7 +297,7 @@ func (w *World) ClearUnits(level int32) error {
 	if w.world == 0 {
 		return ErrClosed
 	}
-	if rc := w.api.unitsClear(w.world, level); rc != 0 {
+	if rc := w.api.UnitsClear(w.world, level); rc != 0 {
 		return fmt.Errorf("libd2/pathfinding: clear units failed (%d)", rc)
 	}
 	return nil
@@ -317,7 +317,7 @@ func (w *World) EditTerrain(level, x0, y0, x1, y1 int32, add, remove uint16) err
 	if w.world == 0 {
 		return ErrClosed
 	}
-	if rc := w.api.terrainEdit(w.world, level, x0, y0, x1, y1, add, remove); rc != 0 {
+	if rc := w.api.TerrainEdit(w.world, level, x0, y0, x1, y1, add, remove); rc != 0 {
 		return fmt.Errorf("libd2/pathfinding: edit terrain failed (%d)", rc)
 	}
 	return nil

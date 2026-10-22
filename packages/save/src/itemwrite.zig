@@ -264,7 +264,7 @@ fn isBook(code: []const u8) bool {
 
 const testing = std.testing;
 const sections = @import("sections.zig");
-const donor_save = @embedFile("testdata/EpicSorc.d2s");
+const donor_save = @import("libd2-testdata").epic_sorc;
 
 /// The 5 bits a book carries after its quality block, read from an engine record.
 /// Whether the first record of `rec` is written back by this writer exactly as it is: the check that the form a maker
@@ -355,8 +355,8 @@ fn writeBack(bytes: []const u8, tally: *Tally) !void {
 test "the engine's records are written back byte for byte" {
     var tally = Tally{};
     try writeBack(donor_save, &tally);
-    try writeBack(@embedFile("testdata/seed/EpicSorc.d2s"), &tally);
-    try writeBack(@embedFile("testdata/seed/EpicAma.d2s"), &tally);
+    try writeBack(@import("libd2-testdata").epic_sorc, &tally);
+    try writeBack(@import("libd2-testdata").epic_ama, &tally);
     // the forms this writer exists for are among them
     try testing.expect(tally.by_quality[4] > 0 and tally.by_quality[6] > 0 and tally.by_quality[7] > 0);
     try testing.expect(tally.same > 60);

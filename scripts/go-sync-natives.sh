@@ -31,6 +31,9 @@ subsystems=(
   "drlg:drlg:d2drlg"
   "item:item:d2item"
   "pathfinding:pathfinding:d2pf"
+  "itemdraw:itemdraw:d2itemdraw"
+  "net:net:d2net"
+  "util:util:d2util"
 )
 
 # zig target triple -> GOOS_GOARCH. Anything not listed is skipped rather than guessed.

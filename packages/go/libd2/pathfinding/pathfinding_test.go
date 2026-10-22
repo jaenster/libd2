@@ -27,23 +27,23 @@ func TestStructLayout(t *testing.T) {
 	if got, want := unsafe.Offsetof(Move{}.Kind), uintptr(8); got != want {
 		t.Errorf("offsetof(Move.Kind) = %d, want %d", got, want)
 	}
-	if got, want := unsafe.Sizeof(cOptions{}), uintptr(24); got != want {
-		t.Errorf("sizeof(cOptions) = %d, want %d", got, want)
+	if got, want := unsafe.Sizeof(D2PfOptions{}), uintptr(24); got != want {
+		t.Errorf("sizeof(D2PfOptions) = %d, want %d", got, want)
 	}
 	for _, c := range []struct {
 		field string
 		got   uintptr
 		want  uintptr
 	}{
-		{"mask", unsafe.Offsetof(cOptions{}.mask), 0},
-		{"teleport", unsafe.Offsetof(cOptions{}.teleport), 4},
-		{"teleportAcrossLevels", unsafe.Offsetof(cOptions{}.teleportAcrossLevels), 8},
-		{"teleportMaxCast", unsafe.Offsetof(cOptions{}.teleportMaxCast), 12},
-		{"teleportMetric", unsafe.Offsetof(cOptions{}.teleportMetric), 16},
-		{"snapRadius", unsafe.Offsetof(cOptions{}.snapRadius), 20},
+		{"mask", unsafe.Offsetof(D2PfOptions{}.Mask), 0},
+		{"teleport", unsafe.Offsetof(D2PfOptions{}.Teleport), 4},
+		{"teleportAcrossLevels", unsafe.Offsetof(D2PfOptions{}.TeleportAcrossLevels), 8},
+		{"teleportMaxCast", unsafe.Offsetof(D2PfOptions{}.TeleportMaxCast), 12},
+		{"teleportMetric", unsafe.Offsetof(D2PfOptions{}.TeleportMetric), 16},
+		{"snapRadius", unsafe.Offsetof(D2PfOptions{}.SnapRadius), 20},
 	} {
 		if c.got != c.want {
-			t.Errorf("offsetof(cOptions.%s) = %d, want %d", c.field, c.got, c.want)
+			t.Errorf("offsetof(D2PfOptions.%s) = %d, want %d", c.field, c.got, c.want)
 		}
 	}
 }

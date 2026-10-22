@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const util = @import("d2-util");
+const formats = @import("d2-formats");
 
 pub const Filter = enum { mmpx, nearest };
 
@@ -25,11 +26,7 @@ pub fn scale(gpa: std.mem.Allocator, px: []const u8, w: u32, h: u32, k: u32, fil
         return out;
     }
     switch (filter) {
-        .nearest => {
-            for (0..oh) |y| for (0..ow) |x| {
-                out[y * ow + x] = px[(y / k) * w + x / k];
-            };
-        },
+        .nearest => formats.canvas.scaleIndicesNearest(px, w, h, k, out),
         .mmpx => try util.mmpx.scale(px, w, h, w, k, .{ .palette = rgb, .edge = edge }, out, ow),
     }
     return out;

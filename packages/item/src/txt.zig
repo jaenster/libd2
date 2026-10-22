@@ -19,7 +19,9 @@ pub const Table = struct {
         var ci: usize = 0;
         var hcols = std.mem.splitScalar(u8, trimCR(header), '\t');
         while (hcols.next()) |name| : (ci += 1) {
-            try t.cols.put(a, name, ci);
+            // a name given twice (Armor.txt has a second, empty mindam/maxdam) means its first column
+            const gop = try t.cols.getOrPut(a, name);
+            if (!gop.found_existing) gop.value_ptr.* = ci;
         }
 
         var rowlist: std.ArrayListUnmanaged([]const []const u8) = .empty;

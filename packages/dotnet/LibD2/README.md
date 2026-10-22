@@ -24,6 +24,21 @@ Cold Plains: 97 rooms at (984, 1080)
 Generation is deterministic: the same seed always gives the same world, matching the retail
 engine cell for cell.
 
+## Drawing an item
+
+`LibD2.ItemDraw` draws an item the way the game does, from its save-form records. The art is the
+game's own: add your MPQs; the text alone needs none.
+
+```csharp
+using LibD2.ItemDraw;
+
+using var d = new ItemDrawer();
+foreach (var m in new[] { "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" })
+    d.AddArchive(File.ReadAllBytes(m));
+Console.WriteLine(d.Text(records));                  // the tooltip, top to bottom
+File.WriteAllBytes("card.png", d.Card(records).Png); // icon + tooltip, as on hover
+```
+
 ## Collision
 
 Grids are large, so they are only copied out when asked for:

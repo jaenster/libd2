@@ -36,12 +36,18 @@ jobs:
       # It is the long pole (whole acts regenerated in ReleaseFast) and worth every minute.
       - run: zig build test
 
+      # The raw Rust, Go, .NET and TypeScript bindings are generated from the C headers, which are
+      # themselves checked against every package's exports. A header or capi.zig changed without
+      # `zig build bindings` fails here.
+      - name: Generated bindings are up to date
+        run: zig build check-bindings
+
       # The C ABI is a separate artifact from the module, and nothing above links it. A consumer
       # who takes the header + library gets neither unless this builds.
       - name: Build the C ABIs
         run: |
           set -euo pipefail
-          for p in drlg item pathfinding net; do
+          for p in drlg item pathfinding net itemdraw util; do
             ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
           done
 
@@ -57,6 +63,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
+      # The item-drawing fixtures every binding's tests compare against are generated, not committed.
+      - name: Generate the binding fixtures
+        run: cd packages/itemdraw && zig build fixtures
 
       # build.rs compiles the native from this tree, so an ABI the crate does not expect fails
       # here rather than at a consumer. That check is the whole reason this job is cheap to have.
@@ -71,6 +80,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
+      # The item-drawing fixtures every binding's tests compare against are generated, not committed.
+      - name: Generate the binding fixtures
+        run: cd packages/itemdraw && zig build fixtures
       - uses: actions/setup-go@v5
         with: { go-version: '1.24' }
 
@@ -82,7 +94,7 @@ jobs:
       - name: Build and embed the natives
         run: |
           set -euo pipefail
-          for p in drlg item pathfinding; do
+          for p in drlg item pathfinding itemdraw net util; do
             ( cd "packages/$p" && zig build -Doptimize=ReleaseFast )
           done
           ./scripts/go-sync-natives.sh --local
@@ -92,6 +104,33 @@ jobs:
       - name: Test
         working-directory: packages/go/libd2
         run: go test ./...
+
+  dotnet:
+    name: dotnet test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      # The item-drawing fixtures every binding's tests compare against are generated, not committed.
+      - name: Generate the binding fixtures
+        run: cd packages/itemdraw && zig build fixtures
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - name: Build the natives
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/natives"
+          for p in drlg item pathfinding itemdraw net util; do
+            ( cd "packages/$p" && zig build -Doptimize=ReleaseFast --prefix "$RUNNER_TEMP/natives" )
+          done
+      # The generated smoke test (every export resolves, every struct has the C size) and the
+      # wrappers against the shared fixtures.
+      - name: Test
+        working-directory: packages/dotnet/LibD2.Tests
+        env:
+          LD_LIBRARY_PATH: ${{ runner.temp }}/natives/lib
+        run: dotnet test
 
   npm:
     name: npm test
@@ -107,6 +146,9 @@ jobs:
         with: { node-version: '24' }
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
+      # The item-drawing fixtures every binding's tests compare against are generated, not committed.
+      - name: Generate the binding fixtures
+        run: cd packages/itemdraw && zig build fixtures
 
       - name: Install
         working-directory: packages/npm/libd2
@@ -128,8 +170,11 @@ jobs:
         run: |
           set -euo pipefail
           ( cd packages/wasm && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall \
-              -Dcapi=drlg,pf,net --prefix "$GITHUB_WORKSPACE/dist" )
+              -Dcapi=drlg,pf,net,util --prefix "$GITHUB_WORKSPACE/dist" )
+          ( cd packages/wasm && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall \
+              -Dcapi=item,itemdraw --prefix "$GITHUB_WORKSPACE/dist-items" )
           cp dist/bin/libd2.wasm packages/npm/libd2/src/libd2.wasm
+          cp dist-items/bin/libd2.wasm packages/npm/libd2/src/items.wasm
           ( cd packages/npm/libd2 && npm test )
 
   npm-floor:

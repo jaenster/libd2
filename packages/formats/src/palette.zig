@@ -79,3 +79,24 @@ test "the path is the one the game builds" {
         try datPath(&buf, dir_units),
     );
 }
+
+/// The palette index nearest to an RGB colour by squared distance, the first minimum winning: how the
+/// game turns a requested colour into one it can draw (D2GFX_GetColorWithAlphaFromPallete 0x00605210).
+pub fn nearest(pal: *const Palette, c: [3]u8) u8 {
+    var best: u8 = 0;
+    var best_d: u32 = std.math.maxInt(u32);
+    var i: usize = 0;
+    while (i < entries) : (i += 1) {
+        const p = pal.rgb(@intCast(i));
+        var d: u32 = 0;
+        inline for (0..3) |k| {
+            const diff: i32 = @as(i32, p[k]) - @as(i32, c[k]);
+            d += @intCast(diff * diff);
+        }
+        if (d < best_d) {
+            best_d = d;
+            best = @intCast(i);
+        }
+    }
+    return best;
+}

@@ -11,71 +11,19 @@
 export const MOVE_KINDS = ['walk', 'teleport', 'pad'] as const;
 export type MoveKind = (typeof MOVE_KINDS)[number];
 
-/** sizeof each extern struct the ABI writes into caller memory. */
-const ROOM = 28; // D2DrlgRoom: 7 x i32
-const PRESET = 16; // D2DrlgPreset: 4 x i32
-const ADJACENT = 12; // D2DrlgAdjacent: 3 x i32
-const MOVE = 12; // D2PfMove: 3 x i32
-const OPTIONS = 24; // D2PfOptions: u16 + 5 x i32, padded
+import {EXPECTED_ABI, LAYOUT, type Exports} from './abi.ts';
 
-export interface Exports {
-  memory: WebAssembly.Memory;
+export {EXPECTED_ABI, LAYOUT, type Exports};
 
-  d2drlg_ctx_create(): number;
-  d2drlg_ctx_core(ctx: number): number;
-  d2drlg_ctx_destroy(ctx: number): void;
-  d2drlg_gen_act(ctx: number, seed: number, difficulty: number, actNo: number): number;
-  d2drlg_act_free(act: number): void;
-  d2drlg_act_level_count(act: number): number;
-  d2drlg_act_level_id(act: number, index: number): number;
-  d2drlg_act_level_room_count(act: number, index: number): number;
-  d2drlg_act_rooms(act: number, index: number, out: number, cap: number): number;
-  d2drlg_act_level_origin(act: number, index: number, ox: number, oy: number): number;
-  d2drlg_act_level_size(act: number, index: number, w: number, h: number): number;
-  d2drlg_act_level_presets(act: number, index: number, out: number, cap: number): number;
-  d2drlg_act_level_adjacents(act: number, index: number, out: number, cap: number): number;
-  d2drlg_act_level_collision(
-    act: number, index: number, out: number, cap: number, w: number, h: number,
-  ): number;
-  d2drlg_level_act(ctx: number, levelId: number): number;
-  d2drlg_level_name(ctx: number, levelId: number, buf: number, cap: number): number;
-  d2drlg_object_name(txtFileNo: number, buf: number, cap: number): number;
-  d2drlg_abi_version(): number;
+/** sizeof each extern struct the ABI writes into caller memory, from the generated layout. */
+const ROOM = LAYOUT.D2DrlgRoom.size;
+const PRESET = LAYOUT.D2DrlgPreset.size;
+const ADJACENT = LAYOUT.D2DrlgAdjacent.size;
+const MOVE = LAYOUT.D2PfMove.size;
+const OPTIONS = LAYOUT.D2PfOptions.size;
 
-  d2pf_options_default(out: number): void;
-  d2pf_world_create(ctx: number, seed: number, difficulty: number): number;
-  d2pf_world_destroy(world: number): void;
-  d2pf_world_load_act(world: number, actNo: number): number;
-  d2pf_route(
-    world: number, fromLevel: number, fromX: number, fromY: number,
-    toLevel: number, toX: number, toY: number, opts: number,
-  ): number;
-  d2pf_route_free(route: number): void;
-  d2pf_route_leg_count(route: number): number;
-  d2pf_route_move_count(route: number): number;
-  d2pf_route_leg_level(route: number, leg: number): number;
-  d2pf_route_leg_exit(route: number, leg: number): number;
-  d2pf_route_leg_moves(route: number, leg: number, out: number, cap: number): number;
-  d2pf_level_route(world: number, from: number, to: number, out: number, cap: number): number;
-  d2pf_walkable(world: number, levelId: number, x: number, y: number): number;
-  d2pf_line_of_sight(
-    world: number, levelId: number, fx: number, fy: number, tx: number, ty: number, mask: number,
-  ): number;
-  d2pf_nearest_passable(
-    world: number, levelId: number, x: number, y: number, radius: number,
-    outX: number, outY: number,
-  ): number;
-  d2pf_unit_place(
-    world: number, levelId: number, unitId: number, unitType: number, sizeX: number,
-    x: number, y: number,
-  ): number;
-  d2pf_unit_lift(world: number, levelId: number, unitId: number): number;
-  d2pf_units_clear(world: number, levelId: number): number;
-  d2pf_abi_version(): number;
-}
-
-async function moduleBytes(): Promise<BufferSource> {
-  const url = new URL('./libd2.wasm', import.meta.url);
+async function moduleBytes(file: string): Promise<BufferSource> {
+  const url = new URL(`./${file}`, import.meta.url);
   if (url.protocol !== 'file:') {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`libd2: fetching ${url} failed with ${response.status}`);
@@ -88,20 +36,59 @@ async function moduleBytes(): Promise<BufferSource> {
   return await readFile(fileURLToPath(url));
 }
 
-let loading: Promise<Exports> | null = null;
+/**
+ * Which module carries which library. The map, router, wire and scaler share one module (see the
+ * top of this file); items are a second one, because the item tables would make every map consumer
+ * download a module twice the size, and nothing passes a pointer between the two.
+ */
+export const MODULES = {
+  'libd2.wasm': ['d2drlg', 'd2pf', 'd2net', 'd2util'],
+  'items.wasm': ['d2item', 'd2itemdraw'],
+} as const satisfies Record<string, readonly (keyof typeof EXPECTED_ABI)[]>;
+
+const loading = new Map<string, Promise<Exports>>();
 
 /**
- * The instantiated module, loaded once per process.
+ * One module, instantiated once per process. A module built from another revision than these
+ * declarations fails here, not with a wrong struct offset somewhere later.
  *
  * The import object is empty because the wasm is freestanding and libc-free, which is what lets the
  * same file run in Node, Bun, Deno and a browser with no polyfill and no bundler configuration.
  */
+function instantiate(file: keyof typeof MODULES): Promise<Exports> {
+  let p = loading.get(file);
+  if (!p) {
+    p = (async () => {
+      const {instance} = await WebAssembly.instantiate(await moduleBytes(file), {});
+      const exports = instance.exports as Record<string, unknown>;
+      for (const lib of MODULES[file]) {
+        const version = exports[`${lib}_abi_version`];
+        if (typeof version !== 'function') throw new Error(`libd2: ${file} has no ${lib}`);
+        const found = Number((version as () => number)());
+        const want = EXPECTED_ABI[lib];
+        if (found !== want) throw new Error(`libd2: ${file}'s ${lib} speaks ABI ${found}, this package expects ${want}`);
+      }
+      return instance.exports as unknown as Exports;
+    })();
+    loading.set(file, p);
+  }
+  return p;
+}
+
+/** The map module (drlg, pf, net, util). Only those libraries' exports are present. */
 export function load(): Promise<Exports> {
-  loading ??= (async () => {
-    const {instance} = await WebAssembly.instantiate(await moduleBytes(), {});
-    return instance.exports as unknown as Exports;
-  })();
-  return loading;
+  return instantiate('libd2.wasm');
+}
+
+/** The item module (item, itemdraw). Only those libraries' exports are present. */
+export function loadItems(): Promise<Exports> {
+  return instantiate('items.wasm');
+}
+
+/** Every library's exports, for the generated smoke test: each lives in exactly one module. */
+export async function loadAll(): Promise<Exports> {
+  const [map, items] = await Promise.all([load(), loadItems()]);
+  return {...(items as object), ...(map as object)} as Exports;
 }
 
 /**

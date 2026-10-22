@@ -20,5 +20,7 @@ test {
     _ = @import("verify.zig");
     _ = @import("strings.zig");
     _ = @import("itemtext.zig");
+    _ = @import("statdesc.zig");
+    _ = @import("itemdesc.zig");
     _ = @import("lib.zig");
 }

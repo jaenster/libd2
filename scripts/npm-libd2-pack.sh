@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Assemble and publish the `libd2` npm package.
-#   npm-libd2-pack.sh <version> [<wasm>]
+#   npm-libd2-pack.sh <version> [<wasm> [<items-wasm>]]
 #
 # One npm package for the whole library, matching `libd2` on crates.io and `LibD2` on NuGet,
 # and one wasm inside it. The subsystems are not separate modules: a route is computed over an
@@ -21,7 +21,7 @@
 # Publishing requires npm auth. DRY_RUN=1 packs a tarball into the CWD instead.
 set -euo pipefail
 
-version="$1"; wasm_in="${2:-}"
+version="$1"; wasm_in="${2:-}"; items_in="${3:-}"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="$PWD"
@@ -30,6 +30,9 @@ pkgdir="$(mktemp -d)"
 
 wasm="${wasm_in:-${src}/src/libd2.wasm}"
 [ -f "$wasm" ] || { echo "libd2-pack: no wasm at ${wasm} — refusing to publish a package that cannot run"; exit 1; }
+# The item module (item, itemdraw), loaded only by ItemDrawer; see MODULES in src/wasm.ts.
+items="${items_in:-${src}/src/items.wasm}"
+[ -f "$items" ] || { echo "libd2-pack: no items wasm at ${items}"; exit 1; }
 
 # The package's own tests run against the source, not the tarball, so they are the fastest way
 # to find out that an export was renamed out from under the emit below.
@@ -58,6 +61,7 @@ JSON
 ( cd "$src" && ./node_modules/.bin/tsc -p tsconfig.pack.json )
 
 cp "$wasm" "${pkgdir}/libd2.wasm"
+cp "$items" "${pkgdir}/items.wasm"
 cp "${src}/README.md" "${pkgdir}/README.md"
 
 [ -f "${pkgdir}/index.js" ] && [ -f "${pkgdir}/index.d.ts" ] || { echo "libd2-pack: tsc emitted no entry point"; exit 1; }
@@ -79,7 +83,7 @@ base["files"] = sorted(e for e in os.listdir(pkgdir) if e != "package.json")
 json.dump(base, open(sys.argv[2], "w"), indent=2)
 PY
 
-echo "libd2-pack: $(find "$pkgdir" -name '*.js' | wc -l | tr -d ' ') modules + libd2.wasm ($(( $(wc -c <"$wasm") / 1024 )) KB)"
+echo "libd2-pack: $(find "$pkgdir" -name '*.js' | wc -l | tr -d ' ') modules + libd2.wasm ($(( $(wc -c <"$wasm") / 1024 )) KB) + items.wasm ($(( $(wc -c <"$items") / 1024 )) KB)"
 
 if [ -n "${DRY_RUN:-}" ]; then
   ( cd "$pkgdir" && npm pack --pack-destination "$dest" )

@@ -83,19 +83,22 @@ jobs:
       # separate memories — see packages/wasm/src/root.zig.
       #
       # -Dcapi names exactly what the TypeScript calls, which is not the same as "all". `item`
-      # is 888 KB of excel tables and the shim does not reference a single d2item_ export, so
-      # the default set would put a 45% larger wasm in front of every browser consumer to ship
-      # nothing they can use. `net` is 9 KB, and the live layer calls it. When the shim starts
-      # calling a subsystem, add it here — and when it stops, take it out.
+      # is 888 KB of excel tables the map shim never calls, so item and itemdraw go in a second
+      # module that only ItemDrawer loads. `net` is 9 KB, and the live layer calls it; `util` is
+      # 15 KB. When the shim starts calling a subsystem, add it here — and when it stops, take it
+      # out.
       - name: Build the WebAssembly
         run: |
           set -euo pipefail
           ( cd packages/wasm && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall \
-              -Dcapi=drlg,pf,net --prefix "$GITHUB_WORKSPACE/dist" )
-          ls -la dist/bin/libd2.wasm
+              -Dcapi=drlg,pf,net,util --prefix "$GITHUB_WORKSPACE/dist" )
+          # The item module: ItemDrawer loads it on first use, so map consumers never fetch it.
+          ( cd packages/wasm && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall \
+              -Dcapi=item,itemdraw --prefix "$GITHUB_WORKSPACE/dist-items" )
+          ls -la dist/bin/libd2.wasm dist-items/bin/libd2.wasm
 
       - name: Assemble and pack
-        run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh "$VERSION" dist/bin/libd2.wasm
+        run: DRY_RUN=1 ./scripts/npm-libd2-pack.sh "$VERSION" dist/bin/libd2.wasm dist-items/bin/libd2.wasm
 
       # Smoke-tests the exact tarball that gets published, so what ships is what was tested. The
       # package's own suite already ran against the source during the pack; what only the tarball

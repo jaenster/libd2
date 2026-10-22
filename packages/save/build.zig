@@ -33,6 +33,8 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addImport("d2-data", data.module("d2-data"));
     tests.root_module.addImport("d2-item", items.module("d2-item"));
     tests.root_module.addImport("d2-formats", formats.module("d2-formats"));
+    // the shared saves and kits; lazy, so a package fetched as a dependency never needs it
+    if (b.lazyDependency("libd2_testdata", .{})) |td| tests.root_module.addImport("libd2-testdata", td.module("libd2-testdata"));
     // charkit: a character save from a text spec (zig build charkit -- build spec.kit out.d2s --name Name)
     const charkit_exe = b.addExecutable(.{
         .name = "charkit",

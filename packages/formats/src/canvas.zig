@@ -28,6 +28,17 @@ pub const DrawMode = enum(u8) {
     solid = 5,
     darker_solid = 6,
     lighter_solid = 7,
+
+    /// The alpha a translucent mode stands for when there is nothing under the draw: the constant
+    /// colour alpha the Glide and Direct3D renderers give modes 0, 1 and 2. Solid is opaque.
+    pub fn alpha(mode: DrawMode) u8 {
+        return switch (mode) {
+            .very_transparent => 0x40,
+            .transparent => 0x80,
+            .less_transparent => 0xc0,
+            else => 0xff,
+        };
+    }
 };
 
 fn mix(dst: u8, src: u8, mode: DrawMode) u8 {
@@ -48,6 +59,10 @@ pub const Canvas = struct {
     h: u32,
     /// w*h*4, row-major top-down, straight (non-premultiplied) RGBA.
     px: []u8,
+    /// A point of the picture its maker records for whoever places it (an item's cell corner, a box's
+    /// top-left); nothing here reads it.
+    origin_x: i32 = 0,
+    origin_y: i32 = 0,
 
     pub fn init(gpa: std.mem.Allocator, w: u32, h: u32) !Canvas {
         const px = try gpa.alloc(u8, @as(usize, w) * h * 4);
@@ -200,6 +215,80 @@ pub const Canvas = struct {
         }
     }
 
+
+    // ---------------------------------------------------------------------------------------------
+    // Alpha compositing: the same draws for a picture with no screen under it, where a translucent
+    // draw mode becomes the pixel's alpha (`DrawMode.alpha`) instead of a blend with what is there.
+
+    /// One pixel `c` at alpha `a`, straight-alpha "over" what is there.
+    pub fn put(self: *Canvas, x: i32, y: i32, c: [3]u8, a: u8) void {
+        if (x < 0 or y < 0 or x >= self.w or y >= self.h or a == 0) return;
+        const o = (@as(usize, @intCast(y)) * self.w + @as(usize, @intCast(x))) * 4;
+        const da: u32 = self.px[o + 3];
+        if (a == 255 or da == 0) {
+            self.px[o] = c[0];
+            self.px[o + 1] = c[1];
+            self.px[o + 2] = c[2];
+            self.px[o + 3] = if (da == 0) a else @intCast(a + da * (255 - @as(u32, a)) / 255);
+            if (da == 0 or a == 255) return;
+        }
+        const sa: u32 = a;
+        const out_a = sa * 255 + da * (255 - sa); // scaled by 255
+        inline for (0..3) |i| {
+            const sc: u32 = c[i];
+            const dc: u32 = self.px[o + i];
+            self.px[o + i] = @intCast((sc * sa * 255 + dc * da * (255 - sa) + out_a / 2) / out_a);
+        }
+        self.px[o + 3] = @intCast((out_a + 127) / 255);
+    }
+
+    /// A rectangle of one colour at alpha `a`, end exclusive.
+    pub fn fill(self: *Canvas, x: i32, y: i32, w: i32, h: i32, c: [3]u8, a: u8) void {
+        var yy = y;
+        while (yy < y + h) : (yy += 1) {
+            var xx = x;
+            while (xx < x + w) : (xx += 1) self.put(xx, yy, c, a);
+        }
+    }
+
+    /// Indices with their top-left at (x, y), each one `scale` x `scale` pixels (nearest), through
+    /// `remap` (a colour map or text colour shift) and the palette, at alpha `a`. Index 0, before or
+    /// after the remap, is a hole.
+    pub fn blitAlpha(self: *Canvas, indices: []const u8, w: u32, h: u32, pal: *const palette.Palette, x: i32, y: i32, remap: ?[]const u8, a: u8, scale: u32) void {
+        const k: u32 = @max(scale, 1);
+        var row: u32 = 0;
+        while (row < h * k) : (row += 1) {
+            var col: u32 = 0;
+            while (col < w * k) : (col += 1) {
+                const raw = indices[@as(usize, row / k) * w + col / k];
+                if (raw == 0) continue;
+                const idx = if (remap) |m| m[raw] else raw;
+                if (idx == 0) continue;
+                self.put(x + @as(i32, @intCast(col)), y + @as(i32, @intCast(row)), pal.rgb(idx), a);
+            }
+        }
+    }
+
+    /// A DC6 frame the way the game's image draw places one: (x, y) is the baseline point, the frame's
+    /// bottom row sits just above it and its stored offset moves it from there.
+    pub fn blitBaseline(self: *Canvas, f: *const dc6.Frame, pal: *const palette.Palette, x: i32, y: i32, remap: ?[]const u8, a: u8) void {
+        self.blitAlpha(f.indices, f.width, f.height, pal, x + f.offset_x, y + f.offset_y - @as(i32, @intCast(f.height)), remap, a, 1);
+    }
+
+    /// Every painted pixel of `src` over this surface with its (0, 0) at (x, y), its alpha times `a`.
+    pub fn composite(self: *Canvas, src: *const Canvas, x: i32, y: i32, a: u8) void {
+        var row: u32 = 0;
+        while (row < src.h) : (row += 1) {
+            var col: u32 = 0;
+            while (col < src.w) : (col += 1) {
+                const o = (@as(usize, row) * src.w + col) * 4;
+                const ta: u32 = src.px[o + 3];
+                if (ta == 0) continue;
+                self.put(x + @as(i32, @intCast(col)), y + @as(i32, @intCast(row)), src.px[o..][0..3].*, @intCast((ta * a + 127) / 255));
+            }
+        }
+    }
+
     /// The pixel size a `blitScreen` would cover, without drawing anything. Screens are stored at
     /// the resolution they were drawn for, and that resolution is only discoverable this way.
     pub fn screenSize(sheet: *const dc6.Dc6, width: u32) struct { w: u32, h: u32 } {
@@ -294,4 +383,47 @@ test "a screen's grid is recovered from its blocks" {
     const size = Canvas.screenSize(&sheet, 800);
     try testing.expectEqual(@as(u32, 800), size.w);
     try testing.expectEqual(@as(u32, 600), size.h);
+}
+
+/// Index-space drawing, for images kept as palette indices (a sprite sheet, a scaled frame) rather
+/// than RGBA: indices with their top-left at (x, y) into a `w` x `h` index buffer, through `shift` (a
+/// colour shift table) when given. Index 0, before or after the shift, is a hole.
+pub fn drawIndexed(dst: []u8, w: u32, h: u32, px: []const u8, pw: u32, ph: u32, x: i32, y: i32, shift: ?*const [256]u8) void {
+    for (0..ph) |row| {
+        const yy = y + @as(i32, @intCast(row));
+        if (yy < 0 or yy >= h) continue;
+        for (0..pw) |col| {
+            const raw = px[row * pw + col];
+            if (raw == 0) continue;
+            const idx = if (shift) |t| t[raw] else raw;
+            if (idx == 0) continue;
+            const xx = x + @as(i32, @intCast(col));
+            if (xx < 0 or xx >= w) continue;
+            dst[@as(usize, @intCast(yy)) * w + @as(usize, @intCast(xx))] = idx;
+        }
+    }
+}
+
+/// `px` (w*h indices) repeated k x k times into `out` ((w*k)*(h*k)): nearest-neighbour scaling that
+/// keeps every index, so the result still draws through any palette, colour map or blend table.
+pub fn scaleIndicesNearest(px: []const u8, w: u32, h: u32, k: u32, out: []u8) void {
+    const ow = w * k;
+    for (0..h * k) |yy| for (0..ow) |xx| {
+        out[yy * ow + xx] = px[(yy / k) * w + xx / k];
+    };
+}
+
+test "index-space draw and nearest scale" {
+    var dst = [_]u8{0} ** 9;
+    const shift = blk: {
+        var t: [256]u8 = undefined;
+        for (&t, 0..) |*v, i| v.* = @intCast(i);
+        t[2] = 0;
+        break :blk t;
+    };
+    drawIndexed(&dst, 3, 3, &.{ 1, 2, 0, 3 }, 2, 2, 1, 1, &shift);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0, 1, 0, 0, 0, 3 }, &dst);
+    var out: [16]u8 = undefined;
+    scaleIndicesNearest(&.{ 1, 2, 3, 4 }, 2, 2, 2, &out);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4 }, &out);
 }
