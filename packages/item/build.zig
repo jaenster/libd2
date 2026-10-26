@@ -47,7 +47,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the item-drop roller CLI");
     run_step.dependOn(&run_cmd.step);
 
@@ -67,7 +67,7 @@ pub fn build(b: *std.Build) void {
 
     const render_cmd = b.addRunArtifact(render_exe);
     render_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| render_cmd.addArgs(args);
+    render_cmd.addPassthruArgs();
     const render_step = b.step("render", "Roll a drop and render item graphics to a PNG");
     render_step.dependOn(&render_cmd.step);
 
@@ -96,7 +96,7 @@ pub fn build(b: *std.Build) void {
         _ = b.addModule("d2item-capi", .{
             .root_source_file = b.path("src/capi.zig"),
             .target = target,
-            .optimize = if (optimize == .Debug) .ReleaseFast else optimize,
+            .optimize = if (optimize == .debug) .fast else optimize,
             .imports = &.{
                 .{ .name = "d2-core", .module = core_mod },
                 .{ .name = "d2-data", .module = data_mod },
@@ -110,7 +110,7 @@ pub fn build(b: *std.Build) void {
                 .root_module = b.createModule(.{
                     .root_source_file = b.path("src/capi.zig"),
                     .target = target,
-                    .optimize = if (b.args == null) .ReleaseSmall else optimize,
+                    .optimize = .small,
                 }),
             });
             wasm.root_module.addImport("d2-core", core_mod);
@@ -121,7 +121,7 @@ pub fn build(b: *std.Build) void {
             wasm.rdynamic = true;
             b.installArtifact(wasm);
         } else {
-            const capi_optimize = if (optimize == .Debug) .ReleaseFast else optimize;
+            const capi_optimize = if (optimize == .debug) .fast else optimize;
             const static_lib = b.addLibrary(.{
                 .name = "d2item",
                 .linkage = .static,

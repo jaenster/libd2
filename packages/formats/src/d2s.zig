@@ -61,33 +61,33 @@ pub const Header = struct {
     file_size: u32 = 0,
     checksum: u32 = 0,
     active_weapon: u32 = 0,
-    name: [16]u8 = [_]u8{0} ** 16,
+    name: [16]u8 = @splat(0),
     status: u8 = 0,
     progression: u8 = 0,
-    unk_0x26: [2]u8 = [_]u8{0} ** 2,
+    unk_0x26: [2]u8 = @splat(0),
     class: u8 = 0,
     const16: u8 = 0,
     max_skills: u8 = 0,
     level: u8 = 0,
     created: u32 = 0,
     last_played: u32 = 0,
-    unk_0x34: [4]u8 = [_]u8{0} ** 4,
-    hotkeys: [16]u32 = [_]u32{0} ** 16,
+    unk_0x34: [4]u8 = @splat(0),
+    hotkeys: [16]u32 = @splat(0),
     left_skill: u32 = 0,
     right_skill: u32 = 0,
     alt_left_skill: u32 = 0,
     alt_right_skill: u32 = 0,
-    appearance1: [16]u8 = [_]u8{0} ** 16,
-    appearance2: [16]u8 = [_]u8{0} ** 16,
-    difficulty: [3]u8 = [_]u8{0} ** 3,
+    appearance1: [16]u8 = @splat(0),
+    appearance2: [16]u8 = @splat(0),
+    difficulty: [3]u8 = @splat(0),
     map_id: u32 = 0,
-    unk_0xaf: [2]u8 = [_]u8{0} ** 2,
+    unk_0xaf: [2]u8 = @splat(0),
     merc_dead: u16 = 0,
     merc_id: u32 = 0,
     merc_name_id: u16 = 0,
     merc_type: u16 = 0,
     merc_experience: u32 = 0,
-    unk_0xbf: [144]u8 = [_]u8{0} ** 144,
+    unk_0xbf: [144]u8 = @splat(0),
 
     /// The character name as a slice (NUL-terminated inside the 16-byte field).
     pub fn nameSlice(self: *const Header) []const u8 {
@@ -289,7 +289,7 @@ pub fn setStatus(data: []u8, v: u8) void {
 }
 
 test "checksum round-trips and verifyChecksum agrees" {
-    var buf = [_]u8{0} ** 64;
+    var buf: [64]u8 = @splat(0);
     buf[0] = 0x55;
     std.mem.writeInt(u32, buf[off_name..][0..4], 0xDEADBEEF, .little);
     fixChecksum(&buf);
@@ -342,7 +342,7 @@ test "parseHeader / writeHeader are byte-exact inverses" {
 }
 
 test "setName rewrites the name field and rejects bad names" {
-    var buf = [_]u8{0xAA} ** 64;
+    var buf: [64]u8 = @splat(0xAA);
     try std.testing.expect(setName(&buf, "Cloney"));
     try std.testing.expectEqualStrings("Cloney", std.mem.sliceTo(buf[off_name..][0..16], 0));
     try std.testing.expect(!setName(&buf, "")); // empty

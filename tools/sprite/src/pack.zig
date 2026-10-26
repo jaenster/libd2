@@ -240,11 +240,11 @@ fn unpackOne(c: *main.Ctx, name: []const u8, dir: []const u8, k: u32, filt: scal
         const hh = f.h * k;
         const png = if (rgba) try rgbaPng(gpa, px, w, hh, pal) else try pngx.encodeIndexed(gpa, px, w, hh, &pal.rgb);
         if (by_hash) |bh| {
-            const file = try std.fmt.allocPrint(gpa, "{s}.png", .{&h});
+            const file = try gpa.print("{s}.png", .{&h});
             pngs[i] = try std.fs.path.join(gpa, &.{ bh.rel, file });
             try c.writeFile(try std.fs.path.join(gpa, &.{ bh.abs, file }), png);
         } else {
-            pngs[i] = try std.fmt.allocPrint(gpa, "d{d:0>2}f{d:0>3}.png", .{ i / sp.fpd, i % sp.fpd });
+            pngs[i] = try gpa.print("d{d:0>2}f{d:0>3}.png", .{ i / sp.fpd, i % sp.fpd });
             try c.writeFile(try std.fs.path.join(gpa, &.{ dir, pngs[i] }), png);
         }
     }

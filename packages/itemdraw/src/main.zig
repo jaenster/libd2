@@ -102,7 +102,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const recs = flat.items[i .. i + count];
         const rec_bytes = try std.mem.concat(a, u8, raw.items[i .. i + count]);
         i += count;
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fmt.allocPrint(a, "{s}/{d:0>2}-{s}.items", .{ out_dir, n, recs[0].codeSlice() }), .data = rec_bytes });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try a.print("{s}/{d:0>2}-{s}.items", .{ out_dir, n, recs[0].codeSlice() }), .data = rec_bytes });
         const opts = itemdraw.DescOptions{ .viewer = viewer };
         const desc = try drawer.describe(a, recs, opts);
         try listing.print(a, "== {d:0>2} {s}\n{s}\n", .{ n, recs[0].codeSlice(), try itemdraw.itemdesc.plain(a, desc) });
@@ -127,11 +127,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
             defer img.deinit(gpa);
             const png = try itemdraw.png(gpa, &img);
             defer gpa.free(png);
-            const name = try std.fmt.allocPrint(a, "{s}/{d:0>2}-{s}-{s}.png", .{ out_dir, n, recs[0].codeSlice(), k });
+            const name = try a.print("{s}/{d:0>2}-{s}-{s}.png", .{ out_dir, n, recs[0].codeSlice(), k });
             try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = name, .data = png });
         }
     }
-    const lp = try std.fmt.allocPrint(a, "{s}/items.txt", .{out_dir});
+    const lp = try a.print("{s}/items.txt", .{out_dir});
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lp, .data = listing.items });
     std.debug.print("drew {d} items into {s}\n", .{ n, out_dir });
 }

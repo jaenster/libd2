@@ -61,7 +61,7 @@ pub const Context = struct {
 
 /// Build the 16-entry weight array for this think (AI_Baal_SelectActionWeighted @0x5fc450).
 pub fn actionWeights(ctx: Context) [NUM_ACTIONS]i32 {
-    var w = [_]i32{0} ** NUM_ACTIONS;
+    var w: [NUM_ACTIONS]i32 = @splat(0);
     const life = std.math.clamp(ctx.target_life_pct, 0, 100);
     const maul_base: i32 = if (ctx.normal_difficulty) 125 else 100;
     w[1] = maul_base + (100 - life);
@@ -104,7 +104,7 @@ pub fn selectAction(ctx: Context, seed: *Seed) Action {
     var accum: i32 = 0;
     for (w, 0..) |x, i| {
         accum += x;
-        if (roll < accum) return @enumFromInt(@as(u8, @intCast(i)));
+        if (roll < accum) return @fromBackingInt(@as(u8, @intCast(i)));
     }
     return .maul;
 }
@@ -182,7 +182,7 @@ test "baal select: a valid action every roll; never the zero-weight slots" {
     const w = actionWeights(ctx);
     for (0..500) |_| {
         const a = selectAction(ctx, &seed);
-        try testing.expect(w[@intFromEnum(a)] > 0); // only positive-weight slots are ever picked
+        try testing.expect(w[@backingInt(a)] > 0); // only positive-weight slots are ever picked
     }
 }
 

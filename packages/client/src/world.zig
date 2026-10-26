@@ -55,7 +55,7 @@ pub const Unit = struct {
     /// move outright when `PLRMODES_CanInterruptCurrentMode` says no — so a character that
     /// ignores every command in every direction is answered by this byte and by nothing else.
     mode: u8 = 0,
-    name: [16]u8 = [_]u8{0} ** 16,
+    name: [16]u8 = @splat(0),
     name_len: u8 = 0,
     /// The level this unit was last described on.
     ///
@@ -160,11 +160,11 @@ pub const World = struct {
     roster: std.AutoHashMap(u32, RosterEntry),
     /// Per-opcode tally of what was applied and what was seen but not modelled, so "we parse the
     /// stream" is a number rather than a claim. See `coverage`.
-    applied: [256]u32 = [_]u32{0} ** 256,
-    ignored: [256]u32 = [_]u32{0} ** 256,
+    applied: [256]u32 = @splat(0),
+    ignored: [256]u32 = @splat(0),
     /// Packets the engine defines but which carry no world state — recognised, deliberately not
     /// mirrored. Counted apart from `applied` so the split stays visible.
-    acknowledged: [256]u32 = [_]u32{0} ** 256,
+    acknowledged: [256]u32 = @splat(0),
 
     // level / world identity (0x01 GameFlags, 0x03 LoadAct)
     difficulty: u8 = 0,
@@ -179,7 +179,7 @@ pub const World = struct {
     /// unit from everyone else's — including stale ghosts of the same character left in the game
     /// by a client that dropped its socket without leaving. Without it the model falls back to
     /// "the first player seen", which is only right when we are the first.
-    local_name: [16]u8 = [_]u8{0} ** 16,
+    local_name: [16]u8 = @splat(0),
     local_name_len: u8 = 0,
     /// A player whose name matched `local_name` has been seen, so first-seen no longer applies.
     local_name_matched: bool = false,
@@ -465,7 +465,7 @@ pub const World = struct {
     fn applyCreatePlayer(self: *World, buf: []const u8) void {
         if (buf.len < 26) return;
         const guid = std.mem.readInt(u32, buf[1..5], .little);
-        const u = self.upsert(@intFromEnum(UnitType.player), guid) catch return;
+        const u = self.upsert(@backingInt(UnitType.player), guid) catch return;
         const raw = buf[6..22];
         var nlen: u8 = 0;
         while (nlen < 16 and raw[nlen] != 0) nlen += 1;
@@ -510,7 +510,7 @@ pub const World = struct {
         const x: u16 = @intCast(r.read(16));
         const y: u16 = @intCast(r.read(16));
         if (self.local_player_guid) |g| {
-            if (self.units.getPtr(unitKey(@intFromEnum(UnitType.player), g))) |u| {
+            if (self.units.getPtr(unitKey(@backingInt(UnitType.player), g))) |u| {
                 u.x = x;
                 u.y = y;
             }
@@ -540,7 +540,7 @@ pub const World = struct {
         if (buf.len < 6) return;
         const utype = buf[1];
         const guid = std.mem.readInt(u32, buf[2..6], .little);
-        if (utype == @intFromEnum(UnitType.monster)) self.last_removed_monster = guid;
+        if (utype == @backingInt(UnitType.monster)) self.last_removed_monster = guid;
         _ = self.units.remove(unitKey(utype, guid));
         if (self.verbose)
             std.debug.print("  world: remove type={d} guid=0x{x}\n", .{ utype, guid });
@@ -560,7 +560,7 @@ pub const World = struct {
     // (like 0xAC). Destination x/y offsets differ per opcode, passed in by the caller.
     fn applyMonsterMove(self: *World, buf: []const u8, xoff: usize, yoff: usize) void {
         if (buf.len < yoff + 2) return;
-        const u = self.upsert(@intFromEnum(UnitType.monster), std.mem.readInt(u32, buf[1..5], .little)) catch return;
+        const u = self.upsert(@backingInt(UnitType.monster), std.mem.readInt(u32, buf[1..5], .little)) catch return;
         u.x = std.mem.readInt(u16, buf[xoff..][0..2], .little);
         u.y = std.mem.readInt(u16, buf[yoff..][0..2], .little);
     }
@@ -571,7 +571,7 @@ pub const World = struct {
     fn applyCreateMonster(self: *World, buf: []const u8) void {
         if (buf.len < 13) return;
         const guid = std.mem.readInt(u32, buf[1..5], .little);
-        const u = self.upsert(@intFromEnum(UnitType.monster), guid) catch return;
+        const u = self.upsert(@backingInt(UnitType.monster), guid) catch return;
         const monstat = std.mem.readInt(i16, buf[5..7], .little);
         u.class_id = @bitCast(monstat);
         u.x = std.mem.readInt(u16, buf[7..9], .little);
@@ -614,7 +614,7 @@ pub const World = struct {
         const guid = std.mem.readInt(u32, buf[4..8], .little);
 
         if (op == 0x9c and action == 0x01) {
-            _ = self.units.remove(unitKey(@intFromEnum(UnitType.item), guid));
+            _ = self.units.remove(unitKey(@backingInt(UnitType.item), guid));
             if (self.items.getPtr(guid)) |owned| owned.where = .gone;
             return;
         }
@@ -644,7 +644,7 @@ pub const World = struct {
 
         // Only an item lying in the world is a unit you can walk to and click.
         if (where.onGround()) {
-            const u = self.upsert(@intFromEnum(UnitType.item), guid) catch return;
+            const u = self.upsert(@backingInt(UnitType.item), guid) catch return;
             u.x = it.x;
             u.y = it.y;
             note("  world: item \"{s}\" {s}{s} guid=0x{x} at ({d},{d}) stats={d}\n", .{
@@ -652,7 +652,7 @@ pub const World = struct {
                 guid,           it.x,                 it.y,                          it.n_stats,
             });
         } else {
-            _ = self.units.remove(unitKey(@intFromEnum(UnitType.item), guid));
+            _ = self.units.remove(unitKey(@backingInt(UnitType.item), guid));
             if (self.verbose)
                 std.debug.print("  world: item \"{s}\" {s} -> {s}{s} guid=0x{x}\n", .{
                     it.codeSlice(),      @tagName(it.quality), @tagName(where),
@@ -675,7 +675,7 @@ pub const World = struct {
     fn applyNpcMove(self: *World, buf: []const u8) void {
         if (buf.len < 16) return;
         const guid = std.mem.readInt(u32, buf[1..5], .little);
-        const u = self.upsert(@intFromEnum(UnitType.monster), guid) catch return;
+        const u = self.upsert(@backingInt(UnitType.monster), guid) catch return;
         u.x = std.mem.readInt(u16, buf[6..8], .little);
         u.y = std.mem.readInt(u16, buf[8..10], .little);
         u.mode = buf[5];
@@ -715,7 +715,7 @@ pub const World = struct {
     fn applyUnitMoveTo(self: *World, buf: []const u8) void {
         if (buf.len < 10) return;
         const guid = std.mem.readInt(u32, buf[1..5], .little);
-        const u = self.upsert(@intFromEnum(UnitType.monster), guid) catch return;
+        const u = self.upsert(@backingInt(UnitType.monster), guid) catch return;
         u.x = std.mem.readInt(u16, buf[5..7], .little);
         u.y = std.mem.readInt(u16, buf[7..9], .little);
     }
@@ -744,7 +744,7 @@ pub const World = struct {
         if (buf.len < 6 + width) return;
         const stat_id = buf[1];
         const guid = std.mem.readInt(u32, buf[2..6], .little);
-        const u = self.units.getPtr(unitKey(@intFromEnum(UnitType.monster), guid)) orelse return;
+        const u = self.units.getPtr(unitKey(@backingInt(UnitType.monster), guid)) orelse return;
         const value = self.readTail(buf, 6, width);
         // The only monster stat this model carries is life, and the health bar wants a percentage,
         // which 0xAB delivers separately — so an absolute life value is recorded, not converted.
@@ -811,7 +811,7 @@ pub const World = struct {
     fn applyRosterPlayer(self: *World, buf: []const u8) void {
         if (buf.len < 12) return;
         const guid = std.mem.readInt(u32, buf[3..7], .little);
-        const u = self.upsert(@intFromEnum(UnitType.player), guid) catch return;
+        const u = self.upsert(@backingInt(UnitType.player), guid) catch return;
         const raw = buf[9..];
         var n: u8 = 0;
         while (n < raw.len and n < u.name.len and raw[n] != 0) n += 1;
@@ -883,13 +883,13 @@ pub const World = struct {
     /// The local player's current (x,y), or null if we haven't seen a CreatePlayer yet.
     pub fn playerPos(self: *const World) ?struct { x: u16, y: u16 } {
         const g = self.local_player_guid orelse return null;
-        const u = self.units.get(unitKey(@intFromEnum(UnitType.player), g)) orelse return null;
+        const u = self.units.get(unitKey(@backingInt(UnitType.player), g)) orelse return null;
         return .{ .x = u.x, .y = u.y };
     }
 
     /// Look up a live unit by (type, guid). Used by the driver to poll a target's state.
     pub fn getUnit(self: *const World, utype: UnitType, guid: u32) ?Unit {
-        return self.units.get(unitKey(@intFromEnum(utype), guid));
+        return self.units.get(unitKey(@backingInt(utype), guid));
     }
 
     /// Look up a known warp by GUID (warps come in as "object" units flagged is_warp).
@@ -927,7 +927,7 @@ pub const World = struct {
         var n: usize = 0;
         var it = self.units.valueIterator();
         while (it.next()) |u| {
-            if (u.utype != @intFromEnum(UnitType.object) or u.is_warp) continue;
+            if (u.utype != @backingInt(UnitType.object) or u.is_warp) continue;
             if (u.class_id != class_id) continue;
             if (n >= out.len) break;
             out[n] = u.*;
@@ -949,7 +949,7 @@ pub const World = struct {
         const p = self.playerPos();
         var it = self.units.valueIterator();
         while (it.next()) |u| {
-            if (u.utype != @intFromEnum(UnitType.object) or u.is_warp) continue;
+            if (u.utype != @backingInt(UnitType.object) or u.is_warp) continue;
             if (u.class_id >= self.waypoint_class.len or !self.waypoint_class[u.class_id]) continue;
             const d: i64 = if (p) |pp| blk: {
                 const dx: i64 = @as(i64, u.x) - @as(i64, pp.x);
@@ -973,7 +973,7 @@ pub const World = struct {
         var best_d: i64 = std.math.maxInt(i64);
         var it = self.units.valueIterator();
         while (it.next()) |u| {
-            if (u.utype != @intFromEnum(UnitType.monster)) continue;
+            if (u.utype != @backingInt(UnitType.monster)) continue;
             const dx: i64 = @as(i64, u.x) - @as(i64, p.x);
             const dy: i64 = @as(i64, u.y) - @as(i64, p.y);
             const d = dx * dx + dy * dy;
@@ -991,7 +991,7 @@ pub const World = struct {
     pub fn monsterByClass(self: *const World, class_id: u16) ?Unit {
         var it = self.units.valueIterator();
         while (it.next()) |u| {
-            if (u.utype != @intFromEnum(UnitType.monster)) continue;
+            if (u.utype != @backingInt(UnitType.monster)) continue;
             if (u.class_id == class_id) return u.*;
         }
         return null;
@@ -1001,7 +1001,7 @@ pub const World = struct {
         var n: u32 = 0;
         var it = self.units.valueIterator();
         while (it.next()) |u| {
-            if (u.utype == @intFromEnum(UnitType.monster)) n += 1;
+            if (u.utype == @backingInt(UnitType.monster)) n += 1;
         }
         return n;
     }
@@ -1025,7 +1025,7 @@ pub const World = struct {
             }
             std.debug.print("\n", .{});
         }
-        var tally = [_]u32{0} ** 6;
+        var tally: [6]u32 = @splat(0);
         var it = self.units.valueIterator();
         while (it.next()) |u| {
             if (u.utype < tally.len) tally[u.utype] += 1;
@@ -1064,7 +1064,7 @@ test "LoadAct sets seed, act, area" {
 test "CreatePlayer then reassign tracks position" {
     var w = World.init(std.testing.allocator);
     defer w.deinit();
-    var mk = [_]u8{0} ** 26;
+    var mk: [26]u8 = @splat(0);
     mk[0] = 0x59;
     std.mem.writeInt(u32, mk[1..5], 0x1000, .little);
     @memcpy(mk[6..10], "Bob\x00");
@@ -1088,14 +1088,14 @@ test "Life (0x95) decodes hp/mp/stamina and repositions local player" {
     var w = World.init(std.testing.allocator);
     defer w.deinit();
     // make a local player first so 0x95 has a unit to reposition
-    var mk = [_]u8{0} ** 26;
+    var mk: [26]u8 = @splat(0);
     mk[0] = 0x59;
     std.mem.writeInt(u32, mk[1..5], 0x2000, .little);
     std.mem.writeInt(u16, mk[22..24], 1, .little);
     std.mem.writeInt(u16, mk[24..26], 1, .little);
     w.apply(&mk);
     // build a 0x95: hp=100 mp=50 stam=80 x=5000 y=6000
-    var buf = [_]u8{0} ** 13;
+    var buf: [13]u8 = @splat(0);
     var bw = BitWriter.init(&buf);
     bw.write(0x95, 8);
     bw.write(100, 15);
@@ -1152,13 +1152,13 @@ test "0x19..0x1C accumulate gold and experience (Incoming0x19 handler)" {
 test "0x9E..0xA2 set a monster stat at the opcode's width" {
     var w = World.init(std.testing.allocator);
     defer w.deinit();
-    var spawn = [_]u8{0} ** 13;
+    var spawn: [13]u8 = @splat(0);
     spawn[0] = 0xac;
     std.mem.writeInt(u32, spawn[1..5], 0x777, .little);
     w.apply(&spawn);
 
     // 0xA0: [op][stat=6 life][guid u32][value u32]
-    var p = [_]u8{0} ** 10;
+    var p: [10]u8 = @splat(0);
     p[0] = 0xa0;
     p[1] = World.STAT_LIFE;
     std.mem.writeInt(u32, p[2..6], 0x777, .little);
@@ -1192,7 +1192,7 @@ test "an item that is equipped leaves the floor; one on the ground becomes a uni
     try std.testing.expect(w.getUnit(.item, 0x555) != null);
 
     // 0x9C action 1 = picked from the ground: the unit goes, the memory of the item stays.
-    var picked = [_]u8{0} ** 8;
+    var picked: [8]u8 = @splat(0);
     picked[0] = 0x9c;
     picked[1] = 0x01;
     std.mem.writeInt(u32, picked[4..8], 0x555, .little);
@@ -1251,7 +1251,7 @@ test "the local player is identified by name, not by arrival order" {
     // A ghost of the same character, and another player, both arrive before us.
     const mk = struct {
         fn player(world: *World, guid: u32, name: []const u8, x: u16, y: u16) void {
-            var p = [_]u8{0} ** 26;
+            var p: [26]u8 = @splat(0);
             p[0] = 0x59;
             std.mem.writeInt(u32, p[1..5], guid, .little);
             @memcpy(p[6..][0..name.len], name);
@@ -1278,12 +1278,12 @@ test "leaving a level takes its units with you" {
     defer w.deinit();
 
     // Land on a level and be told about a waypoint standing on it.
-    var load = [_]u8{0} ** 12;
+    var load: [12]u8 = @splat(0);
     load[0] = 0x03;
     std.mem.writeInt(u16, load[6..8], 1, .little);
     w.apply(&load);
 
-    var obj = [_]u8{0} ** 14;
+    var obj: [14]u8 = @splat(0);
     obj[0] = 0x51;
     obj[1] = 2; // object
     std.mem.writeInt(u32, obj[2..6], 0x77, .little);

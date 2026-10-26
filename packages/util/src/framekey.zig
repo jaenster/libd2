@@ -99,7 +99,7 @@ test "FNV-1a 64 matches the published vectors" {
 }
 
 test "empty and all-zero images have key 0" {
-    const z = [_]u8{0} ** 12;
+    const z: [12]u8 = @splat(0);
     try testing.expectEqual(Key{}, try compute(&z, 4, 3, 4));
     try testing.expectEqual(Key{}, try compute(&z, 0, 3, 4));
     try testing.expectEqual(Key{}, try compute(&z, 4, 0, 4));
@@ -120,7 +120,7 @@ test "the key is the box: width, height, then indices top-down" {
 
 test "the same art in any margin has the same key; different art or shape does not" {
     const a = [_]u8{ 7, 0, 7, 1, 2, 1 }; // 3x2, no margin
-    var b = [_]u8{0} ** (8 * 6);
+    var b: [8 * 6]u8 = @splat(0);
     b[2 * 8 + 3 ..][0..3].* = .{ 7, 0, 7 };
     b[3 * 8 + 3 ..][0..3].* = .{ 1, 2, 1 };
     const ka = try compute(&a, 3, 2, 3);
@@ -140,18 +140,18 @@ test "the same art in any margin has the same key; different art or shape does n
 }
 
 test "the box reaches single pixels in any corner" {
-    var px = [_]u8{0} ** (7 * 5);
+    var px: [7 * 5]u8 = @splat(0);
     px[0] = 1;
     px[4 * 7 + 6] = 2;
     const k = try compute(&px, 7, 5, 7);
     try testing.expectEqual(Box{ .x0 = 0, .y0 = 0, .w = 7, .h = 5 }, k.box);
-    var q = [_]u8{0} ** (7 * 5);
+    var q: [7 * 5]u8 = @splat(0);
     q[2 * 7 + 6] = 4;
     try testing.expectEqual(Box{ .x0 = 6, .y0 = 2, .w = 1, .h = 1 }, (try compute(&q, 7, 5, 7)).box);
 }
 
 test "argument errors" {
-    const px = [_]u8{1} ** 8;
+    const px: [8]u8 = @splat(1);
     try testing.expectError(error.BadDimensions, compute(&px, 4, 2, 3));
     try testing.expectError(error.ShortBuffer, compute(&px, 4, 3, 4));
 }

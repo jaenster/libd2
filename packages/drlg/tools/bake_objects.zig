@@ -46,7 +46,7 @@ pub fn main(init: std.process.Init) !void {
 
     var act: i32 = 0;
     while (act < 5) : (act += 1) {
-        const pal_path = try std.fmt.allocPrint(alloc, "assets/automap/ACT{d}.pal", .{act + 1});
+        const pal_path = try alloc.print("assets/automap/ACT{d}.pal", .{act + 1});
         const palette = readFile(io, alloc, pal_path) catch {
             std.debug.print("act {d}: no palette {s}\n", .{ act, pal_path });
             continue;
@@ -63,7 +63,7 @@ pub fn main(init: std.process.Init) !void {
             };
         }
 
-        const dir = try std.fmt.allocPrint(alloc, "web/public/obj/act{d}", .{act});
+        const dir = try alloc.print("web/public/obj/act{d}", .{act});
         std.Io.Dir.cwd().createDirPath(io, dir) catch {};
 
         var man: std.ArrayList(u8) = .empty;
@@ -102,13 +102,12 @@ pub fn main(init: std.process.Init) !void {
 
             var lb: [16]u8 = undefined;
             const ltok = std.ascii.lowerString(&lb, row.token);
-            const png = try std.fmt.allocPrint(alloc, "{s}/{s}.png", .{ dir, ltok });
+            const png = try alloc.print("{s}/{s}.png", .{ dir, ltok });
             try writePng(alloc, io, png, sprite.width, sprite.height, sprite.rgba);
 
             if (!first) try man.appendSlice(alloc, ",\n");
             first = false;
-            const entry = try std.fmt.allocPrint(
-                alloc,
+            const entry = try alloc.print(
                 "  \"{d}\": {{\"token\":\"{s}\",\"mode\":\"{s}\",\"w\":{d},\"h\":{d},\"ox\":{d},\"oy\":{d},\"png\":\"{s}.png\"}}",
                 .{ class_id, ltok, mode, sprite.width, sprite.height, sprite.offset_x, sprite.offset_y, ltok },
             );
@@ -117,7 +116,7 @@ pub fn main(init: std.process.Init) !void {
             total_ok += 1;
         }
         try man.appendSlice(alloc, "\n}\n");
-        const man_path = try std.fmt.allocPrint(alloc, "{s}/manifest.json", .{dir});
+        const man_path = try alloc.print("{s}/manifest.json", .{dir});
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = man_path, .data = man.items });
         std.debug.print("act {d}: {d} class ids, {d} sprites baked -> {s}\n", .{ act, ids.count(), baked, dir });
     }

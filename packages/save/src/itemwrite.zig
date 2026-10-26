@@ -109,14 +109,14 @@ pub fn encode(out: []u8, it: *const wire.Item, ex: Extra) Error!usize {
     w.write(it.socketed_count, 3);
     w.write(ex.seed, 32);
     w.write(it.ilvl, 7);
-    w.write(@intFromEnum(it.quality), 4);
+    w.write(@backingInt(it.quality), 4);
     w.write(@intFromBool(it.has_variant), 1);
     if (it.has_variant) w.write(it.variant, 3);
     w.write(@intFromBool(it.automagic != 0), 1);
     if (it.automagic != 0) w.write(it.automagic, 11);
 
     const ident = it.identified();
-    switch (@intFromEnum(it.quality)) {
+    switch (@backingInt(it.quality)) {
         1, 3 => w.write(it.file_index, 3),
         2 => {
             if (isCharm(it.codeSlice())) return error.Unsupported;
@@ -320,7 +320,7 @@ fn markBase(it: *wire.Item) void {
     };
 }
 
-const Tally = struct { same: usize = 0, runewords: usize = 0, books: usize = 0, ethereals: usize = 0, by_quality: [16]usize = [_]usize{0} ** 16 };
+const Tally = struct { same: usize = 0, runewords: usize = 0, books: usize = 0, ethereals: usize = 0, by_quality: [16]usize = @splat(0) };
 
 fn writeBack(bytes: []const u8, tally: *Tally) !void {
     const sv = try sections.parse(bytes);
@@ -341,11 +341,11 @@ fn writeBack(bytes: []const u8, tally: *Tally) !void {
         testing.expectEqualSlices(u8, rec, buf[0..n]) catch |e| {
             std.debug.print("sockets={d} n_stats={d} dur={d}\n", .{ parsed.sockets, parsed.n_stats, baseValue(&parsed, 73) });
             for (parsed.stats[0..parsed.n_stats]) |st| std.debug.print("  stat {d} param {d} value {d} list {d}\n", .{ st.id, st.param, st.value, st.list });
-            std.debug.print("record at {d} code={s} flags=0x{x} quality={d} differs\n", .{ start, parsed.codeSlice(), parsed.flags, @intFromEnum(parsed.quality) });
+            std.debug.print("record at {d} code={s} flags=0x{x} quality={d} differs\n", .{ start, parsed.codeSlice(), parsed.flags, @backingInt(parsed.quality) });
             return e;
         };
         tally.same += 1;
-        tally.by_quality[@intFromEnum(parsed.quality) & 15] += 1;
+        tally.by_quality[@backingInt(parsed.quality) & 15] += 1;
         if (parsed.flags & wire.flag.RUNEWORD != 0) tally.runewords += 1;
         if (isBook(parsed.codeSlice())) tally.books += 1;
         if (parsed.ethereal()) tally.ethereals += 1;

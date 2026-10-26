@@ -391,7 +391,7 @@ test "dc6: long runs split at 127 and decode back to the same pixels" {
             else => if (x % 2 == 0) 0 else 9, // alternating
         };
     }
-    var b = [_]u8{0} ** (2 * 2); // a fully transparent second frame
+    var b: [2 * 2]u8 = @splat(0); // a fully transparent second frame
     var frames = [_]Frame{
         .{ .width = w, .height = h, .offset_x = 1, .offset_y = -2, .indices = &a },
         .{ .width = 2, .height = 2, .offset_x = 0, .offset_y = 0, .indices = &b, .flip = 1 },

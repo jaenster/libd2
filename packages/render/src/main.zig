@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             w = @intCast(tlv.size_x);
             h = @intCast(tlv.size_y);
         }
-        const lvl = try d2drlg.generate(&ctx, seed, @enumFromInt(level_id), .normal, .{ .x = 0, .y = 0, .w = w, .h = h });
+        const lvl = try d2drlg.generate(&ctx, seed, @fromBackingInt(level_id), .normal, .{ .x = 0, .y = 0, .w = w, .h = h });
         defer lvl.deinit();
         var fhit: usize = 0;
         var fmiss: usize = 0;

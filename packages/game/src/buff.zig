@@ -46,7 +46,7 @@ pub const Buff = struct {
 };
 
 pub const BuffList = struct {
-    buffs: [MAX_BUFFS]Buff = [_]Buff{.{}} ** MAX_BUFFS,
+    buffs: [MAX_BUFFS]Buff = @splat(.{}),
 
     /// Apply (or REFRESH) a buff on `u`: remove any live copy of the same skill first (so it never
     /// double-stacks), evaluate the skill's aurastat1..6 into stat deltas, add them to `u`'s
@@ -57,7 +57,7 @@ pub const BuffList = struct {
         const slot = self.freeSlot() orelse return;
         var b = Buff{ .skill_id = skill_id, .remaining = duration_frames, .active = true };
         b.n = gatherAuraStats(skills, isc, skill_id, level, &b.deltas);
-        for (b.deltas[0..b.n]) |d| u.stats.add(@enumFromInt(d.id), d.value);
+        for (b.deltas[0..b.n]) |d| u.stats.add(@fromBackingInt(d.id), d.value);
         self.buffs[slot] = b;
     }
 
@@ -112,7 +112,7 @@ pub const BuffList = struct {
 
     fn deactivate(self: *BuffList, u: *Unit, b: *Buff) void {
         _ = self;
-        for (b.deltas[0..b.n]) |d| u.stats.add(@enumFromInt(d.id), -d.value); // subtract the granted stats
+        for (b.deltas[0..b.n]) |d| u.stats.add(@fromBackingInt(d.id), -d.value); // subtract the granted stats
         b.active = false;
         b.n = 0;
     }
@@ -179,20 +179,20 @@ test "a buff grants its stats, refreshes without double-stacking, and expires" {
 
     // Cast Battle Orders (100-frame duration): grants +life%.
     bl.apply(&u, &s, &isc, bo, 10, 100);
-    const once = u.stats.get(@enumFromInt(hpid));
+    const once = u.stats.get(@fromBackingInt(hpid));
     try testing.expect(once > 0);
     try testing.expect(bl.isActive(bo));
 
     // Recast BEFORE it expires: refreshes, does NOT double the bonus (still `once`, not 2x).
     bl.apply(&u, &s, &isc, bo, 10, 100);
-    try testing.expectEqual(once, u.stats.get(@enumFromInt(hpid)));
+    try testing.expectEqual(once, u.stats.get(@fromBackingInt(hpid)));
 
     // Tick past the duration: the buff expires and its stat is removed.
     bl.tick(&u, 60);
     try testing.expect(bl.isActive(bo)); // still 40 frames left
     bl.tick(&u, 60);
     try testing.expect(!bl.isActive(bo)); // expired
-    try testing.expectEqual(@as(i32, 0), u.stats.get(@enumFromInt(hpid))); // stat gone
+    try testing.expectEqual(@as(i32, 0), u.stats.get(@fromBackingInt(hpid))); // stat gone
 }
 
 test "the timed-buff category works across classes via applySkill (Enchant/Frozen Armor/Holy Shield/Shout)" {
@@ -217,11 +217,11 @@ test "the timed-buff category works across classes via applySkill (Enchant/Froze
         book.setByName(&s, c[0], 10);
         bl.applySkill(&u, &s, &isc, book, id, 10);
         const sid: u16 = skillmod.statIdByName(&isc, c[1]).?;
-        try testing.expect(u.stats.get(@enumFromInt(sid)) > 0); // buff granted its stat
+        try testing.expect(u.stats.get(@fromBackingInt(sid)) > 0); // buff granted its stat
         try testing.expect(bl.isActive(id));
         bl.tick(&u, 1_000_000); // long past any duration
         try testing.expect(!bl.isActive(id)); // expired
-        try testing.expectEqual(@as(i32, 0), u.stats.get(@enumFromInt(sid))); // stat removed
+        try testing.expectEqual(@as(i32, 0), u.stats.get(@fromBackingInt(sid))); // stat removed
     }
     // An instant skill (Ice Bolt) is NOT a timed buff.
     try testing.expect(!isTimedBuff(&s, s.idByName("Ice Bolt").?));

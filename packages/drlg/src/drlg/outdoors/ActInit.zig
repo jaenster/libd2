@@ -72,7 +72,7 @@ pub fn InitAct1OutdoorLevel(pLevel: [*c]s.D2DrlgLevelStrc) void {
     Border.PlaceAct1245OutdoorBorders(pLevel);
 
     // OutWild.cpp:95 — levels 2-7: interleaved secondary borders and OutRoom steps
-    if (@intFromEnum(eLevelId) > 1 and @intFromEnum(eLevelId) < 8) {
+    if (@backingInt(eLevelId) > 1 and @backingInt(eLevelId) < 8) {
         Outdoors.AddAct124SecondaryBorder(pLevel, 0, 4);
         OutRoom.fillBorderCornersAndPresets(pLevel);
         Outdoors.AddAct124SecondaryBorder(pLevel, 1, 4);
@@ -91,11 +91,11 @@ pub fn InitAct1OutdoorLevel(pLevel: [*c]s.D2DrlgLevelStrc) void {
     }
 
     // OutWild.cpp:110 — waypoint for levels 3-6
-    if (@intFromEnum(eLevelId) > 2 and @intFromEnum(eLevelId) < 7) {
+    if (@backingInt(eLevelId) > 2 and @backingInt(eLevelId) < 7) {
         Outdoors.SpawnAct12Waypoint(pLevel);
     }
     // OutWild.cpp:113 — shrines for levels 2-7
-    if (@intFromEnum(eLevelId) > 1 and @intFromEnum(eLevelId) < 8) {
+    if (@backingInt(eLevelId) > 1 and @backingInt(eLevelId) < 8) {
         Outdoors.SpawnAct12Shrines(pLevel, 5);
     }
 
@@ -125,8 +125,8 @@ fn spawnAct4OutdoorPresets(pLevel: [*c]s.D2DrlgLevelStrc) void {
     if (eLevelId == .CityoftheDamned) {
         _ = OutPlace.SpawnOutdoorLevelPreset(pLevel, 0x32b, -1, 0, 0xf);
     }
-    var nPresetBaseA: i32 = gnAct4PresetBaseA[@intCast(@intFromEnum(eLevelId) - 0x68)];
-    var nPresetBaseB: i32 = gnAct4PresetBaseB[@intCast(@intFromEnum(eLevelId) - 0x68)];
+    var nPresetBaseA: i32 = gnAct4PresetBaseA[@intCast(@backingInt(eLevelId) - 0x68)];
+    var nPresetBaseB: i32 = gnAct4PresetBaseB[@intCast(@backingInt(eLevelId) - 0x68)];
     _ = OutPlace.SpawnOutdoorLevelPreset(pLevel, nPresetBaseA, -1, 0, 0xf);
     _ = OutPlace.SpawnOutdoorLevelPreset(pLevel, nPresetBaseA + 1, -1, 0, 0xf);
     _ = OutPlace.SpawnOutdoorLevelPreset(pLevel, nPresetBaseA + 1, -1, 0, 0xf);
@@ -162,8 +162,8 @@ pub fn InitAct4OutdoorLevel(pLevel: [*c]s.D2DrlgLevelStrc) void {
     if (eLevelId != .ChaosSanctuary) {
         Border.PlaceAct1245OutdoorBorders(pLevel);
     }
-    if (@intFromEnum(eLevelId) <= 0x67) return;
-    if (@intFromEnum(eLevelId) < 0x6b) {
+    if (@backingInt(eLevelId) <= 0x67) return;
+    if (@backingInt(eLevelId) < 0x6b) {
         // DRLGPLACE_Adjacent4DirMirrored (Drlg.cpp:3247) is called only for level
         // 104 in ACT4_D2DrlgLevelData1 (Drlg.cpp:4385). It draws one seed and sets
         // gdwDrlgLevelPlacementFlags = 0x800000 when sNextSeed&1=1, else 0x400000.

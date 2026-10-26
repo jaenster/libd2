@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     b.step("run", "Run the sprite tool").dependOn(&run_cmd.step);
 
     // Round trips over the real archives. Skipped, not failed, when the game files are absent:

@@ -1,7 +1,7 @@
 .{
     .name = .d2_client,
     .version = "0.6.5",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0x8375acaec589d5c0,
 
     // d2-net decodes the stream this package listens to; d2-core owns the item bit-stream and the

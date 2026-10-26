@@ -177,7 +177,7 @@ pub const Header = struct {
         const total = len + body_len;
         if (buf.len < len or total > std.math.maxInt(u16)) return error.NoSpace;
         std.mem.writeInt(u16, buf[0..2], @intCast(total), .little);
-        buf[2] = @intFromEnum(op);
+        buf[2] = @backingInt(op);
         return buf[0..len];
     }
 
@@ -186,7 +186,7 @@ pub const Header = struct {
         if (buf.len < len) return error.Short;
         return .{
             .total = std.mem.readInt(u16, buf[0..2], .little),
-            .op = @enumFromInt(buf[2]),
+            .op = @fromBackingInt(buf[2]),
         };
     }
 };
@@ -205,19 +205,19 @@ test "the create codes a client renders specifically" {
     // the generic string anyway.
     try testing.expectEqualStrings(
         "failed (unknown / no game server available)",
-        (@as(CreateResult, @enumFromInt(0x99))).describe(),
+        (@as(CreateResult, @fromBackingInt(0x99))).describe(),
     );
 }
 
 test "the join codes, including the three the realm decides" {
-    try testing.expectEqual(@as(u32, 0x2a), @intFromEnum(JoinResult.no_such_game));
-    try testing.expectEqual(@as(u32, 0x2b), @intFromEnum(JoinResult.game_full));
-    try testing.expectEqual(@as(u32, 0x71), @intFromEnum(JoinResult.hardcore_mix));
+    try testing.expectEqual(@as(u32, 0x2a), @backingInt(JoinResult.no_such_game));
+    try testing.expectEqual(@as(u32, 0x2b), @backingInt(JoinResult.game_full));
+    try testing.expectEqual(@as(u32, 0x71), @backingInt(JoinResult.hardcore_mix));
     // The gates the REALM decides and a client never sends, so every client-side copy of this
     // enum lacked them until the server's copy was folded in here.
-    try testing.expectEqual(@as(u32, 0x73), @intFromEnum(JoinResult.need_nightmare));
-    try testing.expectEqual(@as(u32, 0x74), @intFromEnum(JoinResult.need_hell));
-    try testing.expectEqual(@as(u32, 0x7d), @intFromEnum(JoinResult.ladder_mismatch));
+    try testing.expectEqual(@as(u32, 0x73), @backingInt(JoinResult.need_nightmare));
+    try testing.expectEqual(@as(u32, 0x74), @backingInt(JoinResult.need_hell));
+    try testing.expectEqual(@as(u32, 0x7d), @backingInt(JoinResult.ladder_mismatch));
     try testing.expect(JoinResult.ok.succeeded());
     try testing.expectEqualStrings("game is full", JoinResult.game_full.describe());
 }
@@ -227,10 +227,10 @@ test "the logon order is startup, charlist2, charlogon" {
     try testing.expectEqual(Op.startup, logon_order[0]);
     try testing.expectEqual(Op.charlist2, logon_order[1]);
     try testing.expectEqual(Op.charlogon, logon_order[2]);
-    try testing.expectEqual(@as(u8, 0x19), @intFromEnum(Op.charlist2));
+    try testing.expectEqual(@as(u8, 0x19), @backingInt(Op.charlist2));
     // MOTD has an id of its own and is still not part of the order: sending it between STARTUP
     // and CHARLIST2 is exactly the mistake this list exists to prevent.
-    try testing.expectEqual(@as(u8, 0x12), @intFromEnum(Op.motd));
+    try testing.expectEqual(@as(u8, 0x12), @backingInt(Op.motd));
     for (logon_order) |op| try testing.expect(op != .motd);
 }
 
@@ -254,6 +254,6 @@ test "creating a character and creating a game do not share an answer" {
     try testing.expect(!CharCreateResult.name_taken.succeeded());
     try testing.expect(CharCreateResult.created.succeeded());
 
-    const unknown: CharCreateResult = @enumFromInt(0x99);
+    const unknown: CharCreateResult = @fromBackingInt(0x99);
     try testing.expectEqualStrings("the realm rejected it", unknown.describe());
 }

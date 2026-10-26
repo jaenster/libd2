@@ -593,10 +593,10 @@ fn expectImage(pack: []const u8, key: u64, bw: u16, bh: u16, want: []const u8) !
 
 test "round trip, both versions: every image is found under its key and size, nothing else is" {
     const gpa = testing.allocator;
-    const a = [_]u8{1} ** (2 * 2 * 4); // 2x2 at 1x, scale 2 -> 4x4
-    const b = [_]u8{2} ** (1 * 3 * 4); // 1x3 -> 2x6
-    const c = [_]u8{3} ** (3 * 1 * 4); // 3x1, same key as b: a collision the size resolves
-    const d = [_]u8{4} ** (2 * 2 * 4); // a repeat of a's key and size: dropped
+    const a: [2 * 2 * 4]u8 = @splat(1); // 2x2 at 1x, scale 2 -> 4x4
+    const b: [1 * 3 * 4]u8 = @splat(2); // 1x3 -> 2x6
+    const c: [3 * 1 * 4]u8 = @splat(3); // 3x1, same key as b: a collision the size resolves
+    const d: [2 * 2 * 4]u8 = @splat(4); // a repeat of a's key and size: dropped
     const imgs = [_]Image{
         .{ .key = 50, .bw = 2, .bh = 2, .pixels = &a },
         .{ .key = 7, .bw = 1, .bh = 3, .pixels = &b },
@@ -626,7 +626,7 @@ test "round trip, both versions: every image is found under its key and size, no
 test "v2 compresses what shrinks, stores the rest raw, and decodes both" {
     const gpa = testing.allocator;
     // A flat 32x32 at 2x: 4096 bytes that deflate to a few dozen.
-    const flat = [_]u8{7} ** (32 * 32 * 4);
+    const flat: [32 * 32 * 4]u8 = @splat(7);
     // 4x4 at 2x of noise: 64 bytes zlib cannot shrink.
     var noise: [4 * 4 * 4]u8 = undefined;
     var rng = std.Random.DefaultPrng.init(1);
@@ -663,9 +663,9 @@ test "v2 compresses what shrinks, stores the rest raw, and decodes both" {
 
 test "v2 stores identical images once" {
     const gpa = testing.allocator;
-    const a = [_]u8{5} ** (8 * 8 * 4);
-    const a2 = [_]u8{5} ** (8 * 8 * 4); // the same bytes in another buffer
-    var b = [_]u8{5} ** (8 * 8 * 4);
+    const a: [8 * 8 * 4]u8 = @splat(5);
+    const a2: [8 * 8 * 4]u8 = @splat(5); // the same bytes in another buffer
+    var b: [8 * 8 * 4]u8 = @splat(5);
     b[100] = 6;
     const imgs = [_]Image{
         .{ .key = 30, .bw = 8, .bh = 8, .pixels = &a },
@@ -848,7 +848,7 @@ test "an empty pack is valid and finds nothing" {
 
 test "damaged packs are refused, and lookups on them stay in bounds" {
     const gpa = testing.allocator;
-    const a = [_]u8{9} ** 4;
+    const a: [4]u8 = @splat(9);
     for ([_]u32{ 1, 2 }) |v| {
         const pack = try encode(gpa, 2, &.{.{ .key = 1, .bw = 1, .bh = 1, .pixels = &a }}, .{ .version = v });
         defer gpa.free(pack);
@@ -885,7 +885,7 @@ test "damaged packs are refused, and lookups on them stay in bounds" {
 
 test "an out-of-order table is refused" {
     const gpa = testing.allocator;
-    const a = [_]u8{1} ** 4;
+    const a: [4]u8 = @splat(1);
     for ([_]u32{ 1, 2 }) |v| {
         const pack = try encode(gpa, 2, &.{
             .{ .key = 1, .bw = 1, .bh = 1, .pixels = &a },
@@ -901,12 +901,12 @@ test "an out-of-order table is refused" {
 
 test "v3: a plane per entry that has one, round trip, and the planes share like images" {
     const gpa = testing.allocator;
-    const a = [_]u8{5} ** (8 * 8 * 4); // 8x8 at 1x, scale 2 -> 16x16 = 256 px
-    var b = [_]u8{6} ** (8 * 8 * 4);
+    const a: [8 * 8 * 4]u8 = @splat(5); // 8x8 at 1x, scale 2 -> 16x16 = 256 px
+    var b: [8 * 8 * 4]u8 = @splat(6);
     b[3] = 9;
     var plane: [detailLen(256)]u8 = undefined;
     for (&plane, 0..) |*p, i| p.* = @truncate(i *% 37 +% 11); // noise: stays raw
-    const flat = [_]u8{0} ** detailLen(256); // all gain 0: deflates
+    const flat: [detailLen(256)]u8 = @splat(0); // all gain 0: deflates
     const imgs = [_]Image{
         .{ .key = 3, .bw = 8, .bh = 8, .pixels = &a, .detail = &plane },
         .{ .key = 1, .bw = 8, .bh = 8, .pixels = &b },
@@ -941,7 +941,7 @@ test "v3: a plane per entry that has one, round trip, and the planes share like 
 
 test "v3 is chosen only by a plane; packs without one are the same bytes as before" {
     const gpa = testing.allocator;
-    const a = [_]u8{1} ** (2 * 2 * 4);
+    const a: [2 * 2 * 4]u8 = @splat(1);
     const plain = [_]Image{.{ .key = 1, .bw = 2, .bh = 2, .pixels = &a }};
     const p2 = try encode(gpa, 2, &plain, .{});
     defer gpa.free(p2);
@@ -951,7 +951,7 @@ test "v3 is chosen only by a plane; packs without one are the same bytes as befo
     try testing.expectEqual(@as(u32, 1), (try validate(p1)).version);
     try testing.expect(find(p2, 1, 2, 2).?.detail == null);
 
-    const pl = [_]u8{0} ** detailLen(16);
+    const pl: [detailLen(16)]u8 = @splat(0);
     const withd = [_]Image{.{ .key = 1, .bw = 2, .bh = 2, .pixels = &a, .detail = &pl }};
     try testing.expectError(error.UnsupportedVersion, encode(gpa, 2, &withd, .{ .version = 1 }));
     const wrong = [_]Image{.{ .key = 1, .bw = 2, .bh = 2, .pixels = &a, .detail = pl[0..7] }};
@@ -960,8 +960,8 @@ test "v3 is chosen only by a plane; packs without one are the same bytes as befo
 
 test "v3: a plane outside the file or inside the table is refused" {
     const gpa = testing.allocator;
-    const a = [_]u8{1} ** (2 * 2 * 4);
-    const pl = [_]u8{0x21} ** detailLen(16);
+    const a: [2 * 2 * 4]u8 = @splat(1);
+    const pl: [detailLen(16)]u8 = @splat(0x21);
     const pack = try encode(gpa, 2, &.{.{ .key = 1, .bw = 2, .bh = 2, .pixels = &a, .detail = &pl }}, .{});
     defer gpa.free(pack);
     _ = try validate(pack);

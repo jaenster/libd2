@@ -188,7 +188,7 @@ pub fn PlaceRandomBorderSubTiles(
     // strictCornerLimit; was wrongly keyed on `!= 1` (latent: Act2/Act5 have
     // dwFlags&0xc == 0 so it never manifested, but it broke Act1 0x27 ids 2/3).
     const isNotBaseLvlSub = pUnkOutdoor.nLvlSubId != 1;
-    const eLvl = @intFromEnum(pLevel.eD2LevelId);
+    const eLvl = @backingInt(pLevel.eD2LevelId);
     const bMidActLevel = (eLvl >= 2 and eLvl <= 7);
 
     // posIterInit: base LvlSub on an interior tile (dwFlags & 0xc) shrinks the run.

@@ -72,8 +72,8 @@ pub const Table = struct {
         // keeps both halves in one char[512]: lengths at [0..256), symbols at [256..512).
         // The bucket fill below indexes past the length half on purpose, so keep the
         // same single array rather than two.
-        var sorted = [_]u8{0} ** 512;
-        var offsets = [_]u16{0} ** 16;
+        var sorted: [512]u8 = @splat(0);
+        var offsets: [16]u16 = @splat(0);
         for (lengths) |len| offsets[len] += 1;
         var len_index: usize = 15;
         while (len_index >= 1) : (len_index -= 1) {
@@ -90,9 +90,9 @@ pub const Table = struct {
 
         var table: Table = .{
             .lengths = lengths,
-            .codes = [_]u8{0} ** 256,
-            .fast = [_]u16{0} ** 256,
-            .buf = [_]u8{0} ** decode_buffer_size,
+            .codes = @splat(0),
+            .fast = @splat(0),
+            .buf = @splat(0),
         };
 
         // Canonical codes, longest first: the first (longest) symbol gets 0 and every

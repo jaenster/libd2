@@ -158,7 +158,7 @@ pub fn info(op: u8) Info {
 pub fn label(op: u8, buf: []u8) []const u8 {
     const i = info(op);
     if (i.cat != .unknown) return i.name;
-    return std.fmt.bufPrint(buf, "0x{x:0>2}", .{op}) catch "?";
+    return std.mem.print(buf, "0x{x:0>2}", .{op}) catch "?";
 }
 
 const DecodeError = error{ ShortBuffer, WrongOpcode };
@@ -565,12 +565,12 @@ pub const CreatePlayer = struct {
     pub const SIZE: usize = 26;
     guid: u32 = 0,
     class_id: u8 = 0,
-    name: [16]u8 = [_]u8{0} ** 16,
+    name: [16]u8 = @splat(0),
     x: u16 = 0,
     y: u16 = 0,
 
     pub fn setName(self: *CreatePlayer, s: []const u8) void {
-        self.name = [_]u8{0} ** 16;
+        self.name = @splat(0);
         const n = @min(s.len, 15);
         @memcpy(self.name[0..n], s[0..n]);
     }
@@ -1019,7 +1019,7 @@ test "size table covers 0x00..0xB4" {
 
 test "packetSize: fixed framing needs the full packet; invalid opcode = desync" {
     try std.testing.expectEqual(@as(?usize, null), packetSize(&[_]u8{ 0x03, 0, 0 }));
-    var full = [_]u8{0} ** 12;
+    var full: [12]u8 = @splat(0);
     full[0] = 0x03;
     try std.testing.expectEqual(@as(?usize, 12), packetSize(&full));
     try std.testing.expectEqual(@as(?usize, 0), packetSize(&[_]u8{0xff}));

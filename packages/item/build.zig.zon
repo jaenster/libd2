@@ -1,7 +1,7 @@
 .{
     .name = .d2_item,
     .version = "0.6.5",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0x2f3bb33652303552,
 
     // The shared Stat/Item model foundation (seed-RNG, ISC, wire item decoder)

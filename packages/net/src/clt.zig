@@ -3209,8 +3209,8 @@ test "every command is the length the engine's own outgoing table says it is" {
     const cs = @import("cs.zig");
     var buf: [512]u8 = undefined;
 
-    inline for (@typeInfo(@This()).@"struct".decls) |decl| {
-        const T = @field(@This(), decl.name);
+    inline for (@typeInfo(@This()).@"struct".decl_names) |decl_name| {
+        const T = @field(@This(), decl_name);
         if (@TypeOf(T) != type) continue;
         if (@typeInfo(T) != .@"struct") continue;
         if (!@hasDecl(T, "OPCODE") or !@hasDecl(T, "SIZE")) continue;
@@ -3227,7 +3227,7 @@ test "every command is the length the engine's own outgoing table says it is" {
         if (wire.len != @as(usize, @intCast(expected))) {
             std.debug.print(
                 "clt.{s} (0x{x:0>2}) encodes {d} bytes, the engine frames it at {d}\n",
-                .{ decl.name, op, wire.len, expected },
+                .{ decl_name, op, wire.len, expected },
             );
             return error.CommandLengthDisagreesWithEngine;
         }

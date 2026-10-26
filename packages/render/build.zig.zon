@@ -1,7 +1,7 @@
 .{
     .name = .d2_render,
     .version = "0.6.5",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0xd06d3191461e1190,
 
     // The automap + DT1-tile-art layer extracted out of drlg. It is a pure

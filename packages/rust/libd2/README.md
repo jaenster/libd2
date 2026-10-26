@@ -31,7 +31,7 @@ Act 1 of seed 1337 (39 levels)
 ```
 
 The engine itself is Zig, built from source by the build script and linked statically, so
-`zig` 0.16+ has to be on PATH to build. Nothing is needed at run time.
+`zig` 0.17+ has to be on PATH to build. Nothing is needed at run time.
 
 ## Coordinates and ids have types
 

@@ -357,7 +357,7 @@ test "ln is linear (a+lvl*b); dm is diminishing (matches CalcDiminishingReturns)
 test "synergy calc: (skill('a'.blvl)+skill('b'.blvl))*par8 evaluates from the referenced skills" {
     // skill 0 = Ice Bolt-like with Param8=15; skills 1,2 are synergies the caster has 20/10 in.
     const ctx = TestCtx{
-        .params = &.{ .{ 0, 0, 0, 0, 0, 0, 0, 15 }, .{0} ** 8, .{0} ** 8 },
+        .params = &.{ .{ 0, 0, 0, 0, 0, 0, 0, 15 }, @splat(0), @splat(0) },
         .levels = &.{ 1, 20, 10 },
         .names = &.{ "Ice Bolt", "Frost Nova", "Blizzard" },
     };

@@ -345,7 +345,7 @@ pub fn classBase(gpa: std.mem.Allocator, class: u8, level: u8) Error!Base {
     const ene = colInt(&cs, r, "int");
     const hpadd = colInt(&cs, r, "hpadd");
     var key: [4]u8 = undefined;
-    const level_key = std.fmt.bufPrint(&key, "{d}", .{level - 1}) catch unreachable;
+    const level_key = std.mem.print(&key, "{d}", .{level - 1}) catch unreachable;
     const xr = rowByKey(&xp, "Level", level_key) orelse return error.NoTable;
     return .{
         .str = colInt(&cs, r, "str"),
@@ -637,7 +637,7 @@ pub fn compose(gpa: std.mem.Allocator, spec: Spec, name: []const u8, opts: Optio
     }
     save.waypoints.tail = 1;
     if (spec.waypoints_all) {
-        for (0..3) |d| for (0..waypointCount(spec.classic)) |i| save.waypoints.set(@enumFromInt(d), @intCast(i), true);
+        for (0..3) |d| for (0..waypointCount(spec.classic)) |i| save.waypoints.set(@fromBackingInt(@intCast(d)), @intCast(i), true);
     }
     save.npcs.body = npc_body;
 
@@ -792,7 +792,7 @@ fn hirelingId(t: *const data.Table, m: MercSpec) ?HirelingRow {
         else => "Hell",
     };
     const style_word: []const u8 = if (std.ascii.eqlIgnoreCase(m.style, "defensive")) "Def" else if (std.ascii.eqlIgnoreCase(m.style, "offensive")) "Off" else if (std.ascii.eqlIgnoreCase(m.style, "combat")) "Comb" else return null;
-    const sub = std.fmt.bufPrint(&want, "{s}-{s}", .{ style_word, diff_word }) catch return null;
+    const sub = std.mem.print(&want, "{s}-{s}", .{ style_word, diff_word }) catch return null;
     for (0..t.rowCount()) |r| {
         if (!std.ascii.eqlIgnoreCase(t.get(r, "SubType"), sub)) continue;
         if (colInt(t, r, "Act") != m.act) continue;
@@ -871,7 +871,7 @@ fn walkList(items: []const u8, start: usize, end: *usize) ?ItemFault {
             if (r.bit_pos > (items.len - pos) * 8) return .{ .index = i, .at = at, .reason = "record runs past the end of the save" };
             if (it.flags & core.wire.flag.BODYPART == 0 and core.itemtypes.lookup(it.codeSlice()) == null and !isModItem(it.codeSlice())) return .{ .index = i, .at = at, .reason = "item code unknown to the item tables" };
             if (!it.compact and !it.crude) {
-                const q = @intFromEnum(it.quality);
+                const q = @backingInt(it.quality);
                 if (q < 1 or q > 9) return .{ .index = i, .at = at, .reason = "quality is not 1..9" };
             }
             if (k == 0 and !it.compact and !it.crude) children = it.socketed_count;
@@ -948,7 +948,7 @@ pub fn readback(bytes: []const u8) !Readback {
         }
     }
     var wps = [3]u32{ 0, 0, 0 };
-    for (0..3) |d| for (0..39) |i| if (s.waypoints.isSet(@enumFromInt(d), @intCast(i))) {
+    for (0..3) |d| for (0..39) |i| if (s.waypoints.isSet(@fromBackingInt(@intCast(d)), @intCast(i))) {
         wps[d] += 1;
     };
     // the mercenary list follows the corpse list

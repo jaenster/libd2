@@ -79,7 +79,7 @@ test "parse rejects a header-only save and a corrupt signature" {
     try std.testing.expect(save.newSave(&fresh, "Freshie", 1, 0x20, 0));
     try std.testing.expectError(error.BadQuestMarker, save.parse(&fresh));
 
-    var bad = [_]u8{0} ** save.header.header_size;
+    var bad: [save.header.header_size]u8 = @splat(0);
     try std.testing.expectError(error.BadSignature, save.parse(&bad));
     try std.testing.expectError(error.TooShort, save.parse(bad[0..16]));
 }

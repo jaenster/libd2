@@ -85,7 +85,7 @@ test "back-to-back frames split at the right offsets" {
 }
 
 test "oversized packets are refused like the engine's halt" {
-    const packet = [_]u8{0} ** (frame.max_packet_size + 1);
+    const packet: [frame.max_packet_size + 1]u8 = @splat(0);
     var buf: [1034]u8 = undefined;
     try std.testing.expectError(error.PacketTooLarge, frame.encode(&buf, table, &packet));
 }

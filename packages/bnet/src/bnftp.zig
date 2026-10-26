@@ -249,7 +249,7 @@ test "fileSize zero means not hosted, which is an answer and not a failure" {
 }
 
 test "a header claiming less than the fixed part is rejected" {
-    var buf = [_]u8{0} ** 0x18;
+    var buf: [0x18]u8 = @splat(0);
     std.mem.writeInt(u32, buf[0..4], 0x10, .little); // below 0x18
     try testing.expectError(Error.BadHeaderLen, ReplyHeader.decode(&buf));
     try testing.expectError(Error.Short, ReplyHeader.decode(buf[0..8]));

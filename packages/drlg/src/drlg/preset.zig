@@ -105,7 +105,7 @@ pub fn allocRoomExTypePreset(pLevel: [*c]s.D2DrlgLevelStrc, pDrlgMap: [*c]s.D2Dr
     const pPresetData = presetRoom(pRoomEx);
     pPresetData.*.pMap = pDrlgMap; // [2]
     pPresetData.*.nPickedFile = nPickedFile; // [3]
-    pPresetData.*.nLevelPrest = @enumFromInt(prest(pDrlgMap).*.Def); // [0]
+    pPresetData.*.nLevelPrest = @fromBackingInt(prest(pDrlgMap).*.Def); // [0]
     pPresetData.*.pMazeGrid = @ptrCast(pParentDrlgMap); // [0x3b] = pParentDrlgMap
     if (pParentDrlgMap != null) {
         pParentDrlgMap.*.pDrlgFile = @ptrFromInt(@intFromPtr(pParentDrlgMap.*.pDrlgFile) | 1);
@@ -290,7 +290,7 @@ fn ParsePresetsOfDrlgFile(pDrlgFile: *s.D2DrlgFileStrc, pMemory: ?*s.D2PoolManag
     if (build_options.ds1_disk) {
         // Regeneration/verification path: read the DS1 straight off disk.
         var pathbuf: [512]u8 = undefined;
-        const full = std.fmt.bufPrint(&pathbuf, ASSET_ROOT ++ "{s}", .{rel}) catch return;
+        const full = std.mem.print(&pathbuf, ASSET_ROOT ++ "{s}", .{rel}) catch return;
         var threaded = std.Io.Threaded.init_single_threaded;
         const io = threaded.io();
         // A missing asset must never change the seed stream: leave the file zeroed.
@@ -707,7 +707,7 @@ pub fn BuildArea(pLevel: [*c]s.D2DrlgLevelStrc, pDrlgMap: [*c]s.D2DrlgMapStrc, n
     pRoomEx.*.sCoords.WorldSize.y = pDrlgMap.*.nSizeY;
     const pRoomExData = presetRoom(pRoomEx);
     pRoomExData.*.pMap = pDrlgMap; // [2]
-    pRoomExData.*.nLevelPrest = @enumFromInt(prest(pDrlgMap).*.Def); // [0]
+    pRoomExData.*.nLevelPrest = @fromBackingInt(prest(pDrlgMap).*.Def); // [0]
     pRoomExData.*.nPickedFile = 1; // [3]
     pRoomExData.*.pMazeGrid = null; // [0x3b]
     if (prest(pDrlgMap).*.Populate == 0) {
@@ -817,7 +817,7 @@ test "AllocDrlgFile on a real LvlSub border DS1 populates nSubstGroups" {
     // BorderCliffs.ds1 = LvlSub row "Border - Cliffs" (File Act1/Outdoors/BorderCliffs.ds1).
     const rel = "Act1/Outdoors/BorderCliffs.ds1";
     var pathbuf: [512]u8 = undefined;
-    const full = try std.fmt.bufPrint(&pathbuf, ASSET_ROOT ++ "{s}", .{rel});
+    const full = try std.mem.print(&pathbuf, ASSET_ROOT ++ "{s}", .{rel});
     var threaded = std.Io.Threaded.init_single_threaded;
     const io = threaded.io();
     std.Io.Dir.cwd().access(io, full, .{}) catch return error.SkipZigTest;

@@ -82,7 +82,7 @@ pub const Item = struct {
     y: u16 = 0,
     /// The raw 3-bit page field: 0 when the item is in no grid, otherwise `Page` + 1.
     page_raw: u8 = 0,
-    code: [4]u8 = [_]u8{0} ** 4,
+    code: [4]u8 = @splat(0),
     code_len: u8 = 0,
     compact: bool = false,
     crude: bool = false,
@@ -113,7 +113,7 @@ pub const Item = struct {
     /// Stack size of a stackable base (arrows, bolts, keys, javelins ...), 0 when not stackable.
     quantity: u16 = 0,
     /// The personalised name, NUL-padded (flag `PLAYERNAME`).
-    owner: [16]u8 = [_]u8{0} ** 16,
+    owner: [16]u8 = @splat(0),
     /// An ear's class, level and name.
     ear_class: u8 = 0,
     ear_level: u8 = 0,
@@ -281,7 +281,7 @@ fn parseBody(r: *BitReader, is_save: bool) Item {
     it.socketed_count = @intCast(r.read(3));
     if (is_save) _ = r.read(32); // seed (save-only; nInitSeed / sSeed.nSeedLow)
     it.ilvl = @intCast(r.read(7));
-    it.quality = @enumFromInt(@as(u8, @intCast(r.read(4))));
+    it.quality = @fromBackingInt(@as(u8, @intCast(r.read(4))));
     if (r.readBool()) {
         it.has_variant = true;
         it.variant = @intCast(r.read(3));
@@ -290,7 +290,7 @@ fn parseBody(r: *BitReader, is_save: bool) Item {
 
     // the save form (nParam1) always carries the quality block and the stat list, identified or not
     const ident = it.identified() or is_save;
-    switch (@intFromEnum(it.quality)) {
+    switch (@backingInt(it.quality)) {
         1, 3 => it.file_index = @intCast(r.read(3)), // low / superior file index
         2 => {
             if (isCharm(it.codeSlice())) {
@@ -455,12 +455,12 @@ pub fn writeItem(w: *BitWriter, it: *const Item) void {
 
     w.write(0, 3); // param field
     w.write(it.ilvl, 7);
-    w.write(@intFromEnum(it.quality), 4);
+    w.write(@backingInt(it.quality), 4);
     w.write(0, 1); // no variant
     w.write(0, 1); // no automagic
 
     const ident = it.identified();
-    switch (@intFromEnum(it.quality)) {
+    switch (@backingInt(it.quality)) {
         1, 3 => w.write(0, 3), // low/superior file index (not ident-gated)
         4 => if (ident) {
             w.write(it.prefix, 11);
@@ -572,7 +572,7 @@ fn writeStat(w: *BitWriter, s: Stat) void {
 }
 
 test "writeItem round-trips a magic ring through parse" {
-    var buf = [_]u8{0} ** 64;
+    var buf: [64]u8 = @splat(0);
     var it = Item{ .flags = flag.IDENTIFIED, .version = 0x60, .dest = 3, .on_ground = true, .x = 100, .y = 200, .ilvl = 50, .quality = .magic, .prefix = 5, .suffix = 7 };
     it.code = .{ 'r', 'i', 'n', 0 };
     it.code_len = 3;
@@ -597,7 +597,7 @@ test "writeItem round-trips a magic ring through parse" {
 test "a stored item keeps any cell of the stash's grid, the rows below the Classic stash's fourth too" {
     // x and y are four bits each and the page three: a 10 by 10 grid fits, and the parser ties the cell to no game
     for ([_][2]u8{ .{ 0, 0 }, .{ 5, 3 }, .{ 5, 7 }, .{ 9, 9 }, .{ 15, 15 } }) |c| {
-        var buf = [_]u8{0} ** 32;
+        var buf: [32]u8 = @splat(0);
         var w = BitWriter.init(&buf);
         w.write(flag.COMPACT, 32);
         w.write(0x60, 10);
@@ -618,7 +618,7 @@ test "a stored item keeps any cell of the stash's grid, the rows below the Class
 }
 
 test "writeItem round-trips a unique amulet (equipped) with two stats" {
-    var buf = [_]u8{0} ** 64;
+    var buf: [64]u8 = @splat(0);
     var it = Item{ .flags = flag.IDENTIFIED, .version = 0x60, .dest = 1, .body_loc = 2, .ilvl = 80, .quality = .unique, .unique_id = 123 };
     it.code = .{ 'a', 'm', 'u', 0 };
     it.code_len = 3;
@@ -641,7 +641,7 @@ test "writeItem round-trips a unique amulet (equipped) with two stats" {
 }
 
 test "writeItem round-trips an armor item with base defense + durability, mods intact" {
-    var buf = [_]u8{0} ** 64;
+    var buf: [64]u8 = @splat(0);
     // "hbl" = leather boots (armor). Base stats: armorclass(31) + maxdurability(73)/durability(72).
     var it = Item{ .flags = flag.IDENTIFIED, .version = 0x60, .dest = 3, .on_ground = true, .x = 7, .y = 8, .ilvl = 30, .quality = .magic, .prefix = 3, .suffix = 0 };
     it.code = .{ 'h', 'b', 'l', 0 };
@@ -665,7 +665,7 @@ test "writeItem round-trips an armor item with base defense + durability, mods i
 }
 
 test "writeItem round-trips a set item (the 5-bit set mask path)" {
-    var buf = [_]u8{0} ** 64;
+    var buf: [64]u8 = @splat(0);
     var it = Item{ .flags = flag.IDENTIFIED, .version = 0x60, .dest = 3, .on_ground = true, .x = 1, .y = 2, .ilvl = 40, .quality = .set, .set_id = 55 };
     it.code = .{ 'r', 'i', 'n', 0 };
     it.code_len = 3;
@@ -683,7 +683,7 @@ test "writeItem round-trips a set item (the 5-bit set mask path)" {
 }
 
 fn roundTripRare(version: u16, flags: u32) !void {
-    var buf = [_]u8{0} ** 64;
+    var buf: [64]u8 = @splat(0);
     var it = Item{ .flags = flags, .version = version, .dest = 3, .on_ground = true, .x = 9, .y = 11, .ilvl = 61, .quality = .rare };
     it.code = .{ 'x', 'a', 'r', 0 };
     it.code_len = 3;
@@ -722,7 +722,7 @@ test "a set item has its partial-list mask at every item version: the layout fol
     // written as an Expansion item (the mask is there), then the item's version field is changed in the bytes: the same bits
     // are what the game's stream holds for a Classic or a legacy item, and the decoder has to read them the same
     for ([_]u16{ 0, 2, 101 }) |v| {
-        var buf = [_]u8{0} ** 64;
+        var buf: [64]u8 = @splat(0);
         var it = Item{ .flags = flag.IDENTIFIED, .version = 101, .dest = 3, .on_ground = true, .x = 1, .y = 2, .ilvl = 40, .quality = .set, .set_id = 55 };
         it.code = .{ 'r', 'i', 'n', 0 };
         it.code_len = 3;
@@ -746,7 +746,7 @@ test "a set item has its partial-list mask at every item version: the layout fol
 }
 
 test "parse identified magic ring with a stat" {
-    var buf = [_]u8{0} ** 64;
+    var buf: [64]u8 = @splat(0);
     var w = BitWriter.init(&buf);
     writeHeader(&w, flag.IDENTIFIED, "rin", 100, 200);
     w.write(0, 3); // param
@@ -775,7 +775,7 @@ test "parse identified magic ring with a stat" {
 }
 
 test "unidentified item stops before affixes and stats" {
-    var buf = [_]u8{0} ** 64;
+    var buf: [64]u8 = @splat(0);
     var w = BitWriter.init(&buf);
     writeHeader(&w, 0, "rin", 5, 6); // no IDENTIFIED bit
     w.write(0, 3);
@@ -794,7 +794,7 @@ test "unidentified item stops before affixes and stats" {
 }
 
 test "parseSave reads JM magic + seed and decodes an equipped armor's defense" {
-    var buf = [_]u8{0} ** 96;
+    var buf: [96]u8 = @splat(0);
     var w = BitWriter.init(&buf);
     w.write(0x4D4A, 16); // "JM" save magic prefix
     w.write(flag.IDENTIFIED, 32);
@@ -844,7 +844,7 @@ test "parseSave reads JM magic + seed and decodes an equipped armor's defense" {
 }
 
 test "compact item yields code + position only" {
-    var buf = [_]u8{0} ** 32;
+    var buf: [32]u8 = @splat(0);
     var w = BitWriter.init(&buf);
     writeHeader(&w, flag.COMPACT, "gld", 10, 20);
     var r = BitReader.init(&buf);

@@ -101,10 +101,10 @@ pub fn applyProperty(
 
     var chained: i32 = 0;
     for (0..7) |slot| {
-        const func = pt.int(prow, std.fmt.bufPrint(&fbuf, "func{d}", .{slot + 1}) catch unreachable);
+        const func = pt.int(prow, std.mem.print(&fbuf, "func{d}", .{slot + 1}) catch unreachable);
         if (!hasHandler(func)) break;
-        const stat_name = pt.str(prow, std.fmt.bufPrint(&sbuf, "stat{d}", .{slot + 1}) catch unreachable);
-        const val: i32 = @intCast(pt.int(prow, std.fmt.bufPrint(&vbuf, "val{d}", .{slot + 1}) catch unreachable));
+        const stat_name = pt.str(prow, std.mem.print(&sbuf, "stat{d}", .{slot + 1}) catch unreachable);
+        const val: i32 = @intCast(pt.int(prow, std.mem.print(&vbuf, "val{d}", .{slot + 1}) catch unreachable));
         const applied = try applyFunc(gpa, out, seed, t, .{
             .func = func,
             .stat = statId(t, stat_name),
@@ -406,11 +406,11 @@ fn rollSetPartialProps(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(Roll
     var tier: usize = 1;
     while (tier <= 5) : (tier += 1) {
         for ([2]u8{ 'a', 'b' }) |half| {
-            const prop = st.str(row, std.fmt.bufPrint(&cbuf, "aprop{d}{c}", .{ tier, half }) catch unreachable);
+            const prop = st.str(row, std.mem.print(&cbuf, "aprop{d}{c}", .{ tier, half }) catch unreachable);
             if (prop.len == 0) continue;
-            const par: i32 = @intCast(st.int(row, std.fmt.bufPrint(&pbuf, "apar{d}{c}", .{ tier, half }) catch unreachable));
-            const min: i32 = @intCast(st.int(row, std.fmt.bufPrint(&lobuf, "amin{d}{c}", .{ tier, half }) catch unreachable));
-            const max: i32 = @intCast(st.int(row, std.fmt.bufPrint(&hibuf, "amax{d}{c}", .{ tier, half }) catch unreachable));
+            const par: i32 = @intCast(st.int(row, std.mem.print(&pbuf, "apar{d}{c}", .{ tier, half }) catch unreachable));
+            const min: i32 = @intCast(st.int(row, std.mem.print(&lobuf, "amin{d}{c}", .{ tier, half }) catch unreachable));
+            const max: i32 = @intCast(st.int(row, std.mem.print(&hibuf, "amax{d}{c}", .{ tier, half }) catch unreachable));
             try applyProperty(gpa, out, seed, t, prop, par, min, max, ctx);
         }
     }
@@ -431,11 +431,11 @@ pub fn rollRunewordStats(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(Ro
     var hibuf: [12]u8 = undefined;
     var n: usize = 1;
     while (n <= 7) : (n += 1) {
-        const code = rt.str(row, std.fmt.bufPrint(&cbuf, "T1Code{d}", .{n}) catch unreachable);
+        const code = rt.str(row, std.mem.print(&cbuf, "T1Code{d}", .{n}) catch unreachable);
         if (code.len == 0) break;
-        const par: i32 = @intCast(rt.int(row, std.fmt.bufPrint(&pbuf, "T1Param{d}", .{n}) catch unreachable));
-        const min: i32 = @intCast(rt.int(row, std.fmt.bufPrint(&lobuf, "T1Min{d}", .{n}) catch unreachable));
-        const max: i32 = @intCast(rt.int(row, std.fmt.bufPrint(&hibuf, "T1Max{d}", .{n}) catch unreachable));
+        const par: i32 = @intCast(rt.int(row, std.mem.print(&pbuf, "T1Param{d}", .{n}) catch unreachable));
+        const min: i32 = @intCast(rt.int(row, std.mem.print(&lobuf, "T1Min{d}", .{n}) catch unreachable));
+        const max: i32 = @intCast(rt.int(row, std.mem.print(&hibuf, "T1Max{d}", .{n}) catch unreachable));
         try applyProperty(gpa, out, seed, t, code, par, min, max, ctx);
     }
 }
@@ -466,11 +466,11 @@ pub fn rollSocketFillerStats(
     var hibuf: [24]u8 = undefined;
     var n: usize = 1;
     while (n <= 3) : (n += 1) {
-        const code = gt.str(row, std.fmt.bufPrint(&cbuf, "{s}Mod{d}Code", .{ prefix, n }) catch unreachable);
+        const code = gt.str(row, std.mem.print(&cbuf, "{s}Mod{d}Code", .{ prefix, n }) catch unreachable);
         if (code.len == 0) break;
-        const par: i32 = @intCast(gt.int(row, std.fmt.bufPrint(&pbuf, "{s}Mod{d}Param", .{ prefix, n }) catch unreachable));
-        const min: i32 = @intCast(gt.int(row, std.fmt.bufPrint(&lobuf, "{s}Mod{d}Min", .{ prefix, n }) catch unreachable));
-        const max: i32 = @intCast(gt.int(row, std.fmt.bufPrint(&hibuf, "{s}Mod{d}Max", .{ prefix, n }) catch unreachable));
+        const par: i32 = @intCast(gt.int(row, std.mem.print(&pbuf, "{s}Mod{d}Param", .{ prefix, n }) catch unreachable));
+        const min: i32 = @intCast(gt.int(row, std.mem.print(&lobuf, "{s}Mod{d}Min", .{ prefix, n }) catch unreachable));
+        const max: i32 = @intCast(gt.int(row, std.mem.print(&hibuf, "{s}Mod{d}Max", .{ prefix, n }) catch unreachable));
         try applyProperty(gpa, out, seed, t, code, par, min, max, ctx);
     }
 }
@@ -483,11 +483,11 @@ fn rollTableProps(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledSta
     var hibuf: [8]u8 = undefined;
     var n: usize = 1;
     while (n <= nslots) : (n += 1) {
-        const prop = tbl.str(row, std.fmt.bufPrint(&pbuf, "prop{d}", .{n}) catch unreachable);
+        const prop = tbl.str(row, std.mem.print(&pbuf, "prop{d}", .{n}) catch unreachable);
         if (prop.len == 0) continue; // empty slot -> no property, no roll
-        const par: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&parbuf, "par{d}", .{n}) catch unreachable));
-        const min: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&lobuf, "min{d}", .{n}) catch unreachable));
-        const max: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&hibuf, "max{d}", .{n}) catch unreachable));
+        const par: i32 = @intCast(tbl.int(row, std.mem.print(&parbuf, "par{d}", .{n}) catch unreachable));
+        const min: i32 = @intCast(tbl.int(row, std.mem.print(&lobuf, "min{d}", .{n}) catch unreachable));
+        const max: i32 = @intCast(tbl.int(row, std.mem.print(&hibuf, "max{d}", .{n}) catch unreachable));
         try applyProperty(gpa, out, seed, t, prop, par, min, max, ctx);
     }
 }
@@ -510,11 +510,11 @@ fn rollModSlots(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(RolledStat)
     var hibuf: [12]u8 = undefined;
     var n: usize = 1;
     while (n <= nslots) : (n += 1) {
-        const code = tbl.str(row, std.fmt.bufPrint(&cbuf, "mod{d}code", .{n}) catch unreachable);
+        const code = tbl.str(row, std.mem.print(&cbuf, "mod{d}code", .{n}) catch unreachable);
         if (code.len == 0) break;
-        const par: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&pbuf, "mod{d}param", .{n}) catch unreachable));
-        const min: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&lobuf, "mod{d}min", .{n}) catch unreachable));
-        const max: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&hibuf, "mod{d}max", .{n}) catch unreachable));
+        const par: i32 = @intCast(tbl.int(row, std.mem.print(&pbuf, "mod{d}param", .{n}) catch unreachable));
+        const min: i32 = @intCast(tbl.int(row, std.mem.print(&lobuf, "mod{d}min", .{n}) catch unreachable));
+        const max: i32 = @intCast(tbl.int(row, std.mem.print(&hibuf, "mod{d}max", .{n}) catch unreachable));
         try applyProperty(gpa, out, seed, t, code, par, min, max, ctx);
     }
 }

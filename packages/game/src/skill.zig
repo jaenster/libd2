@@ -89,7 +89,7 @@ pub const SkillData = struct {
     /// This skill's server do-function as the named `DoFunc` (Skills.txt srvdofunc). The one place
     /// that turns the raw int into the enum — branch on this instead of magic `srvdofunc == N`.
     pub fn doFunc(self: SkillData) DoFunc {
-        return @enumFromInt(self.srvdofunc);
+        return @fromBackingInt(self.srvdofunc);
     }
 
     /// Do-funcs whose `srvmissilea` is only a ring/visual, not how they deal damage — Static/Nova
@@ -218,7 +218,7 @@ pub const Skills = struct {
     pub fn param(self: *const Skills, skill_id: u16, n: u8) i32 {
         const row = self.rowById(skill_id) orelse return 0;
         var buf: [16]u8 = undefined;
-        const col = std.fmt.bufPrint(&buf, "Param{d}", .{n}) catch return 0;
+        const col = std.mem.print(&buf, "Param{d}", .{n}) catch return 0;
         return self.table.getInt(i32, row, col) orelse 0;
     }
 
@@ -436,7 +436,7 @@ pub const MAX_SKILLS = 512;
 /// cast reads synergy + skill levels from. This is the sim's minimal "skill sheet"; the host fills
 /// it from a .d2s (or a build), by NAME so no Ids are hardcoded.
 pub const SkillBook = struct {
-    levels: [MAX_SKILLS]i16 = [_]i16{0} ** MAX_SKILLS,
+    levels: [MAX_SKILLS]i16 = @splat(0),
 
     pub fn set(self: *SkillBook, id: u16, level: i16) void {
         if (id < MAX_SKILLS) self.levels[id] = level;
@@ -715,7 +715,7 @@ pub fn applyPassives(skills: *const Skills, u: *Unit, book: SkillBook, isc: *con
             const stat = skills.table.get(row, stat_col);
             if (stat.len != 0) {
                 if (statIdByName(isc, stat)) |sid| {
-                    u.stats.add(@enumFromInt(sid), skills.evalCalc(.{}, 0, @intCast(id), lvl, calc_col));
+                    u.stats.add(@fromBackingInt(sid), skills.evalCalc(.{}, 0, @intCast(id), lvl, calc_col));
                 }
             }
         }
@@ -745,7 +745,7 @@ pub fn applyAuraTo(skills: *const Skills, u: *Unit, aura_id: u16, aura_level: i3
         const stat = skills.table.get(row, stat_col);
         if (stat.len != 0) {
             if (statIdByName(isc, stat)) |sid| {
-                u.stats.add(@enumFromInt(sid), skills.evalCalc(.{}, 0, aura_id, aura_level, calc_col));
+                u.stats.add(@fromBackingInt(sid), skills.evalCalc(.{}, 0, aura_id, aura_level, calc_col));
             }
         }
     }
@@ -1076,7 +1076,7 @@ test "DoFunc names every srvdofunc the real Skills.txt uses (1..152 vocabulary i
     for (0..s.table.rowCount()) |r| {
         const df = s.table.getInt(i32, r, "srvdofunc") orelse continue;
         if (df == 0) continue; // no server do-func
-        const name = @as(DoFunc, @enumFromInt(df)).label(); // "?" only outside the named 1..152 space
+        const name = @as(DoFunc, @fromBackingInt(df)).label(); // "?" only outside the named 1..152 space
         try testing.expect(!std.mem.eql(u8, name, "?"));
         try testing.expect(df >= 1 and df <= 152);
         seen += 1;
@@ -1357,21 +1357,21 @@ test "applyPassives folds a caster's passive skills onto its unit stats (end to 
     applyPassives(&s, &u, book, &isc);
 
     const mrb = statIdByName(&isc, "manarecoverybonus").?;
-    try testing.expectEqual(@as(i32, 90), u.stats.get(@enumFromInt(mrb)));
+    try testing.expectEqual(@as(i32, 90), u.stats.get(@fromBackingInt(mrb)));
     // Natural Resistance grants ALL 4 resists (passivestat1..4), not just the first slot.
     var nat = Unit.init(.player);
     var nbook = SkillBook{};
     nbook.setByName(&s, "Natural Resistance", 10);
     applyPassives(&s, &nat, nbook, &isc);
     inline for (.{ "fireresist", "lightresist", "coldresist", "poisonresist" }) |rname| {
-        try testing.expect(nat.stats.get(@enumFromInt(statIdByName(&isc, rname).?)) > 0);
+        try testing.expect(nat.stats.get(@fromBackingInt(statIdByName(&isc, rname).?)) > 0);
     }
     // Cold Mastery pierce also lands when the sorc has it.
     book.setByName(&s, "Cold Mastery", 5); // passive_cold_pierce = ln12 = 20 + 5*5 = 45
     var ucm = Unit.init(.player);
     applyPassives(&s, &ucm, book, &isc);
     const pcp = statIdByName(&isc, "passive_cold_pierce").?;
-    try testing.expectEqual(@as(i32, 45), ucm.stats.get(@enumFromInt(pcp)));
+    try testing.expectEqual(@as(i32, 45), ucm.stats.get(@fromBackingInt(pcp)));
 }
 
 test "applyAuraTo grants a Paladin aura's stat to an ally unit" {
@@ -1384,19 +1384,19 @@ test "applyAuraTo grants a Paladin aura's stat to an ally unit" {
     // A level-5 Might aura on the ally grants damagepercent = ln34 = 40 + 5*10 = 90.
     applyAuraTo(&s, &ally, s.idByName("Might").?, 5, &isc);
     const dmg = statIdByName(&isc, "damagepercent").?;
-    try testing.expectEqual(@as(i32, 90), ally.stats.get(@enumFromInt(dmg)));
+    try testing.expectEqual(@as(i32, 90), ally.stats.get(@fromBackingInt(dmg)));
 
     // A non-aura skill (Ice Bolt) grants nothing.
     var other = Unit.init(.player);
     applyAuraTo(&s, &other, s.idByName("Ice Bolt").?, 5, &isc);
-    try testing.expectEqual(@as(i32, 0), other.stats.get(@enumFromInt(dmg)));
+    try testing.expectEqual(@as(i32, 0), other.stats.get(@fromBackingInt(dmg)));
 
     // Battle Orders is a MULTI-stat warcry (aurastat1..3): +mana% + life% + stamina%, all applied.
     var bo = Unit.init(.player);
     applyAuraTo(&s, &bo, s.idByName("Battle Orders").?, 10, &isc);
-    try testing.expect(bo.stats.get(@enumFromInt(statIdByName(&isc, "item_maxhp_percent").?)) > 0);
-    try testing.expect(bo.stats.get(@enumFromInt(statIdByName(&isc, "item_maxmana_percent").?)) > 0);
-    try testing.expect(bo.stats.get(@enumFromInt(statIdByName(&isc, "skill_staminapercent").?)) > 0);
+    try testing.expect(bo.stats.get(@fromBackingInt(statIdByName(&isc, "item_maxhp_percent").?)) > 0);
+    try testing.expect(bo.stats.get(@fromBackingInt(statIdByName(&isc, "item_maxmana_percent").?)) > 0);
+    try testing.expect(bo.stats.get(@fromBackingInt(statIdByName(&isc, "skill_staminapercent").?)) > 0);
 }
 
 test "end-to-end: a Might aura flows through to a unit's physical combat damage" {
@@ -1419,7 +1419,7 @@ test "end-to-end: a Might aura flows through to a unit's physical combat damage"
     try testing.expectEqual(@as(i32, 10), before);
     // The aura's value landed on the unit's damagepercent stat exactly (auraValue -> applyAuraTo).
     const dmgpct = statIdByName(&isc, "damagepercent").?;
-    try testing.expectEqual(@as(i32, 90), u.stats.get(@enumFromInt(dmgpct)));
+    try testing.expectEqual(@as(i32, 90), u.stats.get(@fromBackingInt(dmgpct)));
     // ...and combat consumes it: the melee damage is meaningfully higher (~+90%, plus attr rounding).
     try testing.expect(after > before);
     try testing.expect(after >= before + 8);
@@ -1460,7 +1460,7 @@ test "end-to-end: Amplify Damage curse makes an enemy take more physical damage"
 
     applyCurseTo(&s, &foe, s.idByName("Amplify Damage").?, 1, &isc);
     const dr = statIdByName(&isc, "damageresist").?;
-    try testing.expect(foe.stats.get(@enumFromInt(dr)) < 0); // curse gave NEGATIVE physical resist
+    try testing.expect(foe.stats.get(@fromBackingInt(dr)) < 0); // curse gave NEGATIVE physical resist
     const cursed = combat.applyDamageComponent(100, .none, &foe).applied;
     try testing.expect(cursed > base); // so the enemy takes MORE physical damage
 }
@@ -1476,7 +1476,7 @@ test "end-to-end: a Defiance aura raises a unit's defense (skill_armor_percent -
     // Defiance grants skill_armor_percent, which getDefense now sums with item_armor_percent.
     applyAuraTo(&s, &u, s.idByName("Defiance").?, 5, &isc);
     const sap = statIdByName(&isc, "skill_armor_percent").?;
-    try testing.expect(u.stats.get(@enumFromInt(sap)) > 0); // aura applied the %
+    try testing.expect(u.stats.get(@fromBackingInt(sap)) > 0); // aura applied the %
     try testing.expect(combat.getDefense(&u) > before); // defense actually rose
 }
 

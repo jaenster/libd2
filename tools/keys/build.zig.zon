@@ -1,7 +1,7 @@
 .{
     .name = .d2_keys,
     .version = "0.1.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0x84aed2c4bbbfa816,
 
     // Reads the CD key material a Diablo II installation hides inside its own MPQs.

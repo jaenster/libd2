@@ -66,7 +66,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the DRLG tool");
     run_step.dependOn(&run_cmd.step);
 
@@ -98,7 +98,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/verify_tests.zig"),
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
         }),
     });
     verify_tests.root_module.addOptions("build_options", opts);
@@ -119,10 +119,10 @@ pub fn build(b: *std.Build) void {
     // nothing links libc and the wasm target is wasm32-freestanding-capable.
     const capi = b.option(bool, "capi", "Build the C-ABI shim (libs / wasm)") orelse true;
     if (capi) {
-        const capi_optimize: std.builtin.OptimizeMode =
-            if (is_wasm and b.args == null) .ReleaseSmall else (if (optimize == .Debug) .ReleaseFast else optimize);
+        const capi_optimize: std.lang.Optimize =
+            if (is_wasm) .small else (if (optimize == .debug) .fast else optimize);
         const CapiMod = struct {
-            fn make(bb: *std.Build, tgt: std.Build.ResolvedTarget, opt: std.builtin.OptimizeMode, o: *std.Build.Step.Options, fm: *std.Build.Module, cm: *std.Build.Module, dm: *std.Build.Module) *std.Build.Module {
+            fn make(bb: *std.Build, tgt: std.Build.ResolvedTarget, opt: std.lang.Optimize, o: *std.Build.Step.Options, fm: *std.Build.Module, cm: *std.Build.Module, dm: *std.Build.Module) *std.Build.Module {
                 // Its own d2-drlg instance at the C-ABI optimize mode, so a Debug build still
                 // gets a usable library rather than a generator too slow to run.
                 const libmod = bb.createModule(.{

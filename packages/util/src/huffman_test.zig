@@ -46,7 +46,7 @@ test "round trip over payload shapes the engine actually sends" {
 }
 
 test "all-zero payloads compress eight to one" {
-    const src = [_]u8{0} ** 64;
+    const src: [64]u8 = @splat(0);
     var packed_bytes: [64]u8 = undefined;
     try std.testing.expectEqual(@as(usize, 8), huffman.compress(&packed_bytes, &src).?);
 }
@@ -69,7 +69,7 @@ test "decoding agrees with the reference table over the whole code space" {
 }
 
 test "compress reports overflow instead of running past dst" {
-    const src = [_]u8{0xfe} ** 32; // 11 bits each, so 44 bytes are needed
+    const src: [32]u8 = @splat(0xfe); // 11 bits each, so 44 bytes are needed
     var small: [8]u8 = undefined;
     try std.testing.expectEqual(@as(?usize, null), huffman.compress(&small, &src));
 
@@ -78,7 +78,7 @@ test "compress reports overflow instead of running past dst" {
 }
 
 test "decompress reports overflow instead of running past dst" {
-    const src = [_]u8{0xff} ** 16;
+    const src: [16]u8 = @splat(0xff);
     var packed_bytes: [64]u8 = undefined;
     const n = huffman.compress(&packed_bytes, &src).?;
 
@@ -124,7 +124,7 @@ test "a negotiated table round trips" {
 }
 
 test "malformed tables are rejected, not written past" {
-    var lengths = [_]u8{8} ** 256;
+    var lengths: [256]u8 = @splat(8);
     lengths[0] = 0;
     try std.testing.expectError(error.InvalidCodeLengths, huffman.Table.build(lengths));
 

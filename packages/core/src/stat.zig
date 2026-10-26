@@ -101,7 +101,7 @@ pub const NUM_STATS = 512;
 /// returns from STATLIST_GetUnitStat). Signed 32-bit to match the engine's stat
 /// value width and to allow negative reductions/resists.
 pub const StatList = struct {
-    values: [NUM_STATS]i32 = [_]i32{0} ** NUM_STATS,
+    values: [NUM_STATS]i32 = @splat(0),
 
     pub fn init() StatList {
         return .{};
@@ -109,21 +109,21 @@ pub const StatList = struct {
 
     /// Read a stat by id (STATLIST_GetUnitStat). Unknown/out-of-range ids read 0.
     pub fn get(self: *const StatList, s: Stat) i32 {
-        const i: usize = @intFromEnum(s);
+        const i: usize = @backingInt(s);
         if (i >= NUM_STATS) return 0;
         return self.values[i];
     }
 
     /// Set a stat's summed value (test/setup helper; the real engine mutates layers).
     pub fn set(self: *StatList, s: Stat, v: i32) void {
-        const i: usize = @intFromEnum(s);
+        const i: usize = @backingInt(s);
         if (i >= NUM_STATS) return;
         self.values[i] = v;
     }
 
     /// Add to a stat's value.
     pub fn add(self: *StatList, s: Stat, v: i32) void {
-        const i: usize = @intFromEnum(s);
+        const i: usize = @backingInt(s);
         if (i >= NUM_STATS) return;
         self.values[i] +%= v;
     }

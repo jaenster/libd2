@@ -78,7 +78,7 @@ pub const Occupancy = struct {
     /// departure clears only what its owner actually put there.
     pub const Cell = struct {
         bits: u16 = 0,
-        refs: [16]u16 = [_]u16{0} ** 16,
+        refs: [16]u16 = @splat(0),
     };
 
     pub fn init(alloc: std.mem.Allocator, w: i32, h: i32) !Occupancy {

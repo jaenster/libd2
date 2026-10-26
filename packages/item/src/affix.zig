@@ -137,12 +137,12 @@ pub fn rollMagicAffix(
         // itype-include / etype-exclude match (CanApplyAutomod core).
         var itypes: [7][]const u8 = undefined;
         inline for (0..7) |i| {
-            const col = std.fmt.bufPrint(&itbuf, "itype{d}", .{i + 1}) catch unreachable;
+            const col = std.mem.print(&itbuf, "itype{d}", .{i + 1}) catch unreachable;
             itypes[i] = tbl.str(row, col);
         }
         var etypes: [5][]const u8 = undefined;
         inline for (0..5) |i| {
-            const col = std.fmt.bufPrint(&etbuf, "etype{d}", .{i + 1}) catch unreachable;
+            const col = std.mem.print(&etbuf, "etype{d}", .{i + 1}) catch unreachable;
             etypes[i] = tbl.str(row, col);
         }
         if (!itemtype.affixMatchesTypes(ctx.types, &itypes, &etypes)) continue;
@@ -198,7 +198,7 @@ pub const FoundUniques = struct {
     /// The engine's guard: rows at or above this index can never be rolled at all.
     pub const limit: usize = 0x1001;
 
-    bits: [(limit + 31) / 32]u32 = .{0} ** ((limit + 31) / 32),
+    bits: [(limit + 31) / 32]u32 = @splat(0),
 
     pub fn isSet(self: *const FoundUniques, row: usize) bool {
         if (row >= limit) return false;
@@ -344,13 +344,13 @@ pub fn detectRuneword(gpa: std.mem.Allocator, t: *const tables.Tables, item_type
         // Rune sequence: count the row's non-empty RuneN and require an exact, in-order code match.
         var need: usize = 0;
         while (need < 6) : (need += 1) {
-            const col = std.fmt.bufPrint(&rbuf, "Rune{d}", .{need + 1}) catch unreachable;
+            const col = std.mem.print(&rbuf, "Rune{d}", .{need + 1}) catch unreachable;
             if (rt.str(row, col).len == 0) break;
         }
         if (need != rune_codes.len) continue;
         var seq_ok = true;
         for (0..need) |k| {
-            const col = std.fmt.bufPrint(&rbuf, "Rune{d}", .{k + 1}) catch unreachable;
+            const col = std.mem.print(&rbuf, "Rune{d}", .{k + 1}) catch unreachable;
             if (!codeEq(rt.str(row, col), rune_codes[k])) {
                 seq_ok = false;
                 break;
@@ -361,12 +361,12 @@ pub fn detectRuneword(gpa: std.mem.Allocator, t: *const tables.Tables, item_type
         // itype-include / etype-exclude gate (same match core as affixes).
         var itypes: [6][]const u8 = undefined;
         inline for (0..6) |i| {
-            const col = std.fmt.bufPrint(&itbuf, "itype{d}", .{i + 1}) catch unreachable;
+            const col = std.mem.print(&itbuf, "itype{d}", .{i + 1}) catch unreachable;
             itypes[i] = rt.str(row, col);
         }
         var etypes: [3][]const u8 = undefined;
         inline for (0..3) |i| {
-            const col = std.fmt.bufPrint(&etbuf, "etype{d}", .{i + 1}) catch unreachable;
+            const col = std.mem.print(&etbuf, "etype{d}", .{i + 1}) catch unreachable;
             etypes[i] = rt.str(row, col);
         }
         if (!itemtype.affixMatchesTypes(item_types, &itypes, &etypes)) continue;
@@ -429,9 +429,9 @@ pub fn rollAutoPrefix(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.
         const freq: i32 = @intCast(tbl.int(row, "frequency"));
         if (freq <= 0) continue;
         var itypes: [7][]const u8 = undefined;
-        inline for (0..7) |i| itypes[i] = tbl.str(row, std.fmt.bufPrint(&itbuf, "itype{d}", .{i + 1}) catch unreachable);
+        inline for (0..7) |i| itypes[i] = tbl.str(row, std.mem.print(&itbuf, "itype{d}", .{i + 1}) catch unreachable);
         var etypes: [5][]const u8 = undefined;
-        inline for (0..5) |i| etypes[i] = tbl.str(row, std.fmt.bufPrint(&etbuf, "etype{d}", .{i + 1}) catch unreachable);
+        inline for (0..5) |i| etypes[i] = tbl.str(row, std.mem.print(&etbuf, "etype{d}", .{i + 1}) catch unreachable);
         if (!itemtype.affixMatchesTypes(ctx.types, &itypes, &etypes)) continue;
         const weight = if (ctx.magic_lvl != 0) freq * lvl_min else freq;
         sum += weight;
@@ -475,9 +475,9 @@ fn rollRareName(
         const version = tbl.int(row, "version");
         if (!(version < 100 or is_expansion)) continue;
         var itypes: [7][]const u8 = undefined;
-        inline for (0..7) |i| itypes[i] = tbl.str(row, std.fmt.bufPrint(&itbuf, "itype{d}", .{i + 1}) catch unreachable);
+        inline for (0..7) |i| itypes[i] = tbl.str(row, std.mem.print(&itbuf, "itype{d}", .{i + 1}) catch unreachable);
         var etypes: [4][]const u8 = undefined;
-        inline for (0..4) |i| etypes[i] = tbl.str(row, std.fmt.bufPrint(&etbuf, "etype{d}", .{i + 1}) catch unreachable);
+        inline for (0..4) |i| etypes[i] = tbl.str(row, std.mem.print(&etbuf, "etype{d}", .{i + 1}) catch unreachable);
         if (itemtype.affixMatchesTypes(item_types, &itypes, &etypes)) try pool.append(gpa, @intCast(row + 1));
         // The engine's candidate buffer stops at 511 entries.
         if (pool.items.len == 511) break;
@@ -564,7 +564,7 @@ pub fn rollQualityItem(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables
     };
     if (throwable or tbl.int(ref.row, "nodurability") != 0) n = @min(n, 4);
 
-    var visited = [_]bool{false} ** 64;
+    var visited: [64]bool = @splat(false);
     while (true) {
         var idx: usize = 0;
         while (true) {
@@ -734,7 +734,7 @@ test "runeword detection: exact rune sequence + itype match, order-sensitive" {
         var runes: [6][]const u8 = undefined;
         var n: usize = 0;
         while (n < 6) : (n += 1) {
-            const col = std.fmt.bufPrint(&rbuf, "Rune{d}", .{n + 1}) catch unreachable;
+            const col = std.mem.print(&rbuf, "Rune{d}", .{n + 1}) catch unreachable;
             const rc = rt.str(row, col);
             if (rc.len == 0) break;
             runes[n] = rc;

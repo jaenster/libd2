@@ -20,7 +20,7 @@ const std = @import("std");
 
 /// Wrap one of these per test: `var mem: testalloc.Checked = .{}; defer mem.deinit();`
 pub const Checked = struct {
-    dbg: std.heap.DebugAllocator(.{ .stack_trace_frames = 0 }) = .init,
+    dbg: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{ .stack_trace_frames = 0 }),
 
     pub fn allocator(self: *Checked) std.mem.Allocator {
         return self.dbg.allocator();
@@ -28,7 +28,7 @@ pub const Checked = struct {
 
     /// Tears down and fails the run on any surviving allocation.
     pub fn deinit(self: *Checked) void {
-        if (self.dbg.deinit() == .leak)
+        if (self.dbg.deinit() != 0)
             @panic("d2-drlg test: allocator leak (rerun the test with std.testing.allocator for a stack trace)");
     }
 };

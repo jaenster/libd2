@@ -18,7 +18,7 @@ pub const Capi = struct {
 };
 
 pub fn read(a: std.mem.Allocator, source: [:0]const u8) !Capi {
-    var tree = try Ast.parse(a, source, .zig);
+    var tree = try Ast.parse(a, source, .{});
     var out: std.ArrayListUnmanaged(Export) = .empty;
     var abi: ?i64 = null;
     for (tree.rootDecls()) |node| {

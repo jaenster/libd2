@@ -87,10 +87,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var libs: std.ArrayListUnmanaged(Lib) = .empty;
     var bad = false;
     for (libraries) |def| {
-        const hp = try std.fmt.allocPrint(a, "packages/{s}/include/{s}.h", .{ def.pkg, def.lib });
+        const hp = try a.print("packages/{s}/include/{s}.h", .{ def.pkg, def.lib });
         const src = dir.readFileAlloc(io, try join(a, root, hp), a, .limited(1 << 20)) catch fatal("cannot read {s}", .{hp});
         const h = cdecl.parse(a, src) catch fatal("{s}: cannot parse", .{hp});
-        const cp = try std.fmt.allocPrint(a, "packages/{s}/src/capi.zig", .{def.pkg});
+        const cp = try a.print("packages/{s}/src/capi.zig", .{def.pkg});
         const csrc = dir.readFileAllocOptions(io, try join(a, root, cp), a, .limited(1 << 22), .of(u8), 0) catch fatal("cannot read {s}", .{cp});
         const c = try capi_mod.read(a, csrc);
         // the header against the exports
@@ -153,7 +153,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn join(a: std.mem.Allocator, root: []const u8, rel: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(a, "{s}/{s}", .{ root, rel });
+    return a.print("{s}/{s}", .{ root, rel });
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -226,13 +226,13 @@ fn rustType(a: std.mem.Allocator, t: cdecl.Type) ![]const u8 {
     var inner: []const u8 = if (std.mem.eql(u8, t.base, "void")) "c_void" else rustPrim(t.base) orelse t.base;
     if (t.ptr == 0) {
         if (std.mem.eql(u8, t.base, "void")) return "()";
-        if (t.array > 0) return std.fmt.allocPrint(a, "[{s}; {d}]", .{ inner, t.array });
+        if (t.array > 0) return a.print("[{s}; {d}]", .{ inner, t.array });
         return inner;
     }
     var d: u8 = 0;
     while (d < t.ptr) : (d += 1) {
         const c = (d == 0 and t.is_const);
-        inner = try std.fmt.allocPrint(a, "*{s} {s}", .{ if (c) "const" else "mut", inner });
+        inner = try a.print("*{s} {s}", .{ if (c) "const" else "mut", inner });
     }
     return inner;
 }
@@ -306,7 +306,7 @@ fn rust(a: std.mem.Allocator, out: *Out, libs: []Lib) !void {
             try w.s(";\n");
         }
         try w.s("}\n");
-        try out.add(try std.fmt.allocPrint(a, "packages/rust/libd2/src/sys/{s}.rs", .{l.def.lib}), w.buf.items);
+        try out.add(try a.print("packages/rust/libd2/src/sys/{s}.rs", .{l.def.lib}), w.buf.items);
 
         // smoke tests
         try tests.p("\n#[test]\nfn {s}_abi() {{\n    assert_eq!(unsafe {{ sys::{s}::{s}_abi_version() }} as u32, sys::{s}::EXPECTED_ABI);\n}}\n", .{ l.def.lib, l.def.lib, l.def.lib, l.def.lib });
@@ -360,7 +360,7 @@ fn goRet(h: *const cdecl.Header, t: cdecl.Type) []const u8 {
 
 fn goField(a: std.mem.Allocator, h: *const cdecl.Header, t: cdecl.Type) ![]const u8 {
     const base: []const u8 = if (t.ptr > 0 or h.isFnPtr(t.base)) "uintptr" else goPrim(t.base) orelse t.base;
-    if (t.array > 0 and t.ptr == 0) return std.fmt.allocPrint(a, "[{d}]{s}", .{ t.array, base });
+    if (t.array > 0 and t.ptr == 0) return a.print("[{d}]{s}", .{ t.array, base });
     return base;
 }
 
@@ -371,7 +371,7 @@ fn goLib(a: std.mem.Allocator, out: *Out, l: *const Lib) !void {
     if (l.h.consts.items.len != 0) {
         try body.s("// The constants of the header.\nconst (\n");
         var rows: std.ArrayListUnmanaged(Row) = .empty;
-        for (l.h.consts.items) |c| try rows.append(a, .{ .doc = c.doc, .name = c.name, .rest = try std.fmt.allocPrint(a, "= {d}", .{c.value}) });
+        for (l.h.consts.items) |c| try rows.append(a, .{ .doc = c.doc, .name = c.name, .rest = try a.print("= {d}", .{c.value}) });
         try goRows(&body, rows.items);
         try body.s(")\n\n");
     }
@@ -406,7 +406,7 @@ fn goLib(a: std.mem.Allocator, out: *Out, l: *const Lib) !void {
     try body.p("func Load() (*API, error) {{\n\tapiOnce.Do(func() {{\n\t\tl, err := lib.Open(\"{s}\")\n\t\tif err != nil {{\n\t\t\tapiErr = err\n\t\t\treturn\n\t\t}}\n\t\ta := &API{{}}\n\t\tbinds := []struct {{\n\t\t\tfn  any\n\t\t\tsym string\n\t\t}}{{\n", .{l.def.lib});
     for (l.h.funcs.items) |f| try body.p("\t\t\t{{&a.{s}, \"{s}\"}},\n", .{ try camel(a, stripPrefix(l, f.name)), f.name });
     try body.s("\t\t}\n\t\tfor _, b := range binds {\n\t\t\tif err := lib.Bind(l, b.fn, b.sym); err != nil {\n\t\t\t\tapiErr = err\n\t\t\t\treturn\n\t\t\t}\n\t\t}\n");
-    const abi_fn = try camel(a, stripPrefix(l, try std.fmt.allocPrint(a, "{s}_abi_version", .{l.def.lib})));
+    const abi_fn = try camel(a, stripPrefix(l, try a.print("{s}_abi_version", .{l.def.lib})));
     try body.p("\t\tif err := lib.Verify(l, uint32(a.{s}()), abiVersion); err != nil {{\n\t\t\tapiErr = err\n\t\t\treturn\n\t\t}}\n\t\tapiLoaded = a\n\t}})\n\treturn apiLoaded, apiErr\n}}\n", .{abi_fn});
 
     var w = W{ .a = a };
@@ -416,7 +416,7 @@ fn goLib(a: std.mem.Allocator, out: *Out, l: *const Lib) !void {
     try w.s("\n\t\"github.com/libd2/go/internal/lib\"\n)\n\n");
     try w.p("// abiVersion is the {s} C ABI this package was generated against.\nconst abiVersion = {d}\n\n", .{ l.def.lib, l.abi });
     try w.s(body.buf.items);
-    try out.add(try std.fmt.allocPrint(a, "packages/go/libd2/{s}/zz_abi.go", .{l.def.go_dir}), w.buf.items);
+    try out.add(try a.print("packages/go/libd2/{s}/zz_abi.go", .{l.def.go_dir}), w.buf.items);
 
     // smoke test
     var t = W{ .a = a };
@@ -430,7 +430,7 @@ fn goLib(a: std.mem.Allocator, out: *Out, l: *const Lib) !void {
         try t.p("\tif got, want := unsafe.Sizeof({s}{{}}), size({d}, {d}); got != want {{\n\t\tt.Errorf(\"sizeof({s}) = %d, want %d\", got, want)\n\t}}\n", .{ st.name, cdecl.structLayout(&l.h, st, .p64).size, cdecl.structLayout(&l.h, st, .p32).size, st.name });
     }
     try t.s("}\n");
-    try out.add(try std.fmt.allocPrint(a, "packages/go/libd2/{s}/zz_abi_test.go", .{l.def.go_dir}), t.buf.items);
+    try out.add(try a.print("packages/go/libd2/{s}/zz_abi_test.go", .{l.def.go_dir}), t.buf.items);
 }
 
 const Row = struct { doc: []const u8, name: []const u8, rest: []const u8 };
@@ -482,7 +482,7 @@ fn csParam(a: std.mem.Allocator, h: *const cdecl.Header, t: cdecl.Type) ![]const
     const inner: []const u8 = if (std.mem.eql(u8, t.base, "void")) "void" else csPrim(t.base) orelse t.base;
     var stars: [4]u8 = undefined;
     @memset(stars[0..t.ptr], '*');
-    return std.fmt.allocPrint(a, "{s}{s}", .{ inner, stars[0..t.ptr] });
+    return a.print("{s}{s}", .{ inner, stars[0..t.ptr] });
 }
 
 fn csRet(h: *const cdecl.Header, t: cdecl.Type) []const u8 {
@@ -541,7 +541,7 @@ fn dotnetLib(a: std.mem.Allocator, out: *Out, l: *const Lib) !void {
         }
         try w.s("}\n");
     }
-    try out.add(try std.fmt.allocPrint(a, "packages/dotnet/LibD2/{s}/Native.g.cs", .{l.def.dotnet_ns}), w.buf.items);
+    try out.add(try a.print("packages/dotnet/LibD2/{s}/Native.g.cs", .{l.def.dotnet_ns}), w.buf.items);
 }
 
 fn xmlEscape(a: std.mem.Allocator, s: []const u8) ![]const u8 {

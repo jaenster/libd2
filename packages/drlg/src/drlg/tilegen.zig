@@ -78,8 +78,8 @@ inline fn probing() bool {
 /// in our baked blob). Values verified against the real Blank.dt1 subtile blocks:
 ///   main=30 sub=0 -> 0x05 (block_walk|wall)  — uncarved solid rock
 ///   main=30 sub=1 -> 0x01 (block_walk only)  — the Arcane-Sanctuary/void fill (0x1e00100)
-const solid_fill_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 0, .rarity = 1, .flags = [_]u8{0x05} ** 25 };
-const blank_fill_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 1, .rarity = 1, .flags = [_]u8{0x01} ** 25 };
+const solid_fill_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 0, .rarity = 1, .flags = @splat(0x05) };
+const blank_fill_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 1, .rarity = 1, .flags = @splat(0x01) };
 
 /// The solid-rock Blank.dt1 stand-in (0x05 across its 5x5), for stamping engine "void"
 /// (room cells with no floor tile) into a CollMap the way the runtime does.
@@ -397,7 +397,7 @@ fn findPresetTypeIndex(nLevelId: i32, nGridFlags: u32, nSub: u32) i32 {
 /// (SetWallTileFlags top) and for the orient-8/9 preset markers (ProcessTile);
 /// nSub = (nTileType == 9).
 pub fn createsPresetsRoll(pRoomEx: [*c]s.D2RoomExStrc, nGridFlags: u32, nWorldX: i32, nWorldY: i32, bSub9: bool) void {
-    const lvl: i32 = @intFromEnum(pRoomEx.*.pLevel.?.eD2LevelId);
+    const lvl: i32 = @backingInt(pRoomEx.*.pLevel.?.eD2LevelId);
     const idx = findPresetTypeIndex(lvl, nGridFlags, @intFromBool(bSub9));
     if (idx < 0) return;
     const row = &PRESET_TYPE_ROWS[@intCast(idx)];

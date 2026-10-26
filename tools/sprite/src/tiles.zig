@@ -245,7 +245,7 @@ pub const Dt1Doc = struct {
 
 pub fn keyHex(gpa: std.mem.Allocator, k: framekey.Key) ![]const u8 {
     if (k.key == 0 and k.box.w == 0) return "";
-    return std.fmt.allocPrint(gpa, "{x:0>16}", .{k.key});
+    return gpa.print("{x:0>16}", .{k.key});
 }
 
 pub const Counts = struct {
@@ -297,7 +297,7 @@ fn member(c: *main.Ctx, name: []const u8, root: []const u8, pal: *const main.Pal
                 doc.w = floor_w;
                 doc.h = floor_h;
                 doc.key = try keyHex(gpa, try framekey.compute(px, floor_w, floor_h, floor_w));
-                doc.png = try std.fmt.allocPrint(gpa, "{s}/f{d:0>4}.png", .{ name, i });
+                doc.png = try gpa.print("{s}/f{d:0>4}.png", .{ name, i });
                 n.floors += 1;
                 break :blk try pngx.encodeIndexed(gpa, px, floor_w, floor_h, &pal.rgb);
             },
@@ -323,7 +323,7 @@ fn member(c: *main.Ctx, name: []const u8, root: []const u8, pal: *const main.Pal
                 doc.w = wall.w;
                 doc.h = wall.h;
                 doc.blocks = bd;
-                doc.png = try std.fmt.allocPrint(gpa, "{s}/w{d:0>4}.png", .{ name, i });
+                doc.png = try gpa.print("{s}/w{d:0>4}.png", .{ name, i });
                 n.walls += 1;
                 n.wall_blocks += blocks.len;
                 break :blk try pngx.encodeIndexed(gpa, wall.px, wall.w, wall.h, &pal.rgb);

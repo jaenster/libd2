@@ -21,7 +21,7 @@ zig build test-umbrella   # check the umbrella module resolves every package
 zig build verify          # the golden verification gates (drlg)
 ```
 
-Zig `0.16.0`, the version `build.zig.zon` pins as its minimum. No libc: several packages target
+Zig `0.17.0`, the version `build.zig.zon` pins as its minimum. No libc: several packages target
 `wasm32-freestanding`, and anything that reaches for libc breaks that quietly for everyone
 downstream.
 

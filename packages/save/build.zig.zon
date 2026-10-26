@@ -1,7 +1,7 @@
 .{
     .name = .d2_save,
     .version = "0.6.5",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0x6546acf65d9f4bcb,
 
     // The fixed .d2s header lives in d2-formats; the bit readers and the per-item bit codec

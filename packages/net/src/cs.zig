@@ -119,7 +119,7 @@ fn scanLenPrefixed(buf: []const u8, lenoff: usize, overhead: usize, cap: ?u16) ?
 pub fn CoordCmd(comptime op: Op) type {
     return struct {
         const Self = @This();
-        pub const OPCODE: u8 = @intFromEnum(op);
+        pub const OPCODE: u8 = @backingInt(op);
         pub const SIZE: usize = 5;
 
         x: u16 = 0,
@@ -149,7 +149,7 @@ pub fn CoordCmd(comptime op: Op) type {
 pub fn EntityCmd(comptime op: Op) type {
     return struct {
         const Self = @This();
-        pub const OPCODE: u8 = @intFromEnum(op);
+        pub const OPCODE: u8 = @backingInt(op);
         pub const SIZE: usize = 9;
 
         unit_type: u32 = 0, // eD2UnitType (0=player,1=monster,2=object,3=missile,4=item,5=warp)
@@ -188,7 +188,7 @@ pub const RightSkillOnLocation = CoordCmd(.right_skill_on_location);
 /// skill-on-location/entity cast (0x05/0x06/0x0C/0x0D) uses it — those carry NO skill
 /// id themselves.
 pub const SelectSkill = struct {
-    pub const OPCODE: u8 = @intFromEnum(Op.select_skill);
+    pub const OPCODE: u8 = @backingInt(Op.select_skill);
     pub const SIZE: usize = 9;
     pub const LEFT_BIT: u32 = 0x8000_0000;
 
@@ -230,7 +230,7 @@ pub const InteractWithEntity = EntityCmd(.interact_with_entity);
 /// OBJECT it operates it, for an NPC it opens interaction. Self-interaction on a player is
 /// rejected. Distinct from 0x13 InteractWithEntity (9 bytes) which the host uses for warps.
 pub const PickUpItem = struct {
-    pub const OPCODE: u8 = @intFromEnum(Op.pick_up_item);
+    pub const OPCODE: u8 = @backingInt(Op.pick_up_item);
     pub const SIZE: usize = 13;
 
     unit_type: u32 = 0, // eD2UnitType of the target (4 = item)
@@ -261,7 +261,7 @@ pub const PickUpItem = struct {
 /// requires the item on the cursor; it validates `bodyLoc-1 <= 9` (eD2BodyLoc 1..10) then
 /// SERVER_EquipItemToBodyLoc. `pad` is don't-care.
 pub const EquipItem = struct {
-    pub const OPCODE: u8 = @intFromEnum(Op.equip_item);
+    pub const OPCODE: u8 = @backingInt(Op.equip_item);
     pub const SIZE: usize = 9;
 
     guid: u32 = 0, // dwItemGUID
@@ -285,7 +285,7 @@ pub const EquipItem = struct {
 /// 0x1C BodyToInventory — D2GSPacketClt0x1C (unequip). PlayerMsg handler @0x54aec0: `[nCmd u8]
 /// [bodyLoc u16]` (3 bytes). Validates `bodyLoc-1 < 10` then moves the equipped item back to inventory.
 pub const UnequipItem = struct {
-    pub const OPCODE: u8 = @intFromEnum(Op.unequip_item);
+    pub const OPCODE: u8 = @backingInt(Op.unequip_item);
     pub const SIZE: usize = 3;
 
     body_loc: u16 = 0, // eD2BodyLoc source slot (1..10)
@@ -308,7 +308,7 @@ pub const UnequipItem = struct {
 /// target => broadcast to the game; a non-empty target => whisper. Wire size is variable:
 /// 4 + msg.len+1 + target.len+1.
 pub const ChatMessage = struct {
-    pub const OPCODE: u8 = @intFromEnum(Op.chat_message);
+    pub const OPCODE: u8 = @backingInt(Op.chat_message);
     pub const HEADER: usize = 4;
     pub const MAX_MSG: usize = 256;
     pub const MAX_TARGET: usize = 16;
@@ -488,7 +488,7 @@ test "sizeOf: fixed opcodes match the engine size table exactly" {
 }
 
 test "sizeOf: 0xFF control packet is 16 bytes, out-of-range/unused opcodes are unknown (0)" {
-    var buf: [16]u8 = [_]u8{0} ** 16;
+    var buf: [16]u8 = @splat(0);
     buf[0] = 0xFF;
     try std.testing.expectEqual(@as(?usize, 16), sizeOf(buf[0..]));
     // out of table range
@@ -509,16 +509,16 @@ test "sizeOf: variable-length opcodes scan correctly (chat 0x15, 0x66, 0x6C)" {
     // truncated chat (no target terminator yet) => need more bytes
     try std.testing.expectEqual(@as(?usize, null), sizeOf(chat_slice[0 .. chat.len - 1]));
     // 0x66: total = 3 + u16@1
-    const p66 = [_]u8{ 0x66, 4, 0 } ++ [_]u8{0xAB} ** 4;
+    const p66 = [_]u8{ 0x66, 4, 0 } ++ @as([4]u8, @splat(0xAB));
     try std.testing.expectEqual(@as(?usize, 7), sizeOf(p66[0..]));
     // 0x6C: total = 7 + u16@1
-    const p6c = [_]u8{ 0x6C, 2, 0 } ++ [_]u8{0} ** 6;
+    const p6c = [_]u8{ 0x6C, 2, 0 } ++ @as([6]u8, @splat(0));
     try std.testing.expectEqual(@as(?usize, 9), sizeOf(p6c[0..]));
 }
 
 test "sizeOf: incomplete fixed packet returns null (need more bytes)" {
     // 0x68 GAMELOGON wants 37 bytes; give it 10.
-    var buf: [10]u8 = [_]u8{0} ** 10;
+    var buf: [10]u8 = @splat(0);
     buf[0] = 0x68;
     try std.testing.expectEqual(@as(?usize, null), sizeOf(buf[0..]));
 }

@@ -283,13 +283,13 @@ pub fn lvlPrestGetLine(def: i32) [*c]D2LvlPrestTxt {
 /// TXT_LvlPrest_FindLineByLevelId(level)
 pub fn lvlPrestFindLineByLevelId(level: eD2LevelId) [*c]D2LvlPrestTxt {
     const t = g_lvl_tables orelse return null;
-    const r = t.src.lvl_prest.findByInt("LevelId", @intFromEnum(level)) orelse return null;
+    const r = t.src.lvl_prest.findByInt("LevelId", @backingInt(level)) orelse return null;
     return &t.lvl_prest[r];
 }
 /// TXT_LvlMaze_FindLineByLevelId(level)
 pub fn lvlMazeFindLineByLevelId(level: eD2LevelId) [*c]D2LvlMazeTxt {
     const t = g_lvl_tables orelse return null;
-    const r = t.src.lvl_maze.findByInt("Level", @intFromEnum(level)) orelse return null;
+    const r = t.src.lvl_maze.findByInt("Level", @backingInt(level)) orelse return null;
     return &t.lvl_maze[r];
 }
 /// TXT_LvlTypes_GetLine(id)
@@ -334,7 +334,7 @@ pub fn lvlWarpRowAt(idx1: i32) ?*const D2LvlWarpTxt {
 /// TXT_LevelDefs_GetLine(level)
 pub fn levelDefsGetLine(eLevel: eD2LevelId) [*c]D2LevelDefsTxt {
     const t = g_lvl_tables orelse return null;
-    const r = t.src.levels.findByInt("Id", @intFromEnum(eLevel)) orelse return null;
+    const r = t.src.levels.findByInt("Id", @backingInt(eLevel)) orelse return null;
     return &t.level_defs[r];
 }
 
@@ -343,7 +343,7 @@ fn buildPrest(gpa: std.mem.Allocator, t: *const txt.Table) ![]D2LvlPrestTxt {
     for (out, 0..) |*row, i| {
         row.* = std.mem.zeroes(D2LvlPrestTxt);
         row.Def = i32col(t, i, "Def");
-        row.LevelId = @enumFromInt(i32col(t, i, "LevelId"));
+        row.LevelId = @fromBackingInt(i32col(t, i, "LevelId"));
         row.Populate = i32col(t, i, "Populate");
         row.Logicals = i32col(t, i, "Logicals");
         row.Outdoors = i32col(t, i, "Outdoors");
@@ -361,7 +361,7 @@ fn buildPrest(gpa: std.mem.Allocator, t: *const txt.Table) ![]D2LvlPrestTxt {
         row.Dt1Mask = i32col(t, i, "Dt1Mask");
         inline for (0..6) |k| {
             var buf: [8]u8 = undefined;
-            const name = std.fmt.bufPrint(&buf, "File{d}", .{k + 1}) catch unreachable;
+            const name = std.mem.print(&buf, "File{d}", .{k + 1}) catch unreachable;
             copyStr(&row.File[k], t.str(i, name));
         }
     }
@@ -372,7 +372,7 @@ fn buildMaze(gpa: std.mem.Allocator, t: *const txt.Table) ![]D2LvlMazeTxt {
     const out = try gpa.alloc(D2LvlMazeTxt, t.rowCount());
     for (out, 0..) |*row, i| {
         row.* = .{
-            .Level = @enumFromInt(i32col(t, i, "Level")),
+            .Level = @fromBackingInt(i32col(t, i, "Level")),
             .Rooms = .{ i32col(t, i, "Rooms"), i32col(t, i, "Rooms(N)"), i32col(t, i, "Rooms(H)") },
             .SizeX = i32col(t, i, "SizeX"),
             .SizeY = i32col(t, i, "SizeY"),
@@ -390,7 +390,7 @@ fn buildTypes(gpa: std.mem.Allocator, t: *const txt.Table) ![]D2LvlTypesTxt {
         row.Expansion = i32col(t, i, "Expansion");
         inline for (0..32) |k| {
             var buf: [12]u8 = undefined;
-            const name = std.fmt.bufPrint(&buf, "File {d}", .{k + 1}) catch unreachable;
+            const name = std.mem.print(&buf, "File {d}", .{k + 1}) catch unreachable;
             copyStr(&row.File[k], t.str(i, name));
         }
     }
@@ -412,9 +412,9 @@ fn buildSub(gpa: std.mem.Allocator, t: *const txt.Table) ![]D2LvlSubTxt {
             var b0: [8]u8 = undefined;
             var b1: [8]u8 = undefined;
             var b2: [8]u8 = undefined;
-            row.Prob[k] = i32col(t, i, std.fmt.bufPrint(&b0, "Prob{d}", .{k}) catch unreachable);
-            row.Trials[k] = i32col(t, i, std.fmt.bufPrint(&b1, "Trials{d}", .{k}) catch unreachable);
-            row.Max[k] = i32col(t, i, std.fmt.bufPrint(&b2, "Max{d}", .{k}) catch unreachable);
+            row.Prob[k] = i32col(t, i, std.mem.print(&b0, "Prob{d}", .{k}) catch unreachable);
+            row.Trials[k] = i32col(t, i, std.mem.print(&b1, "Trials{d}", .{k}) catch unreachable);
+            row.Max[k] = i32col(t, i, std.mem.print(&b2, "Max{d}", .{k}) catch unreachable);
         }
     }
     return out;
@@ -459,8 +459,8 @@ fn buildLevelDefs(gpa: std.mem.Allocator, t: *const txt.Table) ![]D2LevelDefsTxt
         row.OffsetX = i32col(t, i, "OffsetX");
         row.OffsetY = i32col(t, i, "OffsetY");
         row.Depend = i32col(t, i, "Depend");
-        row.DrlgType = @enumFromInt(i32col(t, i, "DrlgType"));
-        row.LevelType = @enumFromInt(i32col(t, i, "LevelType"));
+        row.DrlgType = @fromBackingInt(i32col(t, i, "DrlgType"));
+        row.LevelType = @fromBackingInt(i32col(t, i, "LevelType"));
         row.SubType = i32col(t, i, "SubType");
         row.SubTheme = i32col(t, i, "SubTheme");
         row.SubWaypoint = i32col(t, i, "SubWaypoint");
@@ -476,8 +476,8 @@ fn buildLevelDefs(gpa: std.mem.Allocator, t: *const txt.Table) ![]D2LevelDefsTxt
         inline for (0..8) |k| {
             var b0: [8]u8 = undefined;
             var b1: [8]u8 = undefined;
-            row.Vis[k] = @enumFromInt(i32col(t, i, std.fmt.bufPrint(&b0, "Vis{d}", .{k}) catch unreachable));
-            row.Warp[k] = i32col(t, i, std.fmt.bufPrint(&b1, "Warp{d}", .{k}) catch unreachable);
+            row.Vis[k] = @fromBackingInt(i32col(t, i, std.mem.print(&b0, "Vis{d}", .{k}) catch unreachable));
+            row.Warp[k] = i32col(t, i, std.mem.print(&b1, "Warp{d}", .{k}) catch unreachable);
         }
     }
     return out;
@@ -502,7 +502,7 @@ test "LvlPrest rows match verified src/tables.zig (all rows)" {
         const a = lt.lvl_prest[i];
         const b = lt.src.prestAt(i); // verified view
         try testing.expectEqual(@as(i32, @truncate(b.def)), a.Def);
-        try testing.expectEqual(@as(i32, @truncate(b.level_id)), @intFromEnum(a.LevelId));
+        try testing.expectEqual(@as(i32, @truncate(b.level_id)), @backingInt(a.LevelId));
         try testing.expectEqual(@as(i32, @truncate(b.size_x)), a.SizeX);
         try testing.expectEqual(@as(i32, @truncate(b.size_y)), a.SizeY);
         try testing.expectEqual(@as(i32, @truncate(b.files)), a.Files);
@@ -520,7 +520,7 @@ test "LvlPrest cross-check on a preset level" {
     const a = lt.prestForLevel(1) orelse return error.NoTownPrest;
     const b = lt.src.prestForLevel(1).?;
     try testing.expectEqual(@as(i32, @truncate(b.def)), a.Def);
-    try testing.expectEqual(@as(i32, @truncate(b.level_id)), @intFromEnum(a.LevelId));
+    try testing.expectEqual(@as(i32, @truncate(b.level_id)), @backingInt(a.LevelId));
     try testing.expectEqual(@as(i32, @truncate(b.size_x)), a.SizeX);
     try testing.expectEqual(@as(i32, @truncate(b.size_y)), a.SizeY);
     try testing.expectEqual(@as(i32, @truncate(b.files)), a.Files);
@@ -561,8 +561,8 @@ test "LevelDefs geometry matches verified src/tables.zig level()" {
         try testing.expectEqual(@as(i32, @truncate(lvl.offset_x)), def.OffsetX);
         try testing.expectEqual(@as(i32, @truncate(lvl.offset_y)), def.OffsetY);
         try testing.expectEqual(@as(i32, @truncate(lvl.depend)), def.Depend);
-        try testing.expectEqual(@as(i32, @truncate(lvl.lvl_type)), @intFromEnum(def.LevelType));
-        try testing.expectEqual(@as(i32, @intFromEnum(lvl.drlg_type)), @intFromEnum(def.DrlgType));
+        try testing.expectEqual(@as(i32, @truncate(lvl.lvl_type)), @backingInt(def.LevelType));
+        try testing.expectEqual(@as(i32, @backingInt(lvl.drlg_type)), @backingInt(def.DrlgType));
     }
 }
 

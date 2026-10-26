@@ -86,7 +86,7 @@ zig build test          # unit tests (determinism, TC resolution, affix groups)
 zig build run -- <seed> <treasureclass> <mlvl> [mf]
 ```
 
-Zig 0.16.
+Zig 0.17.
 
 ## Data
 

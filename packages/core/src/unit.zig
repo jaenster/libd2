@@ -304,13 +304,13 @@ pub const Unit = struct {
 /// Fold a decoded save/wire item's stats onto a unit's StatList, ACCUMULATING (items stack).
 /// The ItemStatCost id and the `Stat` enum share ONE id space (both are the 1.14d
 /// ItemStatCost.txt row indices — see stat.zig / wire/itemstatcost.zig), so the id -> Stat map is
-/// the identity `@enumFromInt(id)`; no hand table. Ids past the backed stat range (NUM_STATS) are
+/// the identity `@fromBackingInt(id)`; no hand table. Ids past the backed stat range (NUM_STATS) are
 /// silently dropped by StatList.add. Read the summed totals back off `unit.stats` afterward
 /// (e.g. defense = get(.armorclass), fire = get(.fireresist), +skills = get(.allskills) +
 /// get(.addclassskills)). The host owns any downstream difficulty penalty / quest reward / clamp.
 pub fn applyItemStats(unit: *Unit, item: *const wire.Item) void {
     for (item.stats[0..item.n_stats]) |s| {
-        unit.stats.add(@enumFromInt(s.id), s.value);
+        unit.stats.add(@fromBackingInt(s.id), s.value);
     }
 }
 

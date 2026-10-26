@@ -51,7 +51,7 @@ pub fn main() !void {
     try cwd.createDirPath(io, "src/strings");
     const names = [_][]const u8{ "string", "expansionstring", "patchstring" };
     for (names) |n| {
-        const member = try std.fmt.allocPrintSentinel(gpa, "data\\local\\lng\\eng\\{s}.tbl", .{n}, 0);
+        const member = try gpa.printSentinel("data\\local\\lng\\eng\\{s}.tbl", .{n}, 0);
         var found: ?[]u8 = null;
         for (mpqs.items) |m| if (readMember(m, member.ptr)) |b| {
             found = b;
@@ -61,7 +61,7 @@ pub fn main() !void {
             std.debug.print("missing {s}\n", .{n});
             continue;
         };
-        const out = try std.fmt.allocPrint(gpa, "src/strings/{s}.tbl", .{n});
+        const out = try gpa.print("src/strings/{s}.tbl", .{n});
         try cwd.writeFile(io, .{ .sub_path = out, .data = b });
         std.debug.print("{s} {d} bytes\n", .{ out, b.len });
     }

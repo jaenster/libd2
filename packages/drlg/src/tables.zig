@@ -88,7 +88,7 @@ pub const Tables = struct {
             .name = t.str(row, "Name"),
             .level_name = t.str(row, "LevelName"),
             .act = t.int(row, "Act"),
-            .drlg_type = @enumFromInt(@as(u8, @intCast(t.int(row, "DrlgType")))),
+            .drlg_type = @fromBackingInt(@as(u8, @intCast(t.int(row, "DrlgType")))),
             .lvl_type = t.int(row, "LevelType"),
             .size_x = t.int(row, "SizeX"),
             .size_y = t.int(row, "SizeY"),
@@ -201,7 +201,7 @@ pub const Tables = struct {
         var i: usize = 1;
         var buf: [8]u8 = undefined;
         while (i <= 32) : (i += 1) {
-            const name = std.fmt.bufPrint(&buf, "File {d}", .{i}) catch break;
+            const name = std.mem.print(&buf, "File {d}", .{i}) catch break;
             const f = t.str(row, name);
             if (f.len > 0 and !std.mem.eql(u8, f, "0")) {
                 out[n] = f;
@@ -245,7 +245,7 @@ test "act topology: known levels map to the right act, every act has levels" {
     try testing.expectEqual(@as(i64, 2), tb.level(75).?.act); // Act 3 town (Kurast Docks)
 
     // Count generatable levels per act by iterating every row.
-    var per_act = [_]usize{0} ** 5;
+    var per_act: [5]usize = @splat(0);
     var row: usize = 0;
     while (row < tb.levelCount()) : (row += 1) {
         const lv = tb.levelAtRow(row) orelse continue;

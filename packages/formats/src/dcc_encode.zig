@@ -261,12 +261,12 @@ fn prepare(alloc: std.mem.Allocator, dir: *const Direction, fpd: u32) Error!Prep
 
     // Palette-entries bitmap: the colours in the frame cells, plus colour 0 when any cell
     // has fewer than 4 non-zero colours and so an entry slot is filled with it.
-    var used = [_]bool{false} ** 256;
+    var used: [256]bool = @splat(false);
     for (dir.frames, boxes) |f, b| {
         const split = try dcc.frameCells(alloc, b, dbox);
         defer alloc.free(split.cells);
         for (split.cells) |cell| {
-            var seen_colour = [_]bool{false} ** 256;
+            var seen_colour: [256]bool = @splat(false);
             var nonzero: usize = 0;
             for (0..@as(usize, @intCast(cell.h))) |y| for (0..@as(usize, @intCast(cell.w))) |x| {
                 const p = f[(@as(usize, @intCast(cell.yoff)) + y) * W + @as(usize, @intCast(cell.xoff)) + x];
@@ -1160,7 +1160,7 @@ test "encode: shipped DCCs re-encode byte-identical and round-trip" {
         archives.deinit(alloc);
     }
     for ([_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq", "d2char.mpq" }) |name| {
-        const path = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ dir, name });
+        const path = try alloc.print("{s}/{s}", .{ dir, name });
         defer alloc.free(path);
         const bytes = std.Io.Dir.cwd().readFileAlloc(testing.io, path, alloc, .limited(512 << 20)) catch continue;
         archives.append(alloc, bytes) catch |e| {

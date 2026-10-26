@@ -269,14 +269,14 @@ test "distribution is sane on REAL ItemRatio data: normal dominates, unique rare
     defer t.deinit();
     const r = Ratio{ .v = t.ratioRow(1, 0, 0).? }; // expansion, non-uber, non-class-specific
 
-    var counts = [_]u32{0} ** 10;
+    var counts: [10]u32 = @splat(0);
     var n: u32 = 0;
     while (n < 20000) : (n += 1) {
         var s = rng.Seed.init(n +% 1, 0x29a);
         const q = rollItemQuality(&s, &r, .{ .ilvl = 40, .qlvl = 5, .is_expansion = true, .is_misc = false, .is_quest = false });
-        counts[@intFromEnum(q)] += 1;
+        counts[@backingInt(q)] += 1;
     }
     // Normal is by far the most common; unique far rarer than normal.
-    try testing.expect(counts[@intFromEnum(Quality.normal)] > counts[@intFromEnum(Quality.magic)]);
-    try testing.expect(counts[@intFromEnum(Quality.unique)] < counts[@intFromEnum(Quality.normal)] / 10);
+    try testing.expect(counts[@backingInt(Quality.normal)] > counts[@backingInt(Quality.magic)]);
+    try testing.expect(counts[@backingInt(Quality.unique)] < counts[@backingInt(Quality.normal)] / 10);
 }

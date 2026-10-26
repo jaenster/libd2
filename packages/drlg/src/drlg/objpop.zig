@@ -107,9 +107,9 @@ pub const Tables = struct {
                 var b0: [8]u8 = undefined;
                 var b1: [12]u8 = undefined;
                 var b2: [8]u8 = undefined;
-                g.id[k] = @intCast(gt.int(r, std.fmt.bufPrint(&b0, "ID{d}", .{k}) catch unreachable));
-                g.density[k] = @intCast(gt.int(r, std.fmt.bufPrint(&b1, "DENSITY{d}", .{k}) catch unreachable));
-                g.prob[k] = @intCast(gt.int(r, std.fmt.bufPrint(&b2, "PROB{d}", .{k}) catch unreachable));
+                g.id[k] = @intCast(gt.int(r, std.mem.print(&b0, "ID{d}", .{k}) catch unreachable));
+                g.density[k] = @intCast(gt.int(r, std.mem.print(&b1, "DENSITY{d}", .{k}) catch unreachable));
+                g.prob[k] = @intCast(gt.int(r, std.mem.print(&b2, "PROB{d}", .{k}) catch unreachable));
             }
         }
 
@@ -162,14 +162,14 @@ pub const Tables = struct {
     pub fn levelObjGrp(self: *const Tables, level_id: i32, slot: usize) i32 {
         const row = self.levels_tbl.findByInt("Id", level_id) orelse return 0;
         var b: [8]u8 = undefined;
-        return @intCast(self.levels_tbl.int(row, std.fmt.bufPrint(&b, "ObjGrp{d}", .{slot}) catch unreachable));
+        return @intCast(self.levels_tbl.int(row, std.mem.print(&b, "ObjGrp{d}", .{slot}) catch unreachable));
     }
 
     /// Levels.txt ObjPrb[slot] for a level id.
     pub fn levelObjPrb(self: *const Tables, level_id: i32, slot: usize) i32 {
         const row = self.levels_tbl.findByInt("Id", level_id) orelse return 0;
         var b: [8]u8 = undefined;
-        return @intCast(self.levels_tbl.int(row, std.fmt.bufPrint(&b, "ObjPrb{d}", .{slot}) catch unreachable));
+        return @intCast(self.levels_tbl.int(row, std.mem.print(&b, "ObjPrb{d}", .{slot}) catch unreachable));
     }
 };
 
@@ -214,14 +214,14 @@ pub const ObjectControl = struct {
         errdefer gpa.free(levels);
         for (levels, 0..) |*lr, i| lr.* = .{ .n_act = level_acts[i] };
 
-        var buckets: [MAX_SHRINE_BUCKETS][]i32 = .{&[_]i32{}} ** MAX_SHRINE_BUCKETS;
+        var buckets: [MAX_SHRINE_BUCKETS][]i32 = @splat(&.{});
         // First pass: count shrines per effectclass (< 8).
-        var counts = [_]usize{0} ** MAX_SHRINE_BUCKETS;
+        var counts: [MAX_SHRINE_BUCKETS]usize = @splat(0);
         for (tbl.shrines) |sh| {
             if (sh.effect_class >= 0 and sh.effect_class < MAX_SHRINE_BUCKETS) counts[@intCast(sh.effect_class)] += 1;
         }
         // Alloc + fill (aShrinesRng[class][n++] = shrine line index).
-        var fill_idx = [_]usize{0} ** MAX_SHRINE_BUCKETS;
+        var fill_idx: [MAX_SHRINE_BUCKETS]usize = @splat(0);
         for (0..MAX_SHRINE_BUCKETS) |c| {
             if (counts[c] == 0) continue;
             buckets[c] = try gpa.alloc(i32, counts[c]);
@@ -720,7 +720,7 @@ test "object control init: seed + shrine buckets" {
 test "makeRandomChest: faithful table pick + deterministic roll order" {
     var t = try Tables.load(testing.allocator);
     defer t.deinit();
-    const acts = [_]i32{0} ** 200;
+    const acts: [200]i32 = @splat(0);
     var ctrl = try ObjectControl.init(testing.allocator, &t, 12345, &acts);
     defer ctrl.deinit();
 
@@ -747,7 +747,7 @@ test "makeRandomChest: faithful table pick + deterministic roll order" {
 test "selectRandomShrineType: category clamp + LevelMin retry order" {
     var t = try Tables.load(testing.allocator);
     defer t.deinit();
-    const acts = [_]i32{0} ** 200;
+    const acts: [200]i32 = @splat(0);
     var ctrl = try ObjectControl.init(testing.allocator, &t, 999, &acts);
     defer ctrl.deinit();
 

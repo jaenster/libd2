@@ -3,7 +3,7 @@ const std = @import("std");
 // d2-save: the .d2s character-save format — the marker-delimited sections on top of the
 // fixed header d2-formats owns, read and write. Depends on core (bit readers + the item
 // bit codec), data + items (the item model those resolve against) and formats (the header).
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -34,7 +34,8 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addImport("d2-item", items.module("d2-item"));
     tests.root_module.addImport("d2-formats", formats.module("d2-formats"));
     // the shared saves and kits; lazy, so a package fetched as a dependency never needs it
-    if (b.lazyDependency("libd2_testdata", .{})) |td| tests.root_module.addImport("libd2-testdata", td.module("libd2-testdata"));
+    const td = try b.dependencyLazy("libd2_testdata", .{});
+    tests.root_module.addImport("libd2-testdata", td.module("libd2-testdata"));
     // charkit: a character save from a text spec (zig build charkit -- build spec.kit out.d2s --name Name)
     const charkit_exe = b.addExecutable(.{
         .name = "charkit",
@@ -48,7 +49,7 @@ pub fn build(b: *std.Build) void {
     charkit_exe.root_module.addImport("d2-save", mod);
     b.installArtifact(charkit_exe);
     const charkit_run = b.addRunArtifact(charkit_exe);
-    if (b.args) |args| charkit_run.addArgs(args);
+    charkit_run.addPassthruArgs();
     b.step("charkit", "Build a character save from a spec").dependOn(&charkit_run.step);
 
     const run_tests = b.addRunArtifact(tests);

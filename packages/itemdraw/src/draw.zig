@@ -78,10 +78,10 @@ pub const Drawer = struct {
 
         var path_buf: [64]u8 = undefined;
         const act = std.math.clamp(opts.act, 1, 5);
-        const pal_bytes = assets.read(gpa, std.fmt.bufPrint(&path_buf, "data/global/palette/act{d}/pal.dat", .{act}) catch unreachable) catch return Error.MissingPalette;
+        const pal_bytes = assets.read(gpa, std.mem.print(&path_buf, "data/global/palette/act{d}/pal.dat", .{act}) catch unreachable) catch return Error.MissingPalette;
         defer gpa.free(pal_bytes);
         d.pal = formats.palette.parseDat(pal_bytes) catch return Error.MissingPalette;
-        d.pl2 = assets.read(gpa, std.fmt.bufPrint(&path_buf, "data/global/palette/act{d}/pal.pl2", .{act}) catch unreachable) catch return Error.MissingPalette;
+        d.pl2 = assets.read(gpa, std.mem.print(&path_buf, "data/global/palette/act{d}/pal.pl2", .{act}) catch unreachable) catch return Error.MissingPalette;
         errdefer gpa.free(d.pl2);
 
         const tbl = assets.read(gpa, font_dir ++ "font16.tbl") catch return Error.MissingFont;
@@ -161,7 +161,7 @@ pub const Drawer = struct {
     /// is that 28 px per cell.
     fn itemSprite(self: *Drawer, a: std.mem.Allocator, it: *const wire.Item, kids: []const wire.Item, x: i32, y: i32, role: layout.Role) !?layout.Sprite {
         const g = (try self.icons.gfx(a, it, kids)) orelse return null;
-        const path = try std.fmt.allocPrint(a, "data/global/items/{s}.dc6", .{g.file});
+        const path = try a.print("data/global/items/{s}.dc6", .{g.file});
         var rect = layout.Rect{ .x = x, .y = y, .w = 28 * @as(i32, g.w), .h = 28 * @as(i32, g.h) };
         if (self.sheetAt(path)) |sheet| {
             if (sheet.frames.len == 0) return null;
@@ -220,7 +220,7 @@ pub const Drawer = struct {
 
     fn newLayout(self: *Drawer, kind: layout.Kind) layout.Layout {
         var l = layout.Layout{ .arena = std.heap.ArenaAllocator.init(self.gpa), .kind = kind, .width = 1, .height = 1 };
-        for (&l.text_rgb, 0..) |*c, i| c.* = formats.pl2.textColor(self.pl2, @enumFromInt(i)) catch .{ 0, 0, 0 };
+        for (&l.text_rgb, 0..) |*c, i| c.* = formats.pl2.textColor(self.pl2, @fromBackingInt(@intCast(i))) catch .{ 0, 0, 0 };
         l.line_pitch = self.metrics().pitch;
         return l;
     }
@@ -394,7 +394,7 @@ pub const Drawer = struct {
     fn drawGlyph(ctx: *anyopaque, font: []const u8, g: *const layout.Glyph, _: [3]u8, scale: u32, t: raster.Tile) bool {
         const self: *Drawer = @ptrCast(@alignCast(ctx));
         if (!std.mem.eql(u8, font, layout.font_name) or g.frame >= self.font.sheet.frames.len) return false;
-        const shift = formats.pl2.textShift(self.pl2, @enumFromInt(g.color)) catch null;
+        const shift = formats.pl2.textShift(self.pl2, @fromBackingInt(g.color)) catch null;
         self.frameIntoTile(&self.font.sheet.frames[g.frame], shift, scale, t);
         return true;
     }

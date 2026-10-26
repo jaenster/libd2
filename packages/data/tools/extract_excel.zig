@@ -127,7 +127,7 @@ pub fn main() !void {
         if (seen.contains(lower)) continue;
         try seen.put(try gpa.dupe(u8, lower), {});
 
-        const member = try std.fmt.allocPrintSentinel(gpa, "data\\global\\excel\\{s}.txt", .{t}, 0);
+        const member = try gpa.printSentinel("data\\global\\excel\\{s}.txt", .{t}, 0);
         defer gpa.free(member);
         if (readAny(mpqs.items, member.ptr)) |bytes| {
             defer gpa.free(bytes);
@@ -136,7 +136,7 @@ pub fn main() !void {
                 miss += 1;
                 continue;
             }
-            const out = try std.fmt.allocPrint(gpa, "src/excel/{s}.txt", .{t});
+            const out = try gpa.print("src/excel/{s}.txt", .{t});
             defer gpa.free(out);
             try cwd.writeFile(io, .{ .sub_path = out, .data = bytes });
             ok += 1;

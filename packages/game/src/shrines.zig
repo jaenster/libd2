@@ -64,7 +64,7 @@ pub const Table = struct {
         var list: std.ArrayListUnmanaged(Row) = .empty;
         for (0..raw.rowCount()) |i| {
             const name = raw.str(i, "Shrine name");
-            const ec: EffectClass = @enumFromInt(@as(u8, @intCast(std.math.clamp(raw.int(i, "effectclass"), 0, 255))));
+            const ec: EffectClass = @fromBackingInt(@as(u8, @intCast(std.math.clamp(raw.int(i, "effectclass"), 0, 255))));
             try list.append(a, .{
                 .code = raw.int(i, "Code"),
                 .arg0 = raw.int(i, "Arg0"),

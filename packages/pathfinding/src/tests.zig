@@ -841,7 +841,7 @@ fn visOf(alloc: std.mem.Allocator, level_id: i32) ![]i32 {
         if (std.mem.eql(u8, nm, "Id")) idc = i;
         for (0..8) |v| {
             var buf: [8]u8 = undefined;
-            const want = std.fmt.bufPrint(&buf, "Vis{d}", .{v}) catch continue;
+            const want = std.mem.print(&buf, "Vis{d}", .{v}) catch continue;
             if (std.mem.eql(u8, nm, want)) visc[v] = i;
         }
     }
@@ -878,7 +878,7 @@ test "a bigger footprint is blocked by gaps a point walks through" {
     const alloc = testing.allocator;
     // A 1-subtile-wide corridor down the middle of a solid block. A point-sized unit fits; the
     // cross (CheckCollision_Cross) needs its east/west neighbours and does not; nor does the 3x3.
-    var cells = [_]u16{pf.Colbit.wall} ** (9 * 9);
+    var cells: [9 * 9]u16 = @splat(pf.Colbit.wall);
     for (0..9) |y| cells[y * 9 + 4] = 0;
 
     for ([_]struct { fp: pf.grid.Footprint, want: bool }{
@@ -894,7 +894,7 @@ test "a bigger footprint is blocked by gaps a point walks through" {
 
 test "the cross clears a 3-wide corridor that the 3x3 box also clears" {
     const alloc = testing.allocator;
-    var cells = [_]u16{pf.Colbit.wall} ** (9 * 9);
+    var cells: [9 * 9]u16 = @splat(pf.Colbit.wall);
     for (0..9) |y| {
         for (3..6) |x| cells[y * 9 + x] = 0;
     }
@@ -1119,7 +1119,7 @@ test "a big attacker gets fewer places to stand than a small one" {
 test "unitsCanReach shrinks the segment by each radius before tracing" {
     const alloc = testing.allocator;
     // Wall at x = 4. Two units either side, radius 2 each.
-    var cells = [_]u16{0} ** (11 * 11);
+    var cells: [11 * 11]u16 = @splat(0);
     for (0..11) |y| cells[y * 11 + 4] = pf.Colbit.wall;
     const pm_b = try Bare.init(alloc, 11, 11, &cells, pf.Colmask.radial_barrier, .point);
     defer pm_b.deinit();
@@ -1134,7 +1134,7 @@ test "unitsCanReach shrinks the segment by each radius before tracing" {
     try testing.expect(pf.cast.unitsCanReach(&pm_b.lv, pf.Colmask.radial_barrier, near, 2, .{ .x = 5, .y = 5 }, 2));
 
     // Radii are clamped, so anything at or above 2 behaves identically.
-    var open = [_]u16{0} ** (11 * 11);
+    var open: [11 * 11]u16 = @splat(0);
     const pm2_b = try Bare.init(alloc, 11, 11, &open, pf.Colmask.radial_barrier, .point);
     defer pm2_b.deinit();
     try testing.expectEqual(

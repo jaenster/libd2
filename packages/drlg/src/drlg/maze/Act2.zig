@@ -113,10 +113,10 @@ pub fn TombsReplaceAreas(pLevel: [*c]s.D2DrlgLevelStrc) void {
     };
 
     const lid = pLevel.*.eD2LevelId;
-    if (0x36 < @intFromEnum(lid) and @intFromEnum(lid) < 0x3b) rr(pLevel, &gaDrlgReplaceAreas_A, &nRoll);
+    if (0x36 < @backingInt(lid) and @backingInt(lid) < 0x3b) rr(pLevel, &gaDrlgReplaceAreas_A, &nRoll);
     if (lid == .HallsoftheDeadLvl2) rr(pLevel, &gaDrlgReplaceAreas_B, &nRoll);
     if (lid == .StonyTombLvl2 or lid == .ClawViperTempleLvl2) rr(pLevel, &gaDrlgAreaReplacementsB, &nRoll);
-    if (0x41 < @intFromEnum(lid) and @intFromEnum(lid) < 0x49 and lid != pLevel.*.pDrlg.?.nStaffTombLevel) rr(pLevel, &gaDrlgAreaReplacementsB, &nRoll);
+    if (0x41 < @backingInt(lid) and @backingInt(lid) < 0x49 and lid != pLevel.*.pDrlg.?.nStaffTombLevel) rr(pLevel, &gaDrlgAreaReplacementsB, &nRoll);
     if (lid == .StonyTombLvl2) rr(pLevel, &gaDrlgReplaceAreas_C, &nRoll);
     if (lid == .HallsoftheDeadLvl3) rr(pLevel, &gaDrlgReplaceAreas_D, &nRoll);
     if (lid == .StonyTombLvl2 or lid == .ClawViperTempleLvl2) rr(pLevel, &gaDrlgReplaceAreas_E, &nRoll);

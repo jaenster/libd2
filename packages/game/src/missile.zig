@@ -484,7 +484,7 @@ test "stepAll retires a units+walls bolt on a blocked cell before it hits a unit
         fn target(self: @This(), m: *const Missile) ?*Unit {
             return if (m.canHit(self.victim)) self.victim else null;
         }
-        fn blockedAt(_: @This(), x: i32, _: i32) bool {
+        pub fn blockedAt(_: @This(), x: i32, _: i32) bool {
             return x >= 20;
         }
     };
@@ -512,7 +512,7 @@ test "stepAll routes caster_derived damage through ctx.applyHit" {
         fn target(self: @This(), m: *const Missile) ?*Unit {
             return if (m.guid == 1) self.victim else null;
         }
-        fn applyHit(_: @This(), _: *const Missile, v: *Unit) void {
+        pub fn applyHit(_: @This(), _: *const Missile, v: *Unit) void {
             combat.applyToLife(v, 25); // caster-derived: fixed here, resist-aware in the host
         }
     };

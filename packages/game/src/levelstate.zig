@@ -85,7 +85,7 @@ pub const EmitterState = struct {
     angle: i32 = 0,
     owner: u32,
     cast: spell.Cast,
-    sub: [24]u8 = [_]u8{0} ** 24,
+    sub: [24]u8 = @splat(0),
     sub_len: u8 = 0,
     pub fn subName(self: *const EmitterState) []const u8 {
         return self.sub[0..self.sub_len];

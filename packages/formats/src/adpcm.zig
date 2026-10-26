@@ -18,7 +18,7 @@ pub const Channels = enum(u8) { mono = 1, stereo = 2 };
 /// Expand one ADPCM chunk into `dst` and return how much was written — up to `dst.len`, less if
 /// the input runs out first.
 pub fn decompress(dst: []u8, src: []const u8, channels: Channels) Error!usize {
-    const count: usize = @intFromEnum(channels);
+    const count: usize = @backingInt(channels);
     if (src.len < 2) return Error.Truncated;
     const shift: u5 = @intCast(src[1] & 0x1f);
 

@@ -195,7 +195,7 @@ pub fn applyQualityAndAffixes(
     if (flags.is_type_magic) {
         if (flags.is_quest) {
             d.quality = .unique;
-        } else if (@intFromEnum(d.quality) < @intFromEnum(Quality.magic)) {
+        } else if (@backingInt(d.quality) < @backingInt(Quality.magic)) {
             d.quality = .magic;
         }
     }
@@ -372,7 +372,7 @@ fn rollStackQuantity(gpa: std.mem.Allocator, seed: *rng.Seed, t: *const tables.T
     const eff = if (is_quiver) max else if (spawn < min or spawn == 0) max else @min(spawn, max);
     var n = min + @as(i32, @bitCast(seed.pick(@bitCast(eff - min))));
     if (n < 1) n = 1;
-    if (!is_quiver and @intFromEnum(d.quality) >= @intFromEnum(Quality.magic)) n = 1;
+    if (!is_quiver and @backingInt(d.quality) >= @backingInt(Quality.magic)) n = 1;
     return n;
 }
 
@@ -625,10 +625,10 @@ test "high MF shifts quality upward over many drops" {
         defer testing.allocator.free(a);
         const b = try rollDrop(testing.allocator, &s1, &g1, &t, &set, "Chipped Gem", 10, .{ .magic_find = 900 });
         defer testing.allocator.free(b);
-        for (a) |d| if (@intFromEnum(d.quality) >= @intFromEnum(Quality.magic)) {
+        for (a) |d| if (@backingInt(d.quality) >= @backingInt(Quality.magic)) {
             rare_plus_none += 1;
         };
-        for (b) |d| if (@intFromEnum(d.quality) >= @intFromEnum(Quality.magic)) {
+        for (b) |d| if (@backingInt(d.quality) >= @backingInt(Quality.magic)) {
             rare_plus_mf += 1;
         };
     }

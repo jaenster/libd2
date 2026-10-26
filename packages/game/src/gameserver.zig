@@ -402,8 +402,8 @@ pub const GameInstance = struct {
                 try ls.npcs.put(self.gpa, guid, {});
             } else {
                 try ls.ai.put(self.gpa, guid, .{});
-                ls.timers.trigger(self.gpa, guid, @intFromEnum(sim.UnitType.monster), .aithink) catch {};
-                ls.timers.trigger(self.gpa, guid, @intFromEnum(sim.UnitType.monster), .statregen) catch {};
+                ls.timers.trigger(self.gpa, guid, @backingInt(sim.UnitType.monster), .aithink) catch {};
+                ls.timers.trigger(self.gpa, guid, @backingInt(sim.UnitType.monster), .statregen) catch {};
             }
         }
 
@@ -525,8 +525,8 @@ pub const GameInstance = struct {
         // (+10/+20/+30). The sim's combat elemental path only reads the unit's stored resist, so
         // the HOST computes NET here (the sim does NOT apply the difficulty penalty).
         if (rc.has_gear) {
-            const diff: usize = @intFromEnum(self.difficulty);
-            const pen = sim.resistPenalty(@enumFromInt(diff)); // DifficultyLevels.txt ResistPenalty
+            const diff: usize = @backingInt(self.difficulty);
+            const pen = sim.resistPenalty(@fromBackingInt(@intCast(diff))); // DifficultyLevels.txt ResistPenalty
             const anya = ANYA_RESIST[diff];
             const netRes = struct {
                 fn f(gear: i32, an: i32, p: i32) i32 {
@@ -626,7 +626,7 @@ pub const GameInstance = struct {
     pub fn encodeGameFlags(self: *const GameInstance, out: []u8) []const u8 {
         var pw = sc.PacketWriter.init(out);
         pw.add(sc.GameFlags{
-            .difficulty = @intFromEnum(self.difficulty),
+            .difficulty = @backingInt(self.difficulty),
             .expansion = true,
         });
         return pw.bytes();
@@ -807,7 +807,7 @@ pub const GameInstance = struct {
             ls.hp_pct_sent.put(self.gpa, guid, pct) catch {};
             var scratch: [sc.UnitHpPercent.SIZE]u8 = undefined;
             const wire = (sc.UnitHpPercent{
-                .unit_type = @intFromEnum(sim.UnitType.monster),
+                .unit_type = @backingInt(sim.UnitType.monster),
                 .guid = guid,
                 .hp_pct = pct,
             }).encode(&scratch);
@@ -907,11 +907,11 @@ pub const GameInstance = struct {
         ls: *LevelState,
         pub fn fire(self: *FireCtx, t: *const events.Timer) bool {
             // Object timers key into ls.objects, not the unit map (OBJECTEVENT callbacks).
-            if (@as(sim.UnitType, @enumFromInt(t.unit_type)) == .object)
+            if (@as(sim.UnitType, @fromBackingInt(t.unit_type)) == .object)
                 return self.gi.fireObjectTimer(self.ls, t);
             const u = self.ls.units.getPtr(t.unit_guid) orelse return false;
             if (!u.isAlive()) return false;
-            switch (@as(sim.UnitType, @enumFromInt(t.unit_type))) {
+            switch (@as(sim.UnitType, @fromBackingInt(t.unit_type))) {
                 .monster => switch (t.timer_type) {
                     .aithink => self.gi.aiThinkMonster(self.ls, t.unit_guid), // MONSTEREVENT AITHINK
                     .statregen => self.gi.statRegen(self.ls, u), //             MONSTEREVENT STATREGEN
@@ -1037,7 +1037,7 @@ pub const GameInstance = struct {
             const u = ls.units.getPtr(guid);
             const gone = u == null or !u.?.isAlive() or !inRange(px, py, u.?.x, u.?.y);
             if (gone) {
-                const utype: u8 = if (u) |uu| @intFromEnum(uu.unit_type) else @intFromEnum(sim.UnitType.monster);
+                const utype: u8 = if (u) |uu| @backingInt(uu.unit_type) else @backingInt(sim.UnitType.monster);
                 pw.add(sc.RemoveObject{ .unit_type = utype, .guid = guid });
                 to_remove.append(self.gpa, guid) catch {};
             }
@@ -1057,7 +1057,7 @@ pub const GameInstance = struct {
                 c.known.put(self.gpa, guid, {}) catch {};
             } else if (ls.moved.contains(guid)) {
                 pw.add(sc.ReassignPlayer{
-                    .unit_type = @intFromEnum(u.unit_type),
+                    .unit_type = @backingInt(u.unit_type),
                     .guid = guid,
                     .x = clampU16(u.x),
                     .y = clampU16(u.y),
@@ -1071,7 +1071,7 @@ pub const GameInstance = struct {
             if (!inRange(px, py, w.x, w.y)) continue;
             if (c.known_warps.contains(w.guid)) continue;
             pw.add(sc.AssignLevelWarp{
-                .unit_type = @intFromEnum(sim.UnitType.object),
+                .unit_type = @backingInt(sim.UnitType.object),
                 .guid = w.guid,
                 .class_id = w.class_id,
                 .x = clampU16(w.x),
@@ -1086,7 +1086,7 @@ pub const GameInstance = struct {
             if (!inRange(px, py, o.x, o.y)) continue;
             if (c.known_objects.contains(o.guid)) continue;
             pw.add(sc.CreateObject{
-                .unit_type = @intFromEnum(sim.UnitType.object),
+                .unit_type = @backingInt(sim.UnitType.object),
                 .guid = o.guid,
                 .class_id = @truncate(@as(u32, @bitCast(o.class_id))),
                 .x = clampU16(o.x),
@@ -1107,7 +1107,7 @@ pub const GameInstance = struct {
                 if (gi.guid == guid) break inRange(px, py, gi.x, gi.y);
             } else false;
             if (!present) {
-                pw.add(sc.RemoveObject{ .unit_type = @intFromEnum(sim.UnitType.item), .guid = guid });
+                pw.add(sc.RemoveObject{ .unit_type = @backingInt(sim.UnitType.item), .guid = guid });
                 it_remove.append(self.gpa, guid) catch {};
             }
         }
@@ -1119,7 +1119,7 @@ pub const GameInstance = struct {
         for (ls.ground_items.items) |*gi| {
             if (!inRange(px, py, gi.x, gi.y)) continue;
             if (c.known_items.contains(gi.guid)) continue;
-            var body: [128]u8 = [_]u8{0} ** 128;
+            var body: [128]u8 = @splat(0);
             var n: usize = 8;
             if (!gi.is_gold and gi.drop.quality != .invalid) {
                 const si = StoredItem{ .guid = gi.guid, .code = gi.code, .drop = gi.drop, .item_seed = gi.drop.item_seed, .x = 0, .y = 0, .w = 1, .h = 1 };
@@ -1142,7 +1142,7 @@ pub const GameInstance = struct {
             if (sim.missile.find(ls.missiles.items, guid)) |mm| {
                 if (inRange(px, py, mm.x, mm.y)) continue;
             }
-            pw.add(sc.RemoveObject{ .unit_type = @intFromEnum(sim.UnitType.missile), .guid = guid });
+            pw.add(sc.RemoveObject{ .unit_type = @backingInt(sim.UnitType.missile), .guid = guid });
             mi_remove.append(self.gpa, guid) catch {};
         }
         for (mi_remove.items) |guid| _ = c.known_missiles.remove(guid);
@@ -1151,7 +1151,7 @@ pub const GameInstance = struct {
             if (!inRange(px, py, mm.x, mm.y)) continue;
             if (!c.known_missiles.contains(mm.guid)) {
                 pw.add(sc.CreateObject{
-                    .unit_type = @intFromEnum(sim.UnitType.missile),
+                    .unit_type = @backingInt(sim.UnitType.missile),
                     .guid = mm.guid,
                     .class_id = mm.id,
                     .x = clampU16(mm.x),
@@ -1160,7 +1160,7 @@ pub const GameInstance = struct {
                 c.known_missiles.put(self.gpa, mm.guid, {}) catch {};
             } else {
                 pw.add(sc.ReassignPlayer{
-                    .unit_type = @intFromEnum(sim.UnitType.missile),
+                    .unit_type = @backingInt(sim.UnitType.missile),
                     .guid = mm.guid,
                     .x = clampU16(mm.x),
                     .y = clampU16(mm.y),
@@ -1209,7 +1209,7 @@ pub const GameInstance = struct {
             },
             else => {
                 pw.add(sc.CreateObject{
-                    .unit_type = @intFromEnum(u.unit_type),
+                    .unit_type = @backingInt(u.unit_type),
                     .guid = guid,
                     .class_id = @intCast(@as(u16, @truncate(@as(u32, @bitCast(u.class_id))))),
                     .x = clampU16(u.x),
@@ -1225,7 +1225,7 @@ pub const GameInstance = struct {
     /// bytes consumed, or 0 if the buffer doesn't hold a complete packet yet.
     pub fn handleCommand(self: *GameInstance, c: *Client, buf: []const u8) usize {
         if (buf.len == 0) return 0;
-        const op: cs.Op = @enumFromInt(buf[0]);
+        const op: cs.Op = @fromBackingInt(buf[0]);
         const n = csPacketSize(buf) orelse return 0;
         if (buf.len < n) return 0;
 
@@ -1381,7 +1381,7 @@ pub const GameInstance = struct {
                 self.queueToClient(c, (sc.GoldPickup{ .amount = @intCast(qty) }).encode(&scratch));
             } else {
                 self.queueToClient(c, (sc.SetDWordAttr{
-                    .attr = @intCast(@intFromEnum(sim.Stat.gold)),
+                    .attr = @intCast(@backingInt(sim.Stat.gold)),
                     .value = @intCast(@max(0, total)),
                 }).encode(&scratch));
             }
@@ -1525,7 +1525,7 @@ pub const GameInstance = struct {
             },
             .schedule_reset => |r| {
                 const frames = sim.shrines.resetDelayFrames(r.minutes);
-                if (frames > 0) ls.timers.setEvent(self.gpa, @intCast(self.tick_count), r.guid, @intFromEnum(sim.UnitType.object), .activestate, frames, 0, 0) catch {};
+                if (frames > 0) ls.timers.setEvent(self.gpa, @intCast(self.tick_count), r.guid, @backingInt(sim.UnitType.object), .activestate, frames, 0, 0) catch {};
             },
             .refill_life_mana => {
                 if (ls.units.getPtr(c.player_guid)) |p| {
@@ -1607,7 +1607,7 @@ pub const GameInstance = struct {
                     c.y = caster.y;
                     var scratch: [16]u8 = undefined;
                     self.queueToClient(c, (sc.ReassignPlayer{
-                        .unit_type = @intFromEnum(caster.unit_type),
+                        .unit_type = @backingInt(caster.unit_type),
                         .guid = c.player_guid,
                         .x = clampU16(caster.x),
                         .y = clampU16(caster.y),
@@ -1673,7 +1673,7 @@ pub const GameInstance = struct {
                                 }
                             }
                             if (prgdam == 2) {
-                                const cdiff: sim.Difficulty = @enumFromInt(@intFromEnum(self.difficulty));
+                                const cdiff: sim.Difficulty = @fromBackingInt(@intCast(@backingInt(self.difficulty)));
                                 const scale: i32 = if (cc >= 3) 2 else 1;
                                 const stolen = sim.combat.leech(phys, sk.param(cu.skill_id, 1) * scale, sim.difficulty.lifeStealDivisor(cdiff));
                                 if (stolen > 0) {
@@ -1830,7 +1830,7 @@ pub const GameInstance = struct {
                     if (sim.select.isHostileMonster(u)) tgts.append(self.gpa, u) catch {};
                 }
                 if (ea.static) {
-                    const cdiff: sim.Difficulty = @enumFromInt(@intFromEnum(self.difficulty));
+                    const cdiff: sim.Difficulty = @fromBackingInt(@intCast(@backingInt(self.difficulty)));
                     _ = sim.skill.castStaticFieldArea(sk, book, ea.level, ea.x, ea.y, ea.radius, cdiff, tgts.items);
                 } else {
                     _ = sim.skill.castDirectAreaElemental(sk, book, ea.skill_id, ea.level, ea.x, ea.y, ea.radius, tgts.items, &self.combat_seed);
@@ -1934,7 +1934,7 @@ pub const GameInstance = struct {
             .hell => "(H) ",
         };
         var tc_buf: [32]u8 = undefined;
-        const tc = std.fmt.bufPrint(&tc_buf, "Act {d} {s}Chest {c}", .{
+        const tc = std.mem.print(&tc_buf, "Act {d} {s}Chest {c}", .{
             @as(i32, act_no + 1), diff_tag, @as(u8, 'A' + tier),
         }) catch return;
 
@@ -2571,7 +2571,7 @@ pub const GameInstance = struct {
         ls.moved.put(self.gpa, c.player_guid, {}) catch {};
         var scratch: [16]u8 = undefined;
         self.queueToClient(c, (sc.ReassignPlayer{
-            .unit_type = @intFromEnum(caster.unit_type),
+            .unit_type = @backingInt(caster.unit_type),
             .guid = c.player_guid,
             .x = clampU16(caster.x),
             .y = clampU16(caster.y),
@@ -2601,7 +2601,7 @@ pub const GameInstance = struct {
         u.setLife(u.get(.maxhp));
         // MonLvl-scaled COMBAT stats (same 0x6538a0 path): real AC / attack rating / A1 physical
         // damage for THIS monster at the area monster level; placeholder only when the lookup misses.
-        const cdiff: sim.Difficulty = @enumFromInt(@intFromEnum(self.difficulty));
+        const cdiff: sim.Difficulty = @fromBackingInt(@intCast(@backingInt(self.difficulty)));
         u.set(.level, @max(1, mon_level));
         var got_combat = false;
         if (self.mon_combat) |*mc| {
@@ -2645,8 +2645,8 @@ pub const GameInstance = struct {
         u.collision = self.world.?.monCollision(class_id, true);
         try ls.units.put(self.gpa, guid, u);
         try ls.ai.put(self.gpa, guid, .{});
-        ls.timers.trigger(self.gpa, guid, @intFromEnum(sim.UnitType.monster), .aithink) catch {};
-        ls.timers.trigger(self.gpa, guid, @intFromEnum(sim.UnitType.monster), .statregen) catch {};
+        ls.timers.trigger(self.gpa, guid, @backingInt(sim.UnitType.monster), .aithink) catch {};
+        ls.timers.trigger(self.gpa, guid, @backingInt(sim.UnitType.monster), .statregen) catch {};
         return guid;
     }
 
@@ -2685,7 +2685,7 @@ pub const GameInstance = struct {
         const mc = self.mon_combat orelse return 0;
         const combat = mc.combat(@intCast(@max(0, class_id))) orelse return 0;
         if (n < 1 or n > 8) return 0;
-        return combat.ai_params[n - 1][@intFromEnum(self.difficulty)];
+        return combat.ai_params[n - 1][@backingInt(self.difficulty)];
     }
 
     /// True when a fellow monster's corpse sits within `range` subtiles of `(x,y)` — the trigger for
@@ -2712,8 +2712,8 @@ pub const GameInstance = struct {
         const u = self.buildMonsterUnit(guid, class_id, x, y, level_id, false);
         ls.units.put(self.gpa, guid, u) catch return 0;
         ls.ai.put(self.gpa, guid, .{}) catch {};
-        ls.timers.trigger(self.gpa, guid, @intFromEnum(sim.UnitType.monster), .aithink) catch {};
-        ls.timers.trigger(self.gpa, guid, @intFromEnum(sim.UnitType.monster), .statregen) catch {};
+        ls.timers.trigger(self.gpa, guid, @backingInt(sim.UnitType.monster), .aithink) catch {};
+        ls.timers.trigger(self.gpa, guid, @backingInt(sim.UnitType.monster), .statregen) catch {};
         return guid;
     }
 
@@ -3674,7 +3674,7 @@ pub const GameInstance = struct {
         };
         const mlvl = @max(1, m.get(.level));
         var tc_buf: [24]u8 = undefined;
-        const tc = std.fmt.bufPrint(&tc_buf, "Act {d} Equip A", .{@as(u16, self.act) + 1}) catch "Act 1 Equip A";
+        const tc = std.mem.print(&tc_buf, "Act {d} Equip A", .{@as(u16, self.act) + 1}) catch "Act 1 Equip A";
 
         var any = false;
         if (self.item_tables != null and self.tc_set != null) {
@@ -3774,7 +3774,7 @@ pub const GameInstance = struct {
         const sign: i32 = if (add) 1 else -1;
         for (stats.items) |rs| {
             if (rs.stat < 0 or rs.stat >= 512) continue; // ISC ids fit the 512-slot StatList
-            player.stats.add(@enumFromInt(@as(u16, @intCast(rs.stat))), rs.value * sign);
+            player.stats.add(@fromBackingInt(@as(u16, @intCast(rs.stat))), rs.value * sign);
         }
     }
 
@@ -3813,7 +3813,7 @@ pub const GameInstance = struct {
         while (cl < 4 and si.code[cl] != 0) cl += 1;
         it.code_len = cl;
         it.ilvl = @intCast(std.math.clamp(si.drop.item_level, 0, 127));
-        it.quality = @enumFromInt(@intFromEnum(si.drop.quality));
+        it.quality = @fromBackingInt(@backingInt(si.drop.quality));
         it.prefix = si.drop.prefix_id;
         it.suffix = si.drop.suffix_id;
         it.unique_id = si.drop.unique_id;
@@ -3965,7 +3965,7 @@ test "integration: the composed loop over the wire (join->see->damage->0xAB->dea
         /// Walk the captured RAW stream (AF00 = compression off) by the per-opcode size table
         /// (sc.packetSize), the same way the real client demuxes; return the set of opcodes seen.
         fn seen() [256]bool {
-            var s = [_]bool{false} ** 256;
+            var s: [256]bool = @splat(false);
             var off: usize = 0;
             while (off < len) {
                 const n = sc.packetSize(buf[off..len]) orelse break;
@@ -5166,7 +5166,7 @@ test "serializeItem emits a wire item that parses back with its quality + stats"
     const ucode = ut.str(uid - 1, "code");
     @memcpy(si.code[0..@min(4, ucode.len)], ucode[0..@min(4, ucode.len)]);
 
-    var buf = [_]u8{0} ** 128;
+    var buf: [128]u8 = @splat(0);
     const n = gi.serializeItem(&buf, &si, 3, 10, 20); // as a ground drop
     try std.testing.expect(n > 0);
     var r = items.WireBitReader.init(buf[0..n]);

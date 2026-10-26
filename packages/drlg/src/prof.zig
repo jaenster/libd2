@@ -40,7 +40,7 @@ pub const Phase = enum {
     gzip,
 };
 
-const n_phases = @typeInfo(Phase).@"enum".fields.len;
+const n_phases = @typeInfo(Phase).@"enum".field_names.len;
 
 /// Monotonic nanoseconds. Null = profiling off (the default).
 pub var clock: ?*const fn () i64 = null;
@@ -55,7 +55,7 @@ pub inline fn begin() i64 {
 pub inline fn end(p: Phase, t0: i64) void {
     const c = clock orelse return;
     const dt: u64 = @intCast(@max(0, c() - t0));
-    const slot = &totals[@intFromEnum(p)];
+    const slot = &totals[@backingInt(p)];
     if (atomic_totals) _ = @atomicRmw(u64, slot, .Add, dt, .monotonic) else slot.* += dt;
 }
 
@@ -66,6 +66,6 @@ pub fn reset() void {
 }
 
 pub fn get(p: Phase) u64 {
-    const slot = &totals[@intFromEnum(p)];
+    const slot = &totals[@backingInt(p)];
     return if (atomic_totals) @atomicLoad(u64, slot, .monotonic) else slot.*;
 }

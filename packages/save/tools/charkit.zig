@@ -18,19 +18,19 @@ const gpa = std.heap.c_allocator;
 
 fn say(comptime fmt: []const u8, args: anytype) void {
     var buf: [1024]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    const s = std.mem.print(&buf, fmt, args) catch return;
     _ = std.c.write(1, s.ptr, s.len);
 }
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     var buf: [1024]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, fmt ++ "\n", args) catch "error\n";
+    const s = std.mem.print(&buf, fmt ++ "\n", args) catch "error\n";
     _ = std.c.write(2, s.ptr, s.len);
     std.process.exit(1);
 }
 
 fn readFile(path: []const u8) ![]u8 {
-    const z = try gpa.dupeZ(u8, path);
+    const z = try gpa.dupeSentinel(u8, path, 0);
     defer gpa.free(z);
     const f = fopen(z, "rb") orelse return error.OpenFailed;
     defer _ = fclose(f);
@@ -45,7 +45,7 @@ fn readFile(path: []const u8) ![]u8 {
 }
 
 fn writeFile(path: []const u8, bytes: []const u8) !void {
-    const z = try gpa.dupeZ(u8, path);
+    const z = try gpa.dupeSentinel(u8, path, 0);
     defer gpa.free(z);
     const f = fopen(z, "wb") orelse return error.OpenFailed;
     defer _ = fclose(f);

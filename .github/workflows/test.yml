@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
-        with: { version: 0.16.0 }
+        with: { version: 0.17.0 }
 
       # Every package's own suite, plus the golden gates: packages/drlg's `test` step depends on
       # the verify run, so the byte-exactness gate is covered here and needs no job of its own.
@@ -62,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
-        with: { version: 0.16.0 }
+        with: { version: 0.17.0 }
       # The item-drawing fixtures every binding's tests compare against are generated, not committed.
       - name: Generate the binding fixtures
         run: cd packages/itemdraw && zig build fixtures
@@ -79,7 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
-        with: { version: 0.16.0 }
+        with: { version: 0.17.0 }
       # The item-drawing fixtures every binding's tests compare against are generated, not committed.
       - name: Generate the binding fixtures
         run: cd packages/itemdraw && zig build fixtures
@@ -111,7 +111,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
-        with: { version: 0.16.0 }
+        with: { version: 0.17.0 }
       # The item-drawing fixtures every binding's tests compare against are generated, not committed.
       - name: Generate the binding fixtures
         run: cd packages/itemdraw && zig build fixtures
@@ -145,7 +145,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '24' }
       - uses: mlugg/setup-zig@v2
-        with: { version: 0.16.0 }
+        with: { version: 0.17.0 }
       # The item-drawing fixtures every binding's tests compare against are generated, not committed.
       - name: Generate the binding fixtures
         run: cd packages/itemdraw && zig build fixtures
@@ -184,7 +184,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
-        with: { version: 0.16.0 }
+        with: { version: 0.17.0 }
 
       # The pack runs the source suite on its way through, so building the tarball still needs 24.
       - uses: actions/setup-node@v4

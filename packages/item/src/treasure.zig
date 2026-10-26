@@ -150,8 +150,8 @@ pub fn build(gpa: std.mem.Allocator, t: *const tables.Tables) !TCSet {
         while (k <= 10) : (k += 1) {
             var itembuf: [8]u8 = undefined;
             var probbuf: [8]u8 = undefined;
-            const icol = std.fmt.bufPrint(&itembuf, "Item{d}", .{k}) catch unreachable;
-            const pcol = std.fmt.bufPrint(&probbuf, "Prob{d}", .{k}) catch unreachable;
+            const icol = std.mem.print(&itembuf, "Item{d}", .{k}) catch unreachable;
+            const pcol = std.mem.print(&probbuf, "Prob{d}", .{k}) catch unreachable;
             const field = tbl.str(row, icol);
             if (field.len == 0) continue;
             const prob: i32 = @intCast(tbl.int(row, pcol));
@@ -287,7 +287,7 @@ fn generateItemTypeClasses(
                 });
             }
 
-            const name = try std.fmt.allocPrint(a, "{s}{d}", .{ type_code, band });
+            const name = try a.print("{s}{d}", .{ type_code, band });
             const idx = list.items.len;
             try list.append(a, .{
                 .name = name,
@@ -481,7 +481,7 @@ test "auto item-type classes exist and every TreasureClassEx reference resolves"
         var band: i32 = 3;
         while (band < 97) : (band += 3) {
             var buf: [16]u8 = undefined;
-            const name = try std.fmt.bufPrint(&buf, "{s}{d}", .{ code, band });
+            const name = try std.mem.print(&buf, "{s}{d}", .{ code, band });
             try testing.expect(set.byName(name) != null);
         }
     }
@@ -493,7 +493,7 @@ test "auto item-type classes exist and every TreasureClassEx reference resolves"
         var k: usize = 1;
         while (k <= 10) : (k += 1) {
             var buf: [8]u8 = undefined;
-            const field = t.treasure.str(row, std.fmt.bufPrint(&buf, "Item{d}", .{k}) catch unreachable);
+            const field = t.treasure.str(row, std.mem.print(&buf, "Item{d}", .{k}) catch unreachable);
             if (field.len == 0) continue;
             const code = parseEntryField(field).code;
             if (set.byName(code) != null or t.itemRef(code) != null or isGold(code)) continue;

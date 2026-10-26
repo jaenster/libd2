@@ -91,7 +91,7 @@ pub const BitWriter = struct {
 };
 
 test "BitWriter round-trips through BitReader" {
-    var buf = [_]u8{0} ** 8;
+    var buf: [8]u8 = @splat(0);
     var w = BitWriter.init(&buf);
     w.write(0x95, 8);
     w.write(100, 15);

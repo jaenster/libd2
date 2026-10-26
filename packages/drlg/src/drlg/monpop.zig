@@ -288,7 +288,7 @@ pub const Tables = struct {
                 var k: usize = 1;
                 while (k <= 25) : (k += 1) {
                     var buf: [16]u8 = undefined;
-                    const col = std.fmt.bufPrint(&buf, "{s}{d}", .{ prefix, k }) catch break;
+                    const col = std.mem.print(&buf, "{s}{d}", .{ prefix, k }) catch break;
                     if (tbl.col(col) == null) break; // only mon1..mon10 exist in 1.14d
                     const nm = tbl.str(row, col);
                     if (nm.len == 0) continue;

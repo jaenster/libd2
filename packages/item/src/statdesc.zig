@@ -482,13 +482,13 @@ pub fn describeStat(c: *const Ctx, a: std.mem.Allocator, list: *const StatList, 
     const pct = c.idText(id.percent);
     const plus = c.idText(id.plus);
     var num_buf: [24]u8 = undefined;
-    var S: []const u8 = std.fmt.bufPrint(&num_buf, "{d}", .{v}) catch "";
+    var S: []const u8 = std.mem.print(&num_buf, "{d}", .{v}) catch "";
     const strP = c.shown(if (v >= 0) st.pos else (st.neg orelse st.pos));
     const func = st.func;
     switch (func) {
         1, 6, 12 => {
             var fb_buf: [32]u8 = undefined;
-            const fb: []const u8 = if (v < 1) S else if (func == 12 and v == 1) "" else std.fmt.bufPrint(&fb_buf, "{s}{s}", .{ plus, S }) catch S;
+            const fb: []const u8 = if (v < 1) S else if (func == 12 and v == 1) "" else std.mem.print(&fb_buf, "{s}{s}", .{ plus, S }) catch S;
             switch (st.val) {
                 1 => {
                     try out.s(fb);
@@ -504,7 +504,7 @@ pub fn describeStat(c: *const Ctx, a: std.mem.Allocator, list: *const StatList, 
             }
         },
         2, 7, 5, 10 => {
-            if (func == 5 or func == 10) S = std.fmt.bufPrint(&num_buf, "{d}", .{@divTrunc(v * 100, 128)}) catch "";
+            if (func == 5 or func == 10) S = std.mem.print(&num_buf, "{d}", .{@divTrunc(v * 100, 128)}) catch "";
             switch (st.val) {
                 1 => {
                     try out.s(S);
@@ -537,7 +537,7 @@ pub fn describeStat(c: *const Ctx, a: std.mem.Allocator, list: *const StatList, 
         4, 8, 20, 21, 22 => {
             if (func == 20 or func == 21) {
                 v = -v;
-                S = std.fmt.bufPrint(&num_buf, "{d}", .{v}) catch "";
+                S = std.mem.print(&num_buf, "{d}", .{v}) catch "";
             }
             const p = if (func == 22) (c.shown(if (v >= 0) st.pos else (st.neg orelse st.pos))) else c.shown(if (v >= 0) st.pos else (st.neg orelse st.pos));
             switch (st.val) {
@@ -583,7 +583,7 @@ pub fn describeStat(c: *const Ctx, a: std.mem.Allocator, list: *const StatList, 
             const cls: usize = e.param;
             const all = c.classStr(cls, "StrAllSkills") orelse return null;
             var fb_buf: [32]u8 = undefined;
-            const fb: []const u8 = if (v >= 1) std.fmt.bufPrint(&fb_buf, "{s}{s}", .{ plus, S }) catch S else S;
+            const fb: []const u8 = if (v >= 1) std.mem.print(&fb_buf, "{s}{s}", .{ plus, S }) catch S else S;
             switch (st.val) {
                 1 => {
                     try out.s(fb);
@@ -637,9 +637,9 @@ pub fn describeStat(c: *const Ctx, a: std.mem.Allocator, list: *const StatList, 
             try out.s(c.idText(by_time_strings[@intCast(std.math.clamp(peak, 0, 3))]));
             try out.s(c.idText(id.newline));
             var fb_buf: [32]u8 = undefined;
-            var fb: []const u8 = if (R < 0) (if (v < 0) (std.fmt.bufPrint(&fb_buf, "{d}", .{R}) catch "") else "") else std.fmt.bufPrint(&fb_buf, "{s}{d}", .{ plus, R }) catch "";
+            var fb: []const u8 = if (R < 0) (if (v < 0) (std.mem.print(&fb_buf, "{d}", .{R}) catch "") else "") else std.mem.print(&fb_buf, "{s}{d}", .{ plus, R }) catch "";
             var fb2_buf: [40]u8 = undefined;
-            if (func == 18) fb = std.fmt.bufPrint(&fb2_buf, "{s}{s}", .{ fb, pct }) catch fb;
+            if (func == 18) fb = std.mem.print(&fb2_buf, "{s}{s}", .{ fb, pct }) catch fb;
             const p = c.shown(if (R >= 0) st.pos else (st.neg orelse st.pos));
             switch (st.val) {
                 1 => {
@@ -695,7 +695,7 @@ pub fn describeStat(c: *const Ctx, a: std.mem.Allocator, list: *const StatList, 
         },
         25, 26 => {
             var fb_buf: [32]u8 = undefined;
-            const fb: []const u8 = if (v >= 0) S else std.fmt.bufPrint(&fb_buf, "{s}{s}", .{ plus, S }) catch S;
+            const fb: []const u8 = if (v >= 0) S else std.mem.print(&fb_buf, "{s}{s}", .{ plus, S }) catch S;
             switch (st.val) {
                 1 => {
                     try out.s(fb);
@@ -717,7 +717,7 @@ pub fn describeStat(c: *const Ctx, a: std.mem.Allocator, list: *const StatList, 
                 const cls = c.skillClass(e.param);
                 if (cls != null and env.player_class != null and cls.? == env.player_class.? and v > 3) {
                     v = 3;
-                    S = std.fmt.bufPrint(&num_buf, "{d}", .{v}) catch "";
+                    S = std.mem.print(&num_buf, "{d}", .{v}) catch "";
                 }
             }
             if (v >= 1) try out.s(plus);

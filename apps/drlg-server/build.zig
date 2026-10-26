@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     // Default to ReleaseFast (speed is the whole point of the native path); still overridable
     // with -Doptimize=Debug etc.
-    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimize mode (default ReleaseFast)") orelse .ReleaseFast;
+    const optimize = b.option(std.lang.Optimize, "optimize", "Optimize mode (default ReleaseFast)") orelse .fast;
 
     const drlg = b.dependency("d2_drlg", .{ .target = target, .optimize = optimize });
 
@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the DRLG HTTP server");
     run_step.dependOn(&run_cmd.step);
 }

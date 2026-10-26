@@ -305,11 +305,11 @@ pub const Maker = struct {
                     var pb: [12]u8 = undefined;
                     var lb: [12]u8 = undefined;
                     var hb: [12]u8 = undefined;
-                    const prop = st.str(row, std.fmt.bufPrint(&cb, "aprop{d}{c}", .{ tier, half }) catch unreachable);
+                    const prop = st.str(row, std.mem.print(&cb, "aprop{d}{c}", .{ tier, half }) catch unreachable);
                     if (prop.len == 0) continue;
-                    const par: i32 = m.paramOf(st, row, std.fmt.bufPrint(&pb, "apar{d}{c}", .{ tier, half }) catch unreachable);
-                    const lo: i32 = @intCast(st.int(row, std.fmt.bufPrint(&lb, "amin{d}{c}", .{ tier, half }) catch unreachable));
-                    const hi: i32 = @intCast(st.int(row, std.fmt.bufPrint(&hb, "amax{d}{c}", .{ tier, half }) catch unreachable));
+                    const par: i32 = m.paramOf(st, row, std.mem.print(&pb, "apar{d}{c}", .{ tier, half }) catch unreachable);
+                    const lo: i32 = @intCast(st.int(row, std.mem.print(&lb, "amin{d}{c}", .{ tier, half }) catch unreachable));
+                    const hi: i32 = @intCast(st.int(row, std.mem.print(&hb, "amax{d}{c}", .{ tier, half }) catch unreachable));
                     try m.applyProp(&tl, prop, par, lo, hi, ctx, k);
                 }
                 try m.pushRolled(&b.it, tl.items, tier, k);
@@ -589,15 +589,15 @@ pub const Maker = struct {
             var b2: [16]u8 = undefined;
             var b3: [16]u8 = undefined;
             var b4: [16]u8 = undefined;
-            const code = tbl.str(row, std.fmt.bufPrint(&b1, "{s}{d}", .{ prop, n }) catch unreachable);
+            const code = tbl.str(row, std.mem.print(&b1, "{s}{d}", .{ prop, n }) catch unreachable);
             if (code.len == 0) {
                 // a runeword's list stops at the first empty slot
                 if (std.mem.eql(u8, prop, "T1Code")) break;
                 continue;
             }
-            const p: i32 = m.paramOf(tbl, row, std.fmt.bufPrint(&b2, "{s}{d}", .{ par, n }) catch unreachable);
-            const lo: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&b3, "{s}{d}", .{ min, n }) catch unreachable));
-            const hi: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&b4, "{s}{d}", .{ max, n }) catch unreachable));
+            const p: i32 = m.paramOf(tbl, row, std.mem.print(&b2, "{s}{d}", .{ par, n }) catch unreachable);
+            const lo: i32 = @intCast(tbl.int(row, std.mem.print(&b3, "{s}{d}", .{ min, n }) catch unreachable));
+            const hi: i32 = @intCast(tbl.int(row, std.mem.print(&b4, "{s}{d}", .{ max, n }) catch unreachable));
             try m.applyProp(out, code, p, lo, hi, ctx, k);
         }
     }
@@ -610,11 +610,11 @@ pub const Maker = struct {
             var b2: [16]u8 = undefined;
             var b3: [16]u8 = undefined;
             var b4: [16]u8 = undefined;
-            const code = tbl.str(row, std.fmt.bufPrint(&b1, "mod{d}code", .{n}) catch unreachable);
+            const code = tbl.str(row, std.mem.print(&b1, "mod{d}code", .{n}) catch unreachable);
             if (code.len == 0) break;
-            const p: i32 = m.paramOf(tbl, row, std.fmt.bufPrint(&b2, "mod{d}param", .{n}) catch unreachable);
-            const lo: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&b3, "mod{d}min", .{n}) catch unreachable));
-            const hi: i32 = @intCast(tbl.int(row, std.fmt.bufPrint(&b4, "mod{d}max", .{n}) catch unreachable));
+            const p: i32 = m.paramOf(tbl, row, std.mem.print(&b2, "mod{d}param", .{n}) catch unreachable);
+            const lo: i32 = @intCast(tbl.int(row, std.mem.print(&b3, "mod{d}min", .{n}) catch unreachable));
+            const hi: i32 = @intCast(tbl.int(row, std.mem.print(&b4, "mod{d}max", .{n}) catch unreachable));
             try m.applyProp(out, code, p, lo, hi, ctx, k);
         }
     }
@@ -637,8 +637,8 @@ pub const Maker = struct {
         var itypes: [7][]const u8 = undefined;
         var etypes: [4][]const u8 = undefined;
         var nb: [8]u8 = undefined;
-        inline for (0..7) |i| itypes[i] = t.get(r, std.fmt.bufPrint(&nb, "itype{d}", .{i + 1}) catch unreachable);
-        inline for (0..4) |i| etypes[i] = t.get(r, std.fmt.bufPrint(&nb, "etype{d}", .{i + 1}) catch unreachable);
+        inline for (0..7) |i| itypes[i] = t.get(r, std.mem.print(&nb, "itype{d}", .{i + 1}) catch unreachable);
+        inline for (0..4) |i| etypes[i] = t.get(r, std.mem.print(&nb, "etype{d}", .{i + 1}) catch unreachable);
         if (!item.itemtype.affixMatchesTypes(&types, &itypes, &etypes)) return error.BadSpec;
         const ctx = item.properties.PropContext{ .code = code, .item_level = ilvl, .is_expansion = m.scope.isExpansion() };
         var list: std.ArrayListUnmanaged(item.properties.RolledStat) = .empty;
@@ -649,11 +649,11 @@ pub const Maker = struct {
             var b2: [16]u8 = undefined;
             var b3: [16]u8 = undefined;
             var b4: [16]u8 = undefined;
-            const mod = t.get(r, std.fmt.bufPrint(&b1, "mod{d}code", .{n}) catch unreachable);
+            const mod = t.get(r, std.mem.print(&b1, "mod{d}code", .{n}) catch unreachable);
             if (mod.len == 0) break;
-            const par: i32 = t.getInt(i32, r, std.fmt.bufPrint(&b2, "mod{d}param", .{n}) catch unreachable) orelse 0;
-            const lo: i32 = t.getInt(i32, r, std.fmt.bufPrint(&b3, "mod{d}min", .{n}) catch unreachable) orelse 0;
-            const hi: i32 = t.getInt(i32, r, std.fmt.bufPrint(&b4, "mod{d}max", .{n}) catch unreachable) orelse 0;
+            const par: i32 = t.getInt(i32, r, std.mem.print(&b2, "mod{d}param", .{n}) catch unreachable) orelse 0;
+            const lo: i32 = t.getInt(i32, r, std.mem.print(&b3, "mod{d}min", .{n}) catch unreachable) orelse 0;
+            const hi: i32 = t.getInt(i32, r, std.mem.print(&b4, "mod{d}max", .{n}) catch unreachable) orelse 0;
             try m.applyProp(&list, mod, par, lo, hi, ctx, k);
         }
         it.automagic = @intCast(r + 1);
@@ -694,7 +694,7 @@ pub const Maker = struct {
         var i: usize = 0;
         while (i < 6) : (i += 1) {
             var b: [8]u8 = undefined;
-            const rune = rt.str(row, std.fmt.bufPrint(&b, "Rune{d}", .{i + 1}) catch unreachable);
+            const rune = rt.str(row, std.mem.print(&b, "Rune{d}", .{i + 1}) catch unreachable);
             if (rune.len == 0) break;
             out.runes[i] = rune;
             out.n += 1;
@@ -807,8 +807,8 @@ pub const Maker = struct {
         var itypes: [7][]const u8 = undefined;
         var etypes: [4][]const u8 = undefined;
         var nb: [8]u8 = undefined;
-        inline for (0..7) |i| itypes[i] = tbl.str(row, std.fmt.bufPrint(&nb, "itype{d}", .{i + 1}) catch unreachable);
-        inline for (0..4) |i| etypes[i] = tbl.str(row, std.fmt.bufPrint(&nb, "etype{d}", .{i + 1}) catch unreachable);
+        inline for (0..7) |i| itypes[i] = tbl.str(row, std.mem.print(&nb, "itype{d}", .{i + 1}) catch unreachable);
+        inline for (0..4) |i| etypes[i] = tbl.str(row, std.mem.print(&nb, "etype{d}", .{i + 1}) catch unreachable);
         return item.itemtype.affixMatchesTypes(types, &itypes, &etypes);
     }
 
@@ -820,8 +820,8 @@ pub const Maker = struct {
             var itypes: [7][]const u8 = undefined;
             var etypes: [4][]const u8 = undefined;
             var nb: [8]u8 = undefined;
-            inline for (0..7) |j| itypes[j] = tbl.str(r, std.fmt.bufPrint(&nb, "itype{d}", .{j + 1}) catch unreachable);
-            inline for (0..4) |j| etypes[j] = tbl.str(r, std.fmt.bufPrint(&nb, "etype{d}", .{j + 1}) catch unreachable);
+            inline for (0..7) |j| itypes[j] = tbl.str(r, std.mem.print(&nb, "itype{d}", .{j + 1}) catch unreachable);
+            inline for (0..4) |j| etypes[j] = tbl.str(r, std.mem.print(&nb, "etype{d}", .{j + 1}) catch unreachable);
             if (item.itemtype.affixMatchesTypes(types, &itypes, &etypes)) fit.append(m.gpa, i) catch return error.OutOfMemory;
         }
         if (fit.items.len == 0) return error.NoRoll;
@@ -1195,7 +1195,7 @@ test "uniques at the best of their ranges" {
     // the others of the request
     for ([_][]const u8{ "Bul Katho's Wedding Band", "Crown of Ages" }) |name| {
         var line: [64]u8 = undefined;
-        var made = try m.makeKit(try std.fmt.bufPrint(&line, "unique:{s}", .{name}));
+        var made = try m.makeKit(try std.mem.print(&line, "unique:{s}", .{name}));
         made.deinit(testing.allocator);
     }
 }

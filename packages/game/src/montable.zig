@@ -51,7 +51,7 @@ pub const MonCombat = struct {
     ai_delay: [3]i32 = .{ 0, 0, 0 },
     /// MonStats.aip1..aip8 — the eight per-AI tuning parameters, each a per-difficulty triple.
     /// Meaning is AI-script-specific (e.g. Fallen aip1 = flee/rally chance percent).
-    ai_params: [8][3]i32 = .{.{ 0, 0, 0 }} ** 8,
+    ai_params: [8][3]i32 = @splat(.{ 0, 0, 0 }),
     /// MonStats.minion1 / minion2 resolved to class ids (-1 when the column is blank / unresolved).
     /// The summon AIs (spawners, nests) create these classes; the raise AIs use them too.
     minion: [2]i32 = .{ -1, -1 },
@@ -139,9 +139,9 @@ pub const Tables = struct {
         const triple = struct {
             fn f(t: *const txt.Table, row: usize, base: []const u8) [3]i32 {
                 var buf: [24]u8 = undefined;
-                const n = std.fmt.bufPrint(&buf, "{s}(N)", .{base}) catch unreachable;
+                const n = std.mem.print(&buf, "{s}(N)", .{base}) catch unreachable;
                 var buf2: [24]u8 = undefined;
-                const h = std.fmt.bufPrint(&buf2, "{s}(H)", .{base}) catch unreachable;
+                const h = std.mem.print(&buf2, "{s}(H)", .{base}) catch unreachable;
                 return .{ @intCast(t.int(row, base)), @intCast(t.int(row, n)), @intCast(t.int(row, h)) };
             }
         }.f;
@@ -151,12 +151,12 @@ pub const Tables = struct {
             var r: usize = 0;
             while (r < mt.rowCount()) : (r += 1) {
                 if (std.mem.eql(u8, mt.str(r, "Id"), "Expansion")) continue;
-                var ai_params: [8][3]i32 = .{.{ 0, 0, 0 }} ** 8;
+                var ai_params: [8][3]i32 = @splat(.{ 0, 0, 0 });
                 {
                     var p: usize = 0;
                     while (p < 8) : (p += 1) {
                         var buf: [8]u8 = undefined;
-                        const col = std.fmt.bufPrint(&buf, "aip{d}", .{p + 1}) catch unreachable;
+                        const col = std.mem.print(&buf, "aip{d}", .{p + 1}) catch unreachable;
                         ai_params[p] = triple(&mt, r, col);
                     }
                 }
@@ -250,14 +250,14 @@ pub const Tables = struct {
     /// override (MonStats.Level(diff)); champions/area monsters pass the area MonLvl instead.
     pub fn monLevelDefault(self: *const Tables, class_id: i32, diff: Difficulty) i32 {
         const mc = self.combat(class_id) orelse return 1;
-        return mc.level[@intFromEnum(diff)];
+        return mc.level[@backingInt(diff)];
     }
 
     /// Fully MonLvl-scaled combat stats for a monster (MONSTER_CalculateLevelScaledStats).
     /// `mon_level` indexes MonLvl.txt (area MonLvl or monLevelDefault). noRatio -> raw values.
     pub fn scaled(self: *const Tables, class_id: i32, mon_level: i32, diff: Difficulty) ?ScaledCombat {
         const mc = self.combat(class_id) orelse return null;
-        const d: usize = @intFromEnum(diff);
+        const d: usize = @backingInt(diff);
         if (mc.no_ratio) {
             return .{
                 .armor_class = mc.ac[d],

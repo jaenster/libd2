@@ -24,7 +24,7 @@ pub const STAT_LIST_TERMINATOR = 0x1FF; // 9-bit sentinel ending a stat list
 
 pub const table: [MAX_STAT]Row = build: {
     @setEvalBranchQuota(2_000_000);
-    var t = [_]Row{.{}} ** MAX_STAT;
+    var t: [MAX_STAT]Row = @splat(.{});
     var lines = std.mem.splitScalar(u8, raw, '\n');
     _ = lines.next(); // header row
     while (lines.next()) |line| {
@@ -69,7 +69,7 @@ pub fn uninstall() void {
 fn fromTable(gpa: std.mem.Allocator, bytes: []const u8) ![MAX_STAT]Row {
     var tbl = try d2data.tsv.parse(gpa, bytes);
     defer tbl.deinit();
-    var t = [_]Row{.{}} ** MAX_STAT;
+    var t: [MAX_STAT]Row = @splat(.{});
     for (0..tbl.rowCount()) |row| {
         const id = tbl.getInt(u16, row, "ID") orelse continue;
         const sb = tbl.getInt(u8, row, "Save Bits") orelse 0;

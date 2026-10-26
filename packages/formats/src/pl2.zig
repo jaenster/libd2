@@ -70,7 +70,7 @@ fn shiftsStart(bytes: []const u8) Error!usize {
 /// index 7 is the light gold the front-end titles are drawn in.
 pub fn textColor(bytes: []const u8, index: TextColor) Error![3]u8 {
     const at = try shiftsStart(bytes);
-    const off = at - colors_len + @as(usize, @intFromEnum(index)) * 3;
+    const off = at - colors_len + @as(usize, @backingInt(index)) * 3;
     return .{ bytes[off], bytes[off + 1], bytes[off + 2] };
 }
 
@@ -95,7 +95,7 @@ pub fn darkShift(bytes: []const u8) Error![]const u8 {
 pub fn textShift(bytes: []const u8, index: TextColor) Error!?[]const u8 {
     if (index == .white) return null;
     const at = try shiftsStart(bytes);
-    const off = at + @as(usize, @intFromEnum(index)) * transform_len;
+    const off = at + @as(usize, @backingInt(index)) * transform_len;
     return bytes[off..][0..transform_len];
 }
 

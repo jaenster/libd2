@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
     }) });
     b.installArtifact(exe);
     const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
+    run.addPassthruArgs();
     b.step("run", "Run bindgen").dependOn(&run.step);
     const tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),

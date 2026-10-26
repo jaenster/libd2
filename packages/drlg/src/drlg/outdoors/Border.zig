@@ -154,7 +154,7 @@ pub fn GetActNoFromLevelNumber(eLevel: eD2LevelId) i32 {
     const aActTownLevelId = [_]i32{ 1, 40, 75, 103, 109, std.math.maxInt(i32) };
     var i: usize = 1;
     while (i < 6) : (i += 1) {
-        if (@intFromEnum(eLevel) < aActTownLevelId[i]) return @as(i32, @intCast(i)) - ACT_II;
+        if (@backingInt(eLevel) < aActTownLevelId[i]) return @as(i32, @intCast(i)) - ACT_II;
     }
     return ACT_I;
 }
@@ -197,7 +197,7 @@ pub fn getAdjacentRoadPresetId(nDirX_in: i32, nDirY: i32, nPrevDirX_in: i32, nPr
 
 // DRLGOUTROOM_GetGridDivisionSize used by the road switch
 fn rollRoadType(pLevel: [*c]s.D2DrlgLevelStrc, nDirection: i32) ?i32 {
-    return switch (@intFromEnum(pLevel.*.nLevelType)) {
+    return switch (@backingInt(pLevel.*.nLevelType)) {
         2 => @as(i32, @intFromBool(nDirection == 0)), // !nDirection
         0x10 => 2,
         0x1b => 3,

@@ -193,8 +193,8 @@ test "decrypting undoes encrypting" {
     try testing.expectEqualSlices(u8, &data, &block(dec, cipher));
 
     // And for a key with zero words, which is where the 0 -> 2^16 rule earns its place.
-    const zero = encryptSchedule([_]u8{0} ** 16);
-    const zero_d = decryptSchedule([_]u8{0} ** 16);
+    const zero = encryptSchedule(@as([16]u8, @splat(0)));
+    const zero_d = decryptSchedule(@as([16]u8, @splat(0)));
     data = .{ 1, 2, 3, 4, 5, 6, 7, 8 };
     try testing.expectEqualSlices(u8, &data, &block(zero_d, block(zero, data)));
 }

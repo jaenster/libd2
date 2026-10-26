@@ -75,8 +75,8 @@ const List = std.ArrayListUnmanaged(Timer);
 /// mirrors pTimerListByType (walked unconditionally every frame); `active` mirrors
 /// pActiveTimersByType (the scheduled ring, a node fires only when frame == now).
 pub const TimerQueue = struct {
-    immediate: [NUM_TYPES]List = .{List.empty} ** NUM_TYPES,
-    active: [NUM_TYPES][NUM_BUCKETS]List = .{.{List.empty} ** NUM_BUCKETS} ** NUM_TYPES,
+    immediate: [NUM_TYPES]List = @splat(List.empty),
+    active: [NUM_TYPES][NUM_BUCKETS]List = @splat(@splat(List.empty)),
 
     pub fn deinit(self: *TimerQueue, gpa: std.mem.Allocator) void {
         for (&self.immediate) |*l| l.deinit(gpa);

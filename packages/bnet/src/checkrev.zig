@@ -4,7 +4,7 @@
 const std = @import("std");
 
 pub fn b64Decode(s: []const u8, out: []u8) usize {
-    var dec = [_]i8{-1} ** 256;
+    var dec: [256]i8 = @splat(-1);
     const al = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     for (al, 0..) |c, i| dec[c] = @intCast(i);
     var acc: u32 = 0; var bits: u5 = 0; var n: usize = 0;

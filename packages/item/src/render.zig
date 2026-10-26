@@ -95,7 +95,7 @@ pub fn renderDropsToPng(
     drops: []const model.Drop,
     assets_dir: []const u8,
 ) ![]u8 {
-    const pal_path = try std.fmt.allocPrint(gpa, "{s}/palette/ACT1.pal", .{assets_dir});
+    const pal_path = try gpa.print("{s}/palette/ACT1.pal", .{assets_dir});
     defer gpa.free(pal_path);
     const palette = readAsset(gpa, pal_path) orelse return error.NoPalette;
     defer gpa.free(palette);
@@ -130,7 +130,7 @@ pub fn renderDropsToPng(
         canvas.drawBorder(cx, cy, CELL_W, CELL_H, BORDER, item.g.color);
 
         // Load + decode the item sprite (frame 0 = inventory icon).
-        const dc6_path = try std.fmt.allocPrint(gpa, "{s}/items/{s}.dc6", .{ assets_dir, item.g.invfile });
+        const dc6_path = try gpa.print("{s}/items/{s}.dc6", .{ assets_dir, item.g.invfile });
         defer gpa.free(dc6_path);
         const bytes = readAsset(gpa, dc6_path) orelse continue;
         defer gpa.free(bytes);

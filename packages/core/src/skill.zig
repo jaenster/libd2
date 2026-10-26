@@ -169,6 +169,6 @@ pub const DoFunc = enum(i32) {
 
 test "DoFunc labels a known index and falls back for an unnamed one" {
     try std.testing.expectEqualStrings("hydra", DoFunc.hydra.label());
-    try std.testing.expectEqualStrings("chain_lightning", (@as(DoFunc, @enumFromInt(26))).label());
-    try std.testing.expectEqualStrings("?", (@as(DoFunc, @enumFromInt(153))).label());
+    try std.testing.expectEqualStrings("chain_lightning", (@as(DoFunc, @fromBackingInt(26))).label());
+    try std.testing.expectEqualStrings("?", (@as(DoFunc, @fromBackingInt(153))).label());
 }

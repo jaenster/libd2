@@ -1,7 +1,7 @@
 .{
     .name = .d2_itemdraw,
     .version = "0.6.5",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0xf5c9885a0ba78b18,
 
     // The text comes from d2-item, the art formats from d2-formats, PNG from d2-util. The art itself is

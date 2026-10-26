@@ -22,7 +22,7 @@ pub const NUM_QUESTS = 96;
 /// A character's quest-completion bitfield (one bit per quest slot). This is the quest
 /// framework's persisted state; game logic toggles a flag on quest completion.
 pub const QuestState = struct {
-    bits: [NUM_QUESTS / 8]u8 = [_]u8{0} ** (NUM_QUESTS / 8),
+    bits: [NUM_QUESTS / 8]u8 = @splat(0),
 
     pub fn isDone(self: QuestState, id: u16) bool {
         if (id >= NUM_QUESTS) return false;
@@ -223,7 +223,7 @@ test "readSidecar ignores a bad magic / short blob" {
     var cs = CharSave{ .level = 7 };
     readSidecar(&[_]u8{ 1, 2, 3 }, &cs); // too short
     try testing.expectEqual(@as(u8, 7), cs.level);
-    var blob: [SIDECAR_LEN]u8 = [_]u8{0} ** SIDECAR_LEN; // zero magic
+    var blob: [SIDECAR_LEN]u8 = @splat(0); // zero magic
     readSidecar(&blob, &cs);
     try testing.expectEqual(@as(u8, 7), cs.level);
 }

@@ -115,9 +115,9 @@ export fn d2item_roll(
     while (i < n) : (i += 1) {
         const d = drops[i];
         out[i] = .{
-            .kind = @intFromEnum(d.kind),
+            .kind = @backingInt(d.kind),
             .item_code = d.item_code,
-            .quality = @intFromEnum(d.quality),
+            .quality = @backingInt(d.quality),
             .prefix_id = d.prefix_id,
             .suffix_id = d.suffix_id,
             .rare_prefix_ids = d.rare_prefix_ids,

@@ -64,7 +64,7 @@ export fn d2net_sc_table_size(opcode: i32) i32 {
 /// outside 0x00..0xFF. Unhandled opcodes report D2NET_CAT_UNKNOWN.
 export fn d2net_sc_opcode_category(opcode: i32) i32 {
     if (opcode < 0 or opcode > 0xFF) return ERR_ARGS;
-    return @intFromEnum(sc.info(@intCast(opcode)).cat);
+    return @backingInt(sc.info(@intCast(opcode)).cat);
 }
 
 /// Write the opcode's short handler name (the 1.14d Ghidra symbol; "?" when unhandled) into `buf`,
@@ -908,11 +908,11 @@ test "d2net_sc_opcode_name / category, including truncation reporting" {
     try testing.expectEqualStrings("?", buf[0..1]);
 
     // Categories: sc.Cat ordinals (see D2NET_CAT_* in d2net.h).
-    try testing.expectEqual(@as(i32, @intFromEnum(sc.Cat.level)), d2net_sc_opcode_category(0x03));
-    try testing.expectEqual(@as(i32, @intFromEnum(sc.Cat.unit_add)), d2net_sc_opcode_category(0x59));
-    try testing.expectEqual(@as(i32, @intFromEnum(sc.Cat.life)), d2net_sc_opcode_category(0x18));
-    try testing.expectEqual(@as(i32, @intFromEnum(sc.Cat.item)), d2net_sc_opcode_category(0x9C));
-    try testing.expectEqual(@as(i32, @intFromEnum(sc.Cat.unknown)), d2net_sc_opcode_category(0xEE));
+    try testing.expectEqual(@as(i32, @backingInt(sc.Cat.level)), d2net_sc_opcode_category(0x03));
+    try testing.expectEqual(@as(i32, @backingInt(sc.Cat.unit_add)), d2net_sc_opcode_category(0x59));
+    try testing.expectEqual(@as(i32, @backingInt(sc.Cat.life)), d2net_sc_opcode_category(0x18));
+    try testing.expectEqual(@as(i32, @backingInt(sc.Cat.item)), d2net_sc_opcode_category(0x9C));
+    try testing.expectEqual(@as(i32, @backingInt(sc.Cat.unknown)), d2net_sc_opcode_category(0xEE));
     try testing.expectEqual(ERR_ARGS, d2net_sc_opcode_category(0x100));
 }
 
@@ -968,13 +968,13 @@ test "decoders reject a short buffer and a foreign opcode, and null arguments" {
     try testing.expectEqual(ERR_OPCODE, d2net_sc_load_act(&wrong, wrong.len, &out));
 
     var life_out: D2NetLife = undefined;
-    try testing.expectEqual(ERR_OPCODE, d2net_sc_life(&[_]u8{0x03} ++ [_]u8{0} ** 14, 15, &life_out));
+    try testing.expectEqual(ERR_OPCODE, d2net_sc_life(&[_]u8{0x03} ++ @as([14]u8, @splat(0)), 15, &life_out));
 
     // Length is checked before the opcode, so a foreign packet SHORTER than the header reports
     // ERR_SHORT; one long enough to hold the header reports ERR_OPCODE.
     var mon_out: D2NetAssignMonster = undefined;
     try testing.expectEqual(ERR_SHORT, d2net_sc_assign_monster(&load_act, load_act.len, &mon_out));
-    const long_foreign = [_]u8{0x03} ++ [_]u8{0} ** 15;
+    const long_foreign = [_]u8{0x03} ++ @as([15]u8, @splat(0));
     try testing.expectEqual(ERR_OPCODE, d2net_sc_assign_monster(&long_foreign, long_foreign.len, &mon_out));
     var pos_out: D2NetUnitPos = undefined;
     try testing.expectEqual(ERR_SHORT, d2net_sc_unit_pos(&load_act, 0, &pos_out));

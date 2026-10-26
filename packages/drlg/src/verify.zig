@@ -152,7 +152,7 @@ fn extractRecon(allocator: std.mem.Allocator, pLevel: *sdrlg.D2DrlgLevelStrc) ![
         var picked_file: i32 = 0;
         if (p.pRoomExData) |data| {
             const rd: *sdrlg.D2DrlgPresetRoomStrc = @ptrCast(@alignCast(data));
-            def = @intFromEnum(rd.nLevelPrest);
+            def = @backingInt(rd.nLevelPrest);
             picked_file = rd.nPickedFile;
         }
         try rooms.append(allocator, .{
@@ -226,7 +226,7 @@ pub fn tallyLevelsRecon(
     // before it runs — exactly as the engine sets coords during the placement
     // subsystem (DRLGLEVEL_ParseLevelData) before AllocDrlgLevelFromLevelIdToLevelId.
     for (golden_levels) |g| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(g.id));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(g.id));
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = g.coords.x, .y = g.coords.y },
             .WorldSize = .{ .x = g.coords.w, .y = g.coords.h },
@@ -276,7 +276,7 @@ pub fn tallyLevelsRecon(
     // so those still register as a room-count mismatch (not byte-exact) rather than
     // crashing. No level type needs to be skipped here anymore.
     for (golden_levels) |g| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(g.id));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(g.id));
         drlg.InitLevel(pLevel);
 
         // Port's own level-level preset pick (jail-exit variant) for diagnosis:
@@ -472,7 +472,7 @@ test "engine golden: per-level seed + drlgType match the real engine" {
             std.debug.print("level {d} missing from tables\n", .{lv.id});
             return error.LevelMissing;
         };
-        try testing.expectEqual(lv.drlg_type, @intFromEnum(tlv.drlg_type));
+        try testing.expectEqual(lv.drlg_type, @backingInt(tlv.drlg_type));
 
         // Standard levels: seed == drlgStartSeed + levelId. A handful of special
         // presets reseed independently (e.g. staff/tomb picks) — skip the seed

@@ -57,7 +57,7 @@ fn main() {
         .status()
         .unwrap_or_else(|e| panic!(
             "libd2: could not run `zig` ({e}). The native engine is written in Zig, so building \
-             this crate needs zig 0.16+ on PATH — see https://ziglang.org/download/"
+             this crate needs zig 0.17+ on PATH — see https://ziglang.org/download/"
         ));
     assert!(status.success(), "libd2: `zig build` failed for target {zig_target}");
 

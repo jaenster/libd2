@@ -65,7 +65,7 @@ pub const Waypoints = struct {
 
     pub fn isSet(self: *const Waypoints, diff: Difficulty, idx: u6) bool {
         if (idx >= 39) return false;
-        const bits = self.blocks[@intFromEnum(diff)][2..7];
+        const bits = self.blocks[@backingInt(diff)][2..7];
         return bits[idx >> 3] & (@as(u8, 1) << @intCast(idx & 7)) != 0;
     }
 };
@@ -358,7 +358,7 @@ test "the skill section is sized by the class, and that moves the item list" {
     var buf: [2048]u8 = undefined;
     // A tail long enough that reading 14 skills too many stays IN BOUNDS — otherwise the wrong
     // count is caught by the length check and the mis-location this test is about never happens.
-    const tail = "JM" ++ ("\xee" ** 40);
+    const tail = ("JM" ++ @as([40]u8, @splat(0xee)));
     const src = buildOldSave(&buf, 0x000f, 16, tail);
     const save = try parse(src, 16);
     try testing.expectEqual(@as(u8, 16), save.skills.len);

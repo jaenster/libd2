@@ -171,7 +171,7 @@ pub fn generate(
     dpool.resetRegistry(); // self-contained run: drop any prior generation's stale registry
     ctx.lvl.resetGenCache(); // drop LvlSub pDrlgFile pointers into the prior (freed) pool
 
-    _ = drlg.allocDrlgActMisc(&self.drlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&self.drlg, 1, seed, .None, 0, @backingInt(diff));
     const pLevel = drlg.GetLevelAndAlloc(&self.drlg, id);
     pLevel.sCoordinatesAndSize = .{
         .WorldPosition = .{ .x = placement.x, .y = placement.y },
@@ -266,7 +266,7 @@ pub fn generateAct(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     // Level ids belonging to this act (Levels.txt Act column == act_no).
     var ids: std.ArrayListUnmanaged(i32) = .empty;
@@ -280,7 +280,7 @@ pub fn generateAct(
 
     // Pass 1: allocate every level and set its REAL world coords BEFORE orths.
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -302,7 +302,7 @@ pub fn generateAct(
         out.deinit(out_alloc);
     }
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         drlg.InitLevel(pLevel);
 
         var rooms: std.ArrayListUnmanaged(RoomRect) = .empty;
@@ -320,7 +320,7 @@ pub fn generateAct(
             });
         }
         const placed = act.positions.get(lid) != null;
-        const dtype: i32 = if (ctx.act.level(lid)) |lv| @intFromEnum(lv.drlg_type) else 0;
+        const dtype: i32 = if (ctx.act.level(lid)) |lv| @backingInt(lv.drlg_type) else 0;
         const lpos = pLevel.sCoordinatesAndSize.WorldPosition;
         const lsize = pLevel.sCoordinatesAndSize.WorldSize;
         try out.append(out_alloc, .{
@@ -547,7 +547,7 @@ fn collectLevelFull(
         });
     }
     const placed = act.positions.get(lid) != null;
-    const dtype: i32 = if (ctx.act.level(lid)) |lv| @intFromEnum(lv.drlg_type) else 0;
+    const dtype: i32 = if (ctx.act.level(lid)) |lv| @backingInt(lv.drlg_type) else 0;
     const lpos = pLevel.sCoordinatesAndSize.WorldPosition;
     const lsize = pLevel.sCoordinatesAndSize.WorldSize;
 
@@ -648,7 +648,7 @@ pub fn generateActFull(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -661,7 +661,7 @@ pub fn generateActFull(
 
     // Pass 1: real world coords BEFORE orths.
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -731,7 +731,7 @@ pub fn generateActFull(
     for (ids.items) |lid| {
         _ = scratch.reset(.free_all);
         const sa = scratch.allocator();
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         // On-demand, like the engine: the collision builder's warp-node linking inits
         // warp-DESTINATION levels early, and a second InitLevel would regenerate and
         // corrupt them (same guard as generateActCollisionAll).
@@ -803,7 +803,7 @@ fn harvestRoomLinks(
     var index_of: std.AutoHashMapUnmanaged(*abi.D2RoomExStrc, struct { lid: i32, idx: u32 }) = .empty;
     defer index_of.deinit(out_alloc);
     for (ids) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(pDrlg, @fromBackingInt(lid));
         var i: u32 = 0;
         var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
         while (pr) |p| : (pr = p.pRoomExNext) {
@@ -813,7 +813,7 @@ fn harvestRoomLinks(
     }
 
     for (levels) |*l| {
-        const pLevel = drlg.GetLevelAndAlloc(pDrlg, @enumFromInt(l.meta.level_id));
+        const pLevel = drlg.GetLevelAndAlloc(pDrlg, @fromBackingInt(l.meta.level_id));
         var links: std.ArrayListUnmanaged(RoomLink) = .empty;
         errdefer links.deinit(out_alloc);
         var from: u32 = 0;
@@ -889,7 +889,7 @@ pub fn generateLevelFull(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -903,7 +903,7 @@ pub fn generateLevelFull(
     // Pass 1: every level's real world coords BEFORE orths (identical to generateActFull) — the
     // target level's origin/act depend on the whole placement graph even though we only build it.
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -919,7 +919,7 @@ pub fn generateLevelFull(
     defer scratch.deinit();
 
     // Pass 2 for the target level ONLY (no Pass 3 seam adjacents — see the doc caveat).
-    const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(level_id));
+    const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(level_id));
     drlg.InitLevel(pLevel);
     return try collectLevelFull(want_walk, out_alloc, scratch.allocator(), null, ctx, idx, &act, pLevel, level_id, deflate_fn);
 }
@@ -1061,7 +1061,7 @@ pub fn generateLevelCollision(
         w = @intCast(tlv.size_x);
         h = @intCast(tlv.size_y);
     }
-    const lvl = try generate(ctx, seed, @enumFromInt(level_id), diff, .{ .x = 0, .y = 0, .w = w, .h = h });
+    const lvl = try generate(ctx, seed, @fromBackingInt(level_id), diff, .{ .x = 0, .y = 0, .w = w, .h = h });
     defer lvl.deinit();
 
     // DT1 library for this level's tile set (LvlTypes File columns).
@@ -1570,7 +1570,7 @@ pub fn generateActCompositeRaw(
 fn linkLevelWarpNodes(pLevel: *abi.D2DrlgLevelStrc) void {
     var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
     while (pr) |p| : (pr = p.pRoomExNext) {
-        if (@intFromEnum(pLevel.eD2LevelId) == 0x85) return;
+        if (@backingInt(pLevel.eD2LevelId) == 0x85) return;
         const flags = p.eRoomExFlags;
         if (!flags.anyWarp()) continue;
         var slot: u8 = 0;
@@ -1611,7 +1611,7 @@ pub fn roomWindow(p: *abi.D2RoomExStrc, pmap: *abi.D2DrlgMapStrc) materialize.Ds
         // border marks, so every room materializes their seam column/row inline.
         .kill1_x = @intFromBool(kill and p.sCoords.WorldSize.x + p.sCoords.WorldPosition.x == pmap.nSizeX + pmap.nRealOffsetX),
         .kill1_y = @intFromBool(kill and p.sCoords.WorldSize.y + p.sCoords.WorldPosition.y == pmap.nSizeY + pmap.nRealOffsetY),
-        .level_id = if (p.pLevel) |lv| @intFromEnum(lv.eD2LevelId) else 0,
+        .level_id = if (p.pLevel) |lv| @backingInt(lv.eD2LevelId) else 0,
         .warp_nodes = @ptrCast(@alignCast(p.pTileGrid)),
         .real_drlg = if (p.pLevel) |lv| lv.pDrlg else null,
     };
@@ -1707,7 +1707,7 @@ pub fn generateActCollisionAll(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -1720,7 +1720,7 @@ pub fn generateActCollisionAll(
 
     // Pass 1: real world coords BEFORE orths.
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -1745,7 +1745,7 @@ pub fn generateActCollisionAll(
     var objtbl = try objects_mod.load(ctx.gpa);
     defer objtbl.deinit();
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         // On-demand like the engine (LinkNearRoomsByVis inits warp-destination
         // levels early; a second InitLevel would REGENERATE and corrupt them).
         if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
@@ -1800,7 +1800,7 @@ fn buildLevelRoomColl(
     const tilegen = @import("drlg/tilegen.zig");
     linkLevelWarpNodes(pLevel);
     const tlv = ctx.act.level(lid) orelse return;
-    const nLevelType: i32 = @intFromEnum(pLevel.nLevelType);
+    const nLevelType: i32 = @backingInt(pLevel.nLevelType);
     tilegen.probe_cur_level = lid;
 
     // Level DT1 library (LvlTypes File1..32 for this LevelType).
@@ -1945,7 +1945,7 @@ fn buildLevelRoomColl(
                     if (nlv == pLevel) continue;
                     if (std.mem.indexOfScalar(*abi.D2RoomExStrc, seen_foreign.items, near) != null) continue;
                     try seen_foreign.append(out_alloc, near);
-                    const flid: i32 = @intFromEnum(nlv.*.eD2LevelId);
+                    const flid: i32 = @backingInt(nlv.*.eD2LevelId);
                     const lib = blk: {
                         for (flibs.items) |fl| {
                             if (fl.lid == flid) break :blk fl;
@@ -2185,7 +2185,7 @@ pub fn generateActRoomCollision(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -2198,7 +2198,7 @@ pub fn generateActRoomCollision(
 
     // Pass 1: real world coords BEFORE orths.
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -2221,7 +2221,7 @@ pub fn generateActRoomCollision(
     }
 
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         // On-demand like the engine (see generateActCollisionAll note).
         if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
         try buildLevelRoomColl(out_alloc, ctx, idx, pLevel, lid, &rooms);
@@ -2272,8 +2272,8 @@ pub const CollVerifyResult = struct {
     /// unit may stand there, so this is the number a pathing consumer actually cares
     /// about. The other COLBITs (missile/LOS/leap/alt-floor) never move a walk mask.
     walk_ok: u64 = 0,
-    hist_golden_set_ours_clear: [5]u64 = .{0} ** 5,
-    hist_ours_set_golden_clear: [5]u64 = .{0} ** 5,
+    hist_golden_set_ours_clear: [5]u64 = @splat(0),
+    hist_ours_set_golden_clear: [5]u64 = @splat(0),
     higher_bits_golden: u64 = 0,
 };
 
@@ -2464,15 +2464,15 @@ pub fn verifyActCollision(
 
     const MAXID = 256;
     const Lvl = struct { matched: u32 = 0, golden_only: u32 = 0, our_only: u32 = 0, dim: u32 = 0, total: u64 = 0, exact: u64 = 0, masked: u64 = 0 };
-    var lvls = [_]Lvl{.{}} ** MAXID;
-    var seen_ids = [_]bool{false} ** MAXID;
+    var lvls: [MAXID]Lvl = @splat(.{});
+    var seen_ids: [MAXID]bool = @splat(false);
 
     const Worst = struct { level: i32, px: i32, py: i32, mism: u64, total: u64 };
     var worst: std.ArrayListUnmanaged(Worst) = .empty;
     defer worst.deinit(alloc);
 
     // Confusion matrix over the masked-0x1F value: confusion[golden][ours] for mismatches.
-    var confusion = [_][32]u64{[_]u64{0} ** 32} ** 32;
+    var confusion: [32][32]u64 = @splat(@splat(0));
 
     for (golden.items) |g| {
         const li: usize = if (g.level >= 0 and g.level < MAXID) @intCast(g.level) else continue;
@@ -2817,7 +2817,7 @@ pub fn generateLevelShrines(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -2830,7 +2830,7 @@ pub fn generateLevelShrines(
 
     // Pass 1: real world coords BEFORE orths.
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -2845,7 +2845,7 @@ pub fn generateLevelShrines(
     var shrines: std.ArrayListUnmanaged(OutdoorShrine) = .empty;
     errdefer shrines.deinit(out_alloc);
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         drlg.InitLevel(pLevel);
         if (lid == level_id) try appendOutdoorShrines(pLevel, &shrines, out_alloc);
     }
@@ -2904,7 +2904,7 @@ pub fn generateLevelPresets(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -2916,7 +2916,7 @@ pub fn generateLevelPresets(
     }
 
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -2929,7 +2929,7 @@ pub fn generateLevelPresets(
 
     var result: []PresetUnit = &.{};
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         drlg.InitLevel(pLevel);
         if (lid == level_id) result = try collectLevelPresets(out_alloc, pLevel);
     }
@@ -3066,7 +3066,7 @@ pub fn generateLevelAdjacents(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -3078,7 +3078,7 @@ pub fn generateLevelAdjacents(
     }
 
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -3092,7 +3092,7 @@ pub fn generateLevelAdjacents(
     // Generate every level first — rooms persist in the DRLG pool — so the seam pass can
     // see neighbouring levels' placed rooms regardless of id order.
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         drlg.InitLevel(pLevel);
     }
 
@@ -3103,7 +3103,7 @@ pub fn generateLevelAdjacents(
     var boxes: std.ArrayListUnmanaged(SeamLevelBox) = .empty;
     var target_idx: ?usize = null;
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         var rooms: std.ArrayListUnmanaged(RoomRect) = .empty;
         var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
         while (pr) |p| : (pr = p.pRoomExNext) {
@@ -3131,7 +3131,7 @@ pub fn generateLevelAdjacents(
     var merged: std.ArrayListUnmanaged(LevelAdjacent) = .empty;
     errdefer merged.deinit(out_alloc);
     if (target_idx) |ti| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(level_id));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(level_id));
         const ws = try collectLevelAdjacents(out_alloc, pLevel);
         defer out_alloc.free(ws);
         try merged.appendSlice(out_alloc, ws);
@@ -3169,7 +3169,7 @@ fn collectLevelAdjacents(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelS
                 // A set slot is a real warp door only when it resolves to a LvlWarp id
                 // (!= -1); the destination level reported is the vis-array entry.
                 if (DrlgWarp.getWarpDestinationFromArray(pLevel, slot) != -1) {
-                    const dest = @intFromEnum(vis[slot]);
+                    const dest = @backingInt(vis[slot]);
                     if (dest != 0) try out.append(out_alloc, .{ .dest_level_id = dest, .x = cx, .y = cy, .kind = .warp });
                 }
             }
@@ -3249,15 +3249,15 @@ fn buildSeamConn(
         }
     }.f;
     // Forward Vis of this level.
-    const vis = DrlgRoom.getVisArrayFromLevelId(pDrlg, @enumFromInt(level_id));
-    for (0..8) |i| try add(&set, alloc, @intFromEnum(vis[i]));
+    const vis = DrlgRoom.getVisArrayFromLevelId(pDrlg, @fromBackingInt(level_id));
+    for (0..8) |i| try add(&set, alloc, @backingInt(vis[i]));
     // Reverse Vis: any act level whose Vis names this one (Vis is normally symmetric,
     // but include both directions so a one-sided entry still stitches).
     for (all_ids) |oid| {
         if (oid == level_id) continue;
-        const vo = DrlgRoom.getVisArrayFromLevelId(pDrlg, @enumFromInt(oid));
+        const vo = DrlgRoom.getVisArrayFromLevelId(pDrlg, @fromBackingInt(oid));
         for (0..8) |i| {
-            if (@intFromEnum(vo[i]) == level_id) {
+            if (@backingInt(vo[i]) == level_id) {
                 try add(&set, alloc, oid);
                 break;
             }
@@ -3269,13 +3269,13 @@ fn buildSeamConn(
         if (@as(i32, @intCast(w[1])) == level_id) try add(&set, alloc, @intCast(w[0]));
     }
     // Pairwise level-box sweep, for the acts that stitch that way instead of via the chain.
-    const a = drlg.GetLevelAndAlloc(pDrlg, @enumFromInt(level_id)).sCoordinatesAndSize;
+    const a = drlg.GetLevelAndAlloc(pDrlg, @fromBackingInt(level_id)).sCoordinatesAndSize;
     for (WARP_CONNECTION_SWEEPS) |range| {
         if (level_id < range[0] or level_id > range[1]) continue;
         var other = range[0];
         while (other <= range[1]) : (other += 1) {
             if (other == level_id) continue;
-            const b = drlg.GetLevelAndAlloc(pDrlg, @enumFromInt(other)).sCoordinatesAndSize;
+            const b = drlg.GetLevelAndAlloc(pDrlg, @fromBackingInt(other)).sCoordinatesAndSize;
             if (levelBoxesTouch(a, b)) try add(&set, alloc, other);
         }
     }
@@ -3550,7 +3550,7 @@ pub fn generateActObjects(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -3566,7 +3566,7 @@ pub fn generateActObjects(
     }
 
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -3597,7 +3597,7 @@ pub fn generateActObjects(
     }
 
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         drlg.InitLevel(pLevel);
         const lv_act: i32 = if (ctx.act.level(lid)) |lv| @intCast(lv.act) else 0;
 

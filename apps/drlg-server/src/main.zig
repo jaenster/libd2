@@ -61,7 +61,7 @@ fn wallMs() i64 {
 /// so concurrent workers never interleave. Line stays well under PIPE_BUF, so the write is atomic.
 fn logLine(comptime fmt: []const u8, args: anytype) void {
     var buf: [768]u8 = undefined;
-    const out = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    const out = std.mem.print(&buf, fmt, args) catch return;
     _ = write(2, out.ptr, out.len);
 }
 
@@ -81,13 +81,13 @@ fn logReq(method: []const u8, path: []const u8, status: u16, bytes: usize, us: i
         };
         const walk = if (p.include_walk) "true" else "false";
         extra = if (p.level) |lv|
-            std.fmt.bufPrint(&extra_buf, ",\"seed\":{d},\"act\":{d},\"difficulty\":{d},\"level\":{d},\"walk\":{s}", .{ p.seed, act1, dn, lv, walk }) catch ""
+            std.mem.print(&extra_buf, ",\"seed\":{d},\"act\":{d},\"difficulty\":{d},\"level\":{d},\"walk\":{s}", .{ p.seed, act1, dn, lv, walk }) catch ""
         else
-            std.fmt.bufPrint(&extra_buf, ",\"seed\":{d},\"act\":{d},\"difficulty\":{d},\"level\":null,\"walk\":{s}", .{ p.seed, act1, dn, walk }) catch "";
+            std.mem.print(&extra_buf, ",\"seed\":{d},\"act\":{d},\"difficulty\":{d},\"level\":null,\"walk\":{s}", .{ p.seed, act1, dn, walk }) catch "";
     }
     var err_buf: [160]u8 = undefined;
     var err_str: []const u8 = "";
-    if (err) |e| err_str = std.fmt.bufPrint(&err_buf, ",\"err\":\"{s}\"", .{e}) catch "";
+    if (err) |e| err_str = std.mem.print(&err_buf, ",\"err\":\"{s}\"", .{e}) catch "";
     logLine("{{\"ts\":{d},\"level\":\"info\",\"msg\":\"req\",\"method\":\"{s}\",\"path\":\"{s}\",\"status\":{d},\"bytes\":{d},\"us\":{d}{s}{s}}}\n", .{ wallMs(), method, path, status, bytes, us, extra, err_str });
 }
 
@@ -330,8 +330,9 @@ fn handleRequest(gpa: std.mem.Allocator, ctx: *drlg.Ctx, request: *std.http.Serv
         var buf: [512]u8 = undefined;
         var w = std.Io.Writer.fixed(&buf);
         w.writeByte('{') catch {};
-        inline for (@typeInfo(drlg.prof.Phase).@"enum".fields, 0..) |f, i| {
-            w.print("{s}\"{s}\":{d}", .{ if (i == 0) "" else ",", f.name, drlg.prof.get(@enumFromInt(f.value)) }) catch {};
+        const phases = @typeInfo(drlg.prof.Phase).@"enum";
+        inline for (phases.field_names, phases.field_values, 0..) |name, value, i| {
+            w.print("{s}\"{s}\":{d}", .{ if (i == 0) "" else ",", name, drlg.prof.get(@fromBackingInt(value)) }) catch {};
         }
         w.writeAll("}\n") catch {};
         drlg.prof.reset();

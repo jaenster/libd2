@@ -5,7 +5,7 @@
 //!   - D2GS accept sequence ..... https://bnetdocs.org/document/28
 //!
 //! Flag enums are `enum(u32)` of single-bit values; combine with
-//! `@intFromEnum(a) | @intFromEnum(b)` and test with `has(bits, flag)`.
+//! `@backingInt(a) | @backingInt(b)` and test with `has(bits, flag)`.
 
 /// User flags in SID_CHATEVENT (per-user state in a channel).
 pub const ChatUserFlag = enum(u32) {
@@ -66,5 +66,5 @@ pub const D2gsMsg = enum(u8) {
 
 /// True if `bits` has `flag` set. `flag` is any of the flag enums above.
 pub fn has(bits: u32, flag: anytype) bool {
-    return (bits & @intFromEnum(flag)) != 0;
+    return (bits & @backingInt(flag)) != 0;
 }

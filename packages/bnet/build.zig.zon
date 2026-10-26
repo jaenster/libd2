@@ -1,7 +1,7 @@
 .{
     .name = .d2_bnet,
     .version = "0.6.5",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0x8de0ba51bbf7a8d7,
 
     // Battle.net: BNCS + MCP + BNFTP and the hashes they carry — everything before a game

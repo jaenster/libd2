@@ -86,5 +86,5 @@ pub const OperateFn = enum(i32) {
 
 test "OperateFn labels a known index" {
     try std.testing.expectEqualStrings("activate_waypoint", OperateFn.activate_waypoint.label());
-    try std.testing.expectEqualStrings("?", (@as(OperateFn, @enumFromInt(200))).label());
+    try std.testing.expectEqualStrings("?", (@as(OperateFn, @fromBackingInt(200))).label());
 }

@@ -175,7 +175,7 @@ pub const Ctx = struct {
                     const v: i64 = if (it.has_variant) it.variant else 0;
                     const idx: i64 = if (v <= 0) 0 else @min(v, n - 1);
                     var col: [8]u8 = undefined;
-                    const name = std.fmt.bufPrint(&col, "InvGfx{d}", .{idx + 1}) catch unreachable;
+                    const name = std.mem.print(&col, "InvGfx{d}", .{idx + 1}) catch unreachable;
                     const g = self.t.item_types.str(tr, name);
                     if (g.len != 0) file = g;
                 }

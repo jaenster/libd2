@@ -338,7 +338,7 @@ pub const Describer = struct {
             if (armor and it.base(31) > 0) try self.defenseLine(&defense, it);
         }
 
-        var color: u8 = switch (@intFromEnum(h.quality)) {
+        var color: u8 = switch (@backingInt(h.quality)) {
             4 => 3,
             5 => 2,
             6 => 9,
@@ -536,22 +536,22 @@ pub const Describer = struct {
         var k: usize = 2;
         while (k <= @min(worn, 5)) : (k += 1) {
             for ([_]u8{ 'a', 'b' }) |ab| {
-                const code = sets.str(sr, std.fmt.bufPrint(&buf[0], "PCode{d}{c}", .{ k, ab }) catch unreachable);
+                const code = sets.str(sr, std.mem.print(&buf[0], "PCode{d}{c}", .{ k, ab }) catch unreachable);
                 if (code.len == 0) continue;
-                const par: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[1], "PParam{d}{c}", .{ k, ab }) catch unreachable));
-                const lo: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[2], "PMin{d}{c}", .{ k, ab }) catch unreachable));
-                const hi: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[3], "PMax{d}{c}", .{ k, ab }) catch unreachable));
+                const par: i32 = @intCast(sets.int(sr, std.mem.print(&buf[1], "PParam{d}{c}", .{ k, ab }) catch unreachable));
+                const lo: i32 = @intCast(sets.int(sr, std.mem.print(&buf[2], "PMin{d}{c}", .{ k, ab }) catch unreachable));
+                const hi: i32 = @intCast(sets.int(sr, std.mem.print(&buf[3], "PMax{d}{c}", .{ k, ab }) catch unreachable));
                 try properties.applyProperty(it.a, &rolled, &seed, self.t, code, par, lo, hi, .{});
             }
         }
         if (worn == members) {
             var f: usize = 1;
             while (f <= 8) : (f += 1) {
-                const code = sets.str(sr, std.fmt.bufPrint(&buf[0], "FCode{d}", .{f}) catch unreachable);
+                const code = sets.str(sr, std.mem.print(&buf[0], "FCode{d}", .{f}) catch unreachable);
                 if (code.len == 0) continue;
-                const par: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[1], "FParam{d}", .{f}) catch unreachable));
-                const lo: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[2], "FMin{d}", .{f}) catch unreachable));
-                const hi: i32 = @intCast(sets.int(sr, std.fmt.bufPrint(&buf[3], "FMax{d}", .{f}) catch unreachable));
+                const par: i32 = @intCast(sets.int(sr, std.mem.print(&buf[1], "FParam{d}", .{f}) catch unreachable));
+                const lo: i32 = @intCast(sets.int(sr, std.mem.print(&buf[2], "FMin{d}", .{f}) catch unreachable));
+                const hi: i32 = @intCast(sets.int(sr, std.mem.print(&buf[3], "FMax{d}", .{f}) catch unreachable));
                 try properties.applyProperty(it.a, &rolled, &seed, self.t, code, par, lo, hi, .{});
             }
         }
@@ -643,7 +643,7 @@ pub const Describer = struct {
         const base = it.base_name;
         var name = Text{ .gpa = a };
         const personal = h.flags & wire.flag.PLAYERNAME != 0 and h.ownerSlice().len != 0;
-        const q = @intFromEnum(h.quality);
+        const q = @backingInt(h.quality);
         if (h.flags & wire.flag.BODYPART != 0) {
             // an ear: the possessive name, the class, the level
             try name.s(self.idText(sid.level));
@@ -871,7 +871,7 @@ pub const Describer = struct {
             wl += 1;
         };
         var key_buf: [16]u8 = undefined;
-        const key = std.fmt.bufPrint(&key_buf, "{s}A1{s}", .{ class_tokens[v.class], wclass_buf[0..wl] }) catch return;
+        const key = std.mem.print(&key_buf, "{s}A1{s}", .{ class_tokens[v.class], wclass_buf[0..wl] }) catch return;
         const rec = animRecord(anim, key) orelse AnimRecord{ .frames = 0, .speed = 0 };
         var frames = rec.frames;
         var aspeed = rec.speed;
@@ -1016,7 +1016,7 @@ pub const Describer = struct {
         };
         const ref = self.t.itemRef(h.codeSlice()) orelse return 0;
         const bt = self.t.itemTable(ref.table);
-        switch (@intFromEnum(h.quality)) {
+        switch (@backingInt(h.quality)) {
             4 => {
                 if (h.prefix != 0 and h.prefix - 1 < self.prefix_rows.len) q = @max(q, R.of(self, &self.t.magic_prefix, self.prefix_rows[h.prefix - 1], v));
                 if (h.suffix != 0 and h.suffix - 1 < self.suffix_rows.len) q = @max(q, R.of(self, &self.t.magic_suffix, self.suffix_rows[h.suffix - 1], v));

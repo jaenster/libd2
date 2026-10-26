@@ -327,7 +327,7 @@ pub fn SpawnRandomOutdoorDS1(pLevel: [*c]s.D2DrlgLevelStrc, nLvlPrestId: i32, nR
     if (nTotalCells == 0) return;
 
     // Store cells as interleaved [x, y] pairs (2 ints per cell)
-    var aCellTable = [_][2]i32{.{ 0, 0 }} ** 513;
+    var aCellTable: [513][2]i32 = @splat(.{ 0, 0 });
     {
         var i: u32 = 0;
         while (i < nTotalCells) : (i += 1) {

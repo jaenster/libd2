@@ -165,7 +165,7 @@ pub fn decode26(key: []const u8) ?Decoded26 {
     if (key.len < 26) return null;
 
     // 1) char -> base-5 digit pairs, placed at a +49-mod-52 stride
-    var base5 = [_]u8{0} ** 52;
+    var base5: [52]u8 = @splat(0);
     var out2: usize = 0x21;
     for (0..26) |in_idx| {
         const out1 = (out2 + 0x7b5) % 52;

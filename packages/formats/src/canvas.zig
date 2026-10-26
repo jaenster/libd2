@@ -414,7 +414,7 @@ pub fn scaleIndicesNearest(px: []const u8, w: u32, h: u32, k: u32, out: []u8) vo
 }
 
 test "index-space draw and nearest scale" {
-    var dst = [_]u8{0} ** 9;
+    var dst: [9]u8 = @splat(0);
     const shift = blk: {
         var t: [256]u8 = undefined;
         for (&t, 0..) |*v, i| v.* = @intCast(i);

@@ -45,7 +45,7 @@ zig build verify      # only the golden gate (always ReleaseFast; the gate is sl
 zig build run -- help # the DRLG tool: rng rolls, table dumps, generation smoke tests
 ```
 
-Zig 0.16.
+Zig 0.17.
 
 ## About the baked assets
 

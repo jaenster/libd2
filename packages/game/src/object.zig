@@ -83,7 +83,7 @@ pub const ObjectRef = struct {
 /// e.g. re-operating a spent chest/shrine). Pure — the host applies the Effects.
 pub fn operate(obj: ObjectRef, buf: []Effect) []Effect {
     var n: usize = 0;
-    const op: OperateFn = @enumFromInt(obj.operate_fn);
+    const op: OperateFn = @fromBackingInt(obj.operate_fn);
     const spent = obj.anim_mode != 0; // already opened / operating
     switch (family(op)) {
         .lootable => {
@@ -159,21 +159,21 @@ const testing = std.testing;
 test "operate: families emit the right effects" {
     var buf: [4]Effect = undefined;
     // A fresh chest opens + rolls drops.
-    const chest = ObjectRef{ .guid = 1, .x = 10, .y = 20, .operate_fn = @intFromEnum(OperateFn.open_chest_no_monster), .anim_mode = 0 };
+    const chest = ObjectRef{ .guid = 1, .x = 10, .y = 20, .operate_fn = @backingInt(OperateFn.open_chest_no_monster), .anim_mode = 0 };
     const e = operate(chest, &buf);
     try testing.expectEqual(@as(usize, 2), e.len);
     try testing.expect(e[0] == .set_anim_mode and e[0].set_anim_mode.mode == 2);
     try testing.expect(e[1] == .roll_drops and e[1].roll_drops.x == 10);
     // A spent chest does nothing.
-    const spent = ObjectRef{ .guid = 1, .x = 10, .y = 20, .operate_fn = @intFromEnum(OperateFn.open_chest_no_monster), .anim_mode = 2 };
+    const spent = ObjectRef{ .guid = 1, .x = 10, .y = 20, .operate_fn = @backingInt(OperateFn.open_chest_no_monster), .anim_mode = 2 };
     try testing.expectEqual(@as(usize, 0), operate(spent, &buf).len);
     // A door toggles (works even when "spent").
-    const door = ObjectRef{ .guid = 5, .x = 0, .y = 0, .operate_fn = @intFromEnum(OperateFn.toggle_door), .anim_mode = 0 };
+    const door = ObjectRef{ .guid = 5, .x = 0, .y = 0, .operate_fn = @backingInt(OperateFn.toggle_door), .anim_mode = 0 };
     const de = operate(door, &buf);
     try testing.expectEqual(@as(usize, 1), de.len);
     try testing.expect(de[0] == .toggle_door);
     // A waypoint activates.
-    const wp = ObjectRef{ .guid = 7, .x = 0, .y = 0, .operate_fn = @intFromEnum(OperateFn.activate_waypoint), .anim_mode = 0 };
+    const wp = ObjectRef{ .guid = 7, .x = 0, .y = 0, .operate_fn = @backingInt(OperateFn.activate_waypoint), .anim_mode = 0 };
     try testing.expect(operate(wp, &buf)[0] == .activate_waypoint);
 }
 
@@ -181,13 +181,13 @@ test "operate: every OperateFn 1..73 classifies + resolves without a gap" {
     var buf: [4]Effect = undefined;
     var op: i32 = 1;
     while (op <= 73) : (op += 1) {
-        _ = family(@enumFromInt(op)); // total (else => .other) — no unhandled value
+        _ = family(@fromBackingInt(op)); // total (else => .other) — no unhandled value
         const ref = ObjectRef{ .guid = 1, .x = 0, .y = 0, .operate_fn = op, .anim_mode = 0, .shrine_reset_min = 5 };
         _ = operate(ref, &buf);
     }
     // A fresh interactive object always yields at least one effect (not a silent no-op).
     for ([_]OperateFn{ .activate_shrine, .activate_healing_well, .toggle_door, .activate_waypoint, .open_stash, .portal }) |o| {
-        const ref = ObjectRef{ .guid = 1, .x = 0, .y = 0, .operate_fn = @intFromEnum(o), .anim_mode = 0 };
+        const ref = ObjectRef{ .guid = 1, .x = 0, .y = 0, .operate_fn = @backingInt(o), .anim_mode = 0 };
         try testing.expect(operate(ref, &buf).len >= 1);
     }
 }

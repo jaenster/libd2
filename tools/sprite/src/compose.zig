@@ -120,7 +120,7 @@ pub fn run(c: *main.Ctx) !void {
     const pal = try main.loadPalette(c);
     const src = try c.source_();
 
-    const cof_name = try std.fmt.allocPrint(gpa, "data/global/{s}/{s}/cof/{s}{s}{s}.cof", .{ class, tok, tok, mode, wclass });
+    const cof_name = try gpa.print("data/global/{s}/{s}/cof/{s}{s}{s}.cof", .{ class, tok, tok, mode, wclass });
     const cof_bytes = src.read(gpa, cof_name) catch return main.fail("no COF {s}", .{cof_name});
     const cof = formats.cof.parse(gpa, cof_bytes) catch {
         std.debug.print("sprite: {s}: not a valid COF\n", .{cof_name});
@@ -145,7 +145,7 @@ pub fn run(c: *main.Ctx) !void {
             const eq = std.mem.indexOfScalar(u8, spec, '=') orelse return main.fail("--layer-shift is COMP=SPEC", .{});
             if (std.ascii.eqlIgnoreCase(spec[0..eq], comp)) shifts[l.component] = try main.loadShift(c, &pal, spec[eq + 1 ..]);
         }
-        if (l.transparent) modes[l.component] = if (l.draw_effect < 8) @enumFromInt(l.draw_effect) else .transparent;
+        if (l.transparent) modes[l.component] = if (l.draw_effect < 8) @fromBackingInt(l.draw_effect) else .transparent;
     }
 
     var cells: std.ArrayListUnmanaged(Cell) = .empty;
@@ -183,13 +183,13 @@ fn findLayerFile(c: *main.Ctx, class: []const u8, tok: []const u8, comp: []const
     const src = try c.source_();
     const v = try lower(c.gpa, variant);
     for ([_][]const u8{ "dcc", "dc6" }) |ext| {
-        const name = try std.fmt.allocPrint(c.gpa, "data/global/{s}/{s}/{s}/{s}{s}{s}{s}{s}.{s}", .{ class, tok, comp, tok, comp, v, mode, wc, ext });
+        const name = try c.gpa.print("data/global/{s}/{s}/{s}/{s}{s}{s}{s}{s}.{s}", .{ class, tok, comp, tok, comp, v, mode, wc, ext });
         if (src.has(name)) return name;
     }
     if (!any_variant) return null;
-    const prefix = try std.fmt.allocPrint(c.gpa, "data/global/{s}/{s}/{s}/{s}{s}", .{ class, tok, comp, tok, comp });
+    const prefix = try c.gpa.print("data/global/{s}/{s}/{s}/{s}{s}", .{ class, tok, comp, tok, comp });
     for ([_][]const u8{ "dcc", "dc6" }) |ext| {
-        const suffix = try std.fmt.allocPrint(c.gpa, "{s}{s}.{s}", .{ mode, wc, ext });
+        const suffix = try c.gpa.print("{s}{s}.{s}", .{ mode, wc, ext });
         for (src.names.items) |n| {
             if (std.mem.startsWith(u8, n, prefix) and std.mem.endsWith(u8, n, suffix) and n.len == prefix.len + 3 + suffix.len) return n;
         }

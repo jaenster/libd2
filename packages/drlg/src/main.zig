@@ -47,7 +47,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const diff_n = std.fmt.parseInt(u8, args.next() orelse "0", 10) catch 0;
         const act_no = std.fmt.parseInt(i32, args.next() orelse "0", 10) catch 0;
         const iters = std.fmt.parseInt(u32, args.next() orelse "50", 10) catch 50;
-        const diff: drlglib.Difficulty = @enumFromInt(diff_n);
+        const diff: drlglib.Difficulty = @fromBackingInt(diff_n);
         var ctx = try drlglib.Ctx.init(gpa);
         defer ctx.deinit();
         // No internal timer (this std strips Timer/clock_gettime): run `iters` full-act
@@ -345,10 +345,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         // byte-compare because the file-pick advances the seed by one either way.
         {
             const MAXID2 = 256;
-            var pick_seen = [_]u32{0} ** MAXID2;
-            var pick_bad = [_]u32{0} ** MAXID2;
-            var ex_golden = [_]i32{0} ** MAXID2;
-            var ex_port = [_]i32{0} ** MAXID2;
+            var pick_seen: [MAXID2]u32 = @splat(0);
+            var pick_bad: [MAXID2]u32 = @splat(0);
+            var ex_golden: [MAXID2]i32 = @splat(0);
+            var ex_port: [MAXID2]i32 = @splat(0);
             var any_pick = false;
             for (all_results.items) |lr| {
                 if (lr.golden_lvl_pick == oracle.LVL_PICK_NONE) continue;
@@ -377,8 +377,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         // into ZERO-room (untransformed/stub gap) vs PARTIAL (real divergence to
         // root-cause). Sorted by count so the biggest gaps lead the worklist.
         const MAXID = 256;
-        var hist_zero = [_]u32{0} ** MAXID;
-        var hist_partial = [_]u32{0} ** MAXID;
+        var hist_zero: [MAXID]u32 = @splat(0);
+        var hist_partial: [MAXID]u32 = @splat(0);
         for (all_results.items) |lr| {
             if (lr.byte_exact) continue;
             const id: usize = if (lr.id >= 0 and lr.id < MAXID) @intCast(lr.id) else continue;
@@ -498,7 +498,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         var w: i32 = 64;
         var h: i32 = 64;
         if (tlv.size_x > 0 and tlv.size_y > 0) { w = @intCast(tlv.size_x); h = @intCast(tlv.size_y); }
-        const lvl = try drlglib.generate(&ctx, seed, @enumFromInt(level_id), .normal, .{ .x = 0, .y = 0, .w = w, .h = h });
+        const lvl = try drlglib.generate(&ctx, seed, @fromBackingInt(level_id), .normal, .{ .x = 0, .y = 0, .w = w, .h = h });
         defer lvl.deinit();
         var miss = std.AutoHashMapUnmanaged(u64, u32).empty;
         defer miss.deinit(gpa);

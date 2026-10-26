@@ -57,7 +57,7 @@ const Handle = struct {
         const int = struct {
             fn add(w: *std.hash.Wyhash, v: anytype) void {
                 w.update(std.mem.asBytes(&@as(i64, @intCast(@as(i32, switch (@typeInfo(@TypeOf(v))) {
-                    .@"enum" => @intFromEnum(v),
+                    .@"enum" => @backingInt(v),
                     else => v,
                 })))));
             }

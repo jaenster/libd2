@@ -160,7 +160,7 @@ pub fn initLevelWarpCoordinates(pLevel: [*c]s.D2DrlgLevelStrc) void {
 // The per-level dispatch by eDrlgType. (Ghidra artifact noted in recon: the
 // original test was `drlgType == 1`, not `drlgType`.)
 pub fn InitLevel(pLevel: [*c]s.D2DrlgLevelStrc) void {
-    pLevel.*.sSeed.nSeedLow = @bitCast(pLevel.*.pDrlg.?.dwStartSeed +% @as(u32, @bitCast(@intFromEnum(pLevel.*.eD2LevelId))));
+    pLevel.*.sSeed.nSeedLow = @bitCast(pLevel.*.pDrlg.?.dwStartSeed +% @as(u32, @bitCast(@backingInt(pLevel.*.eD2LevelId))));
     pLevel.*.sSeed.nSeedHigh = 0x29a;
     const drlgType = pLevel.*.eDrlgType;
     if (drlgType == .maze) {
@@ -183,7 +183,7 @@ pub fn InitLevel(pLevel: [*c]s.D2DrlgLevelStrc) void {
 // DRLGLEVEL_SetLevelSizeAndAlignVsDependentLevel — Drlg.cpp:935 (00642d10)
 pub fn setLevelSizeAndAlignVsDependentLevel(pDrlg: [*c]s.D2DrlgStrc, pLevel: [*c]s.D2DrlgLevelStrc) void {
     const pLevelDef = tables.levelDefsGetLine(pLevel.*.eD2LevelId);
-    const nDependLevelId: eD2LevelId = @enumFromInt(pLevelDef.*.Depend);
+    const nDependLevelId: eD2LevelId = @fromBackingInt(pLevelDef.*.Depend);
     const diff: usize = @intCast(pDrlg.*.nDifficulty);
     const szx: [3]i32 = pLevelDef.*.SizeX;
     const szy: [3]i32 = pLevelDef.*.SizeY;
@@ -282,7 +282,7 @@ pub fn allocDrlgLevel(pDrlg: [*c]s.D2DrlgStrc, eLevel: eD2LevelId) *s.D2DrlgLeve
     pLevel.nLevelType = pLevelDefs.*.LevelType;
     pLevel.eDrlgType = pLevelDefs.*.DrlgType;
     if (pDrlg.*.dwFlags & 1 != 0) pLevel.dwFlags |= 0x10;
-    pLevel.sSeed.nSeedLow = @bitCast(pDrlg.*.dwStartSeed +% @as(u32, @bitCast(@intFromEnum(eLevel))));
+    pLevel.sSeed.nSeedLow = @bitCast(pDrlg.*.dwStartSeed +% @as(u32, @bitCast(@backingInt(eLevel))));
     pLevel.sSeed.nSeedHigh = 0x29a;
     switch (pLevel.eDrlgType) {
         .maze => initializeLevel(pLevel),
@@ -346,8 +346,8 @@ pub fn allocDrlgActMisc(
             if (nStaffLevelOffset != nBossOffset) break;
         }
         pDrlg.*.nSeed = DVar1;
-        pDrlg.*.nStaffTombLevel = @enumFromInt(@as(i32, @bitCast(nStaffLevelOffset)) + 0x42);
-        pDrlg.*.nBossTombLevel = @enumFromInt(@as(i32, @bitCast(nBossOffset)) + 0x42);
+        pDrlg.*.nStaffTombLevel = @fromBackingInt(@as(i32, @bitCast(nStaffLevelOffset)) + 0x42);
+        pDrlg.*.nBossTombLevel = @fromBackingInt(@as(i32, @bitCast(nBossOffset)) + 0x42);
     } else if (nActNo == ACT_III) {
         DVar1 = rng.sEEDNEXT(DVar1);
         pDrlg.*.nSeed = DVar1;
@@ -528,9 +528,9 @@ pub fn allocDrlgLevelFromLevelIdToLevelId(
     eLevel: eD2LevelId,
     nLevelIdStart: eD2LevelId,
 ) void {
-    var nCurI: i32 = @intFromEnum(nLevelIdStart);
-    while (nCurI <= @intFromEnum(eLevel)) : (nCurI += 1) {
-        const nCur: eD2LevelId = @enumFromInt(nCurI);
+    var nCurI: i32 = @backingInt(nLevelIdStart);
+    while (nCurI <= @backingInt(eLevel)) : (nCurI += 1) {
+        const nCur: eD2LevelId = @fromBackingInt(nCurI);
         const pCurLevel = GetLevelAndAlloc(pDrlg, nCur);
         if (pCurLevel.eDrlgType != .wilderness) continue;
         const pVisArray = DrlgRoom.getVisArrayFromLevelId(pDrlg, nCur);
@@ -574,14 +574,14 @@ pub fn allocDrlgLevelFromLevelIdToLevelId(
 // each direction via AllocDrlgOrth — the coordinate-based adjacency Act V uses
 // instead of the Vis/Warp table used by Acts I/II/IV.
 fn buildActVCoordOrths(pDrlg: [*c]s.D2DrlgStrc, startId: eD2LevelId, endId: eD2LevelId) void {
-    var aI: i32 = @intFromEnum(startId);
-    while (aI <= @intFromEnum(endId)) : (aI += 1) {
-        const a: eD2LevelId = @enumFromInt(aI);
+    var aI: i32 = @backingInt(startId);
+    while (aI <= @backingInt(endId)) : (aI += 1) {
+        const a: eD2LevelId = @fromBackingInt(aI);
         const pA = GetLevelAndAlloc(pDrlg, a);
         if (pA.eDrlgType != .wilderness) continue;
         var bI: i32 = aI + 1;
-        while (bI <= @intFromEnum(endId)) : (bI += 1) {
-            const b: eD2LevelId = @enumFromInt(bI);
+        while (bI <= @backingInt(endId)) : (bI += 1) {
+            const b: eD2LevelId = @fromBackingInt(bI);
             const pB = GetLevelAndAlloc(pDrlg, b);
             if (pB.eDrlgType != .wilderness) continue;
             const dirAtoB = mdeps.GetDirectionFromCoordinates(&pA.sCoordinatesAndSize, &pB.sCoordinatesAndSize);
@@ -711,8 +711,8 @@ pub fn applyAct1WildRoadFlags(pLevel: [*c]s.D2DrlgLevelStrc) void {
                 const d0      = rule[3];
                 const d1      = rule[4];
                 const flag    = rule[5];
-                if ((@intFromEnum(lvlId) == matchId or matchId == 0) and
-                    @intFromEnum(lvlId) != exc1 and @intFromEnum(lvlId) != exc2 and
+                if ((@backingInt(lvlId) == matchId or matchId == 0) and
+                    @backingInt(lvlId) != exc1 and @backingInt(lvlId) != exc2 and
                     dir0 == d0 and dir1 == d1)
                 {
                     pData.dwFlags |= @intCast(flag);

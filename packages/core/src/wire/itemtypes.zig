@@ -30,7 +30,7 @@ const parsed: Parsed = build: {
         const cat_s = it.next() orelse continue;
         const stk_s = it.next() orelse continue;
         if (code.len == 0 or code.len > 4) continue;
-        var c = [_]u8{0} ** 4;
+        var c: [4]u8 = @splat(0);
         for (code, 0..) |ch, i| c[i] = ch;
         out[n] = .{
             .code = c,
@@ -80,7 +80,7 @@ pub fn install(gpa: std.mem.Allocator) !void {
         for (0..tbl.rowCount()) |row| {
             const code = tbl.get(row, "code");
             if (code.len == 0 or code.len > 4) continue;
-            var c = [_]u8{0} ** 4;
+            var c: [4]u8 = @splat(0);
             @memcpy(c[0..code.len], code);
             try list.append(gpa, .{ .code = c, .cat = t[1], .stackable = std.mem.eql(u8, tbl.get(row, "stackable"), "1") });
         }

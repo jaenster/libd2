@@ -78,7 +78,7 @@ export fn d2pf_options_default(out: ?*D2PfOptions) void {
         .teleport = @intFromBool(d.teleport),
         .teleport_across_levels = @intFromBool(d.teleport_across_levels),
         .teleport_max_cast = d.teleport_max_cast orelse -1,
-        .teleport_metric = @intFromEnum(d.teleport_metric),
+        .teleport_metric = @backingInt(d.teleport_metric),
         .snap_radius = d.snap_radius,
     };
 }
@@ -175,7 +175,7 @@ export fn d2pf_route_leg_moves(route: ?*Route, leg: i32, out: [*]D2PfMove, cap: 
     const n = @min(moves.len, @as(usize, @intCast(cap)));
     var i: usize = 0;
     while (i < n) : (i += 1) {
-        out[i] = .{ .x = moves[i].x, .y = moves[i].y, .kind = @intFromEnum(moves[i].kind) };
+        out[i] = .{ .x = moves[i].x, .y = moves[i].y, .kind = @backingInt(moves[i].kind) };
     }
     return @intCast(moves.len);
 }
@@ -230,7 +230,7 @@ export fn d2pf_nearest_passable(world: ?*World, level_id: i32, x: i32, y: i32, r
 export fn d2pf_unit_place(world: ?*World, level_id: i32, unit_id: u32, unit_type: u8, size_x: i32, x: i32, y: i32) i32 {
     const w = world orelse return -1;
     const lv = w.inner.level(level_id) orelse return -2;
-    const uc: pf.UnitCollision = switch (@as(core.unit.UnitType, @enumFromInt(unit_type))) {
+    const uc: pf.UnitCollision = switch (@as(core.unit.UnitType, @fromBackingInt(unit_type))) {
         .player => .player(size_x),
         .monster => .monster(size_x, false, .{}),
         .item => .item(size_x),

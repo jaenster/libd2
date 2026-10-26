@@ -36,7 +36,7 @@ pub const eDrlgLevelType = enum(i32) {
     _,
 
     pub inline fn of(nLevelType: i32) eDrlgLevelType {
-        return @enumFromInt(nLevelType);
+        return @fromBackingInt(nLevelType);
     }
 };
 
@@ -56,19 +56,19 @@ pub const LevelId = struct {
     // values (the engine compares the level id field directly); see Levels.txt
     // for the canonical internal name — NOT mapped to eD2LevelId in-game names,
     // which diverge for Act II (e.g. 0x3d = "Tomb 3 Treasure").
-    pub const tower_lower_2: eD2LevelId = @enumFromInt(0x34); // type-0xf variant=2 (preset 0x169)
-    pub const tower_lower_4: eD2LevelId = @enumFromInt(0x36); // type-0xf variant=3 (presets 0x169/0x167)
-    pub const arcane_0x54: eD2LevelId = @enumFromInt(0x54); // type-0x17 override 0x296 -> 0x298
-    pub const arcane_0x55: eD2LevelId = @enumFromInt(0x55); // type-0x17 override 0x295 -> 0x297
+    pub const tower_lower_2: eD2LevelId = @fromBackingInt(0x34); // type-0xf variant=2 (preset 0x169)
+    pub const tower_lower_4: eD2LevelId = @fromBackingInt(0x36); // type-0xf variant=3 (presets 0x169/0x167)
+    pub const arcane_0x54: eD2LevelId = @fromBackingInt(0x54); // type-0x17 override 0x296 -> 0x298
+    pub const arcane_0x55: eD2LevelId = @fromBackingInt(0x55); // type-0x17 override 0x295 -> 0x297
 
     // GenerateLevel per-level-id arms.
-    pub const tomb_fixed: eD2LevelId = @enumFromInt(0x3d); // Tombs arm: fixed preset 0x1e0
-    pub const act3_sewer_special: eD2LevelId = @enumFromInt(0x5c); // Act3 sewers 5x5-grid special block
-    pub const barracks: eD2LevelId = @enumFromInt(0x1c); // post-switch Barracks placement
-    pub const river_of_flames: eD2LevelId = @enumFromInt(0x6b); // post-switch River placement
+    pub const tomb_fixed: eD2LevelId = @fromBackingInt(0x3d); // Tombs arm: fixed preset 0x1e0
+    pub const act3_sewer_special: eD2LevelId = @fromBackingInt(0x5c); // Act3 sewers 5x5-grid special block
+    pub const barracks: eD2LevelId = @fromBackingInt(0x1c); // post-switch Barracks placement
+    pub const river_of_flames: eD2LevelId = @fromBackingInt(0x6b); // post-switch River placement
 
     // Act5 ice-cave fixed-preset single levels (LevelType 0x21).
-    pub const frozen_river: eD2LevelId = @enumFromInt(114); // Ice Cave 1A, def 0x40f-roll
-    pub const drifter_cavern: eD2LevelId = @enumFromInt(116); // Ice Cave 2A, def 0x410
-    pub const icy_cellar: eD2LevelId = @enumFromInt(119); // Ice Cave 3A, def 0x411
+    pub const frozen_river: eD2LevelId = @fromBackingInt(114); // Ice Cave 1A, def 0x40f-roll
+    pub const drifter_cavern: eD2LevelId = @fromBackingInt(116); // Ice Cave 2A, def 0x410
+    pub const icy_cellar: eD2LevelId = @fromBackingInt(119); // Ice Cave 3A, def 0x411
 };

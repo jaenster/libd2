@@ -202,7 +202,7 @@ fn extremes(alloc: std.mem.Allocator, rt: *pf.Router, lv: *pf.Level, mask: u16) 
 }
 
 pub fn main(init: std.process.Init.Minimal) !void {
-    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
+    var gpa_state: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
     defer _ = gpa_state.deinit();
     const gpa = gpa_state.allocator();
 
@@ -431,9 +431,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         var bare = try drlg.generateActFull(&ctx, gpa, act, seed, .normal, .{ .raw_collision = true });
         const bare_ns = t.read();
         bare.deinit(gpa);
-        inline for (@typeInfo(drlg.prof.Phase).@"enum".fields) |f| {
-            const v = drlg.prof.get(@enumFromInt(f.value));
-            if (v != 0) print("    {s:<14}{d:7.1} ms\n", .{ f.name, @as(f64, @floatFromInt(v)) / 1e6 });
+        const phases = @typeInfo(drlg.prof.Phase).@"enum";
+        inline for (phases.field_names, phases.field_values) |name, value| {
+            const v = drlg.prof.get(@fromBackingInt(value));
+            if (v != 0) print("    {s:<14}{d:7.1} ms\n", .{ name, @as(f64, @floatFromInt(v)) / 1e6 });
         }
 
         t.reset();
@@ -709,7 +710,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     if (std.mem.eql(u8, nm, "Id")) idc = i;
                     for (0..8) |v| {
                         var buf: [8]u8 = undefined;
-                        const want = std.fmt.bufPrint(&buf, "Vis{d}", .{v}) catch continue;
+                        const want = std.mem.print(&buf, "Vis{d}", .{v}) catch continue;
                         if (std.mem.eql(u8, nm, want)) visc[v] = i;
                     }
                 }

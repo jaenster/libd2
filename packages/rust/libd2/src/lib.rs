@@ -91,7 +91,7 @@
 //! # Building
 //!
 //! The engine is Zig, built from source by this crate's build script and linked statically,
-//! so `zig` 0.16+ must be on PATH to build. Nothing is needed at run time.
+//! so `zig` 0.17+ must be on PATH to build. Nothing is needed at run time.
 
 #![warn(missing_docs)]
 

@@ -22,7 +22,7 @@ fn rotl(comptime T: type, x: T, n: u5) T {
 pub fn xsha1(data: []const u8) [20]u8 {
     std.debug.assert(data.len <= 64);
 
-    var block: [64]u8 = [_]u8{0} ** 64;
+    var block: [64]u8 = @splat(0);
     @memcpy(block[0..data.len], data);
 
     var w: [80]u32 = undefined;

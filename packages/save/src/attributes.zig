@@ -170,7 +170,7 @@ pub fn parseAttributes(d2s: []const u8) ?Attributes {
 }
 
 test "parseAttributes reads a .d2s gf stat bitfield" {
-    var d2s: [64]u8 = [_]u8{0} ** 64;
+    var d2s: [64]u8 = @splat(0);
     @memcpy(d2s[20..22], marker);
     var bw = BitWriter.init(d2s[22..]);
     const put = struct {

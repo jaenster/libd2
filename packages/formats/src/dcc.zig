@@ -331,8 +331,8 @@ fn decodeDirection(alloc: std.mem.Allocator, bytes: []const u8, bit_offset: usiz
 fn buildDirectionCells(cells: []Cell, dbox: Rect, h_cells: i32, v_cells: i32) void {
     const hc: usize = @intCast(h_cells);
     const vc: usize = @intCast(v_cells);
-    var widths = [_]i32{0} ** 1024;
-    var heights = [_]i32{0} ** 1024;
+    var widths: [1024]i32 = @splat(0);
+    var heights: [1024]i32 = @splat(0);
     if (hc == 1) {
         widths[0] = dbox.width;
     } else {

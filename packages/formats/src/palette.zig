@@ -51,7 +51,7 @@ pub const dir_endgame = "endgame";
 
 /// `data/global/palette/<dir>/pal.dat`, written into `buf`.
 pub fn datPath(buf: []u8, dir: []const u8) ![]const u8 {
-    return std.fmt.bufPrint(buf, "data/global/palette/{s}/pal.dat", .{dir});
+    return std.mem.print(buf, "data/global/palette/{s}/pal.dat", .{dir});
 }
 
 const testing = std.testing;

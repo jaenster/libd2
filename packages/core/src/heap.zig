@@ -57,7 +57,7 @@ else if (builtin.single_threaded)
 else
     std.heap.smp_allocator;
 
-const is_wasm = builtin.cpu.arch.isWasm() and builtin.os.tag == .freestanding;
+const is_wasm = builtin.target.cpu.arch.isWasm() and builtin.target.os.tag == .freestanding;
 
 /// What a heap is holding. `obtained` never falls (on wasm it cannot: `memory.grow` is one-way),
 /// so `obtained` is the footprint and `live` is how much of it is doing any work. A large

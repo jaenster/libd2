@@ -59,7 +59,7 @@ pub fn generate(
     var ctx = try realdrlg.Ctx.init(gpa);
     defer ctx.deinit();
 
-    const diff: realdrlg.Difficulty = @enumFromInt(@intFromEnum(difficulty));
+    const diff: realdrlg.Difficulty = @fromBackingInt(@backingInt(difficulty));
 
     // Placement rect from Levels.txt size at the origin (the level's own size),
     // mirroring d2-drlg's own collision path default of 64x64 when unknown.
@@ -72,7 +72,7 @@ pub fn generate(
         }
     }
 
-    const lvl = try realdrlg.generate(&ctx, seed, @enumFromInt(level_id), diff, .{ .x = 0, .y = 0, .w = w, .h = h });
+    const lvl = try realdrlg.generate(&ctx, seed, @fromBackingInt(level_id), diff, .{ .x = 0, .y = 0, .w = w, .h = h });
     defer lvl.deinit();
 
     var summary = LevelSummary{
@@ -150,8 +150,8 @@ fn warpTypeFor(ctx: *realdrlg.Ctx, level_id: u16, dest: u16) u8 {
     while (slot < 8) : (slot += 1) {
         var vname: [8]u8 = undefined;
         var wname: [8]u8 = undefined;
-        if (@as(u16, @intCast(@max(0, t.int(row, std.fmt.bufPrint(&vname, "Vis{d}", .{slot}) catch continue)))) != dest) continue;
-        const wtype = t.int(row, std.fmt.bufPrint(&wname, "Warp{d}", .{slot}) catch "");
+        if (@as(u16, @intCast(@max(0, t.int(row, std.mem.print(&vname, "Vis{d}", .{slot}) catch continue)))) != dest) continue;
+        const wtype = t.int(row, std.mem.print(&wname, "Warp{d}", .{slot}) catch "");
         return @intCast(@max(0, @min(255, wtype)));
     }
     return 0;
@@ -165,7 +165,7 @@ fn warpTypeFor(ctx: *realdrlg.Ctx, level_id: u16, dest: u16) u8 {
 /// the warp-type graphic is recovered from the Vis/Warp columns for real warp doors.
 pub fn warpTargets(ctx: *realdrlg.Ctx, gpa: std.mem.Allocator, seed: u32, diff: Difficulty, level_id: u16) ![]WarpTarget {
     const act_no: i32 = if (ctx.act.level(level_id)) |lv| @intCast(lv.act) else 0;
-    const rdiff: realdrlg.Difficulty = @enumFromInt(@intFromEnum(diff));
+    const rdiff: realdrlg.Difficulty = @fromBackingInt(@backingInt(diff));
     const adj = realdrlg.generateLevelAdjacents(ctx, gpa, act_no, seed, rdiff, level_id) catch return &.{};
     defer gpa.free(adj);
 
@@ -281,7 +281,7 @@ fn populateSingle(
     level_id: u16,
     difficulty: Difficulty,
 ) !Populated {
-    const diff: realdrlg.Difficulty = @enumFromInt(@intFromEnum(difficulty));
+    const diff: realdrlg.Difficulty = @fromBackingInt(@backingInt(difficulty));
 
     var w: i32 = 64;
     var h: i32 = 64;
@@ -292,7 +292,7 @@ fn populateSingle(
         }
     }
 
-    const lvl = try realdrlg.generate(ctx, seed, @enumFromInt(level_id), diff, .{ .x = 0, .y = 0, .w = w, .h = h });
+    const lvl = try realdrlg.generate(ctx, seed, @fromBackingInt(level_id), diff, .{ .x = 0, .y = 0, .w = w, .h = h });
     defer lvl.deinit();
 
     var summary = LevelSummary{
@@ -314,7 +314,7 @@ fn populateSingle(
 
     // Monster region roster for the whole seed (one shared region-seed stream over
     // all levels, as AllocMonsterRegion does); we index our level out of it.
-    const regions = try realdrlg.monpop.buildAllRegions(gpa, montbl, seed, @intCast(@intFromEnum(difficulty)));
+    const regions = try realdrlg.monpop.buildAllRegions(gpa, montbl, seed, @intCast(@backingInt(difficulty)));
     defer gpa.free(regions);
 
     var spawns: std.ArrayListUnmanaged(Spawn) = .empty;
@@ -322,7 +322,7 @@ fn populateSingle(
 
     const lm = montbl.levelMon(level_id);
     const has_region = lm != null and level_id < regions.len;
-    const is_not_normal = @intFromEnum(difficulty) != 0;
+    const is_not_normal = @backingInt(difficulty) != 0;
 
     var game_seed = realdrlg.abi.D2SeedStrc{ .nSeedLow = @bitCast(seed), .nSeedHigh = 0x29a };
     var rg: ?*realdrlg.monpop.Region = null;
@@ -490,7 +490,7 @@ pub const World = struct {
             .objtbl = try realdrlg.gen.objects.load(gpa),
             .seed = seed,
             .difficulty = difficulty,
-            .map = wd.World.init(gpa, seed, @enumFromInt(@intFromEnum(difficulty))),
+            .map = wd.World.init(gpa, seed, @fromBackingInt(@backingInt(difficulty))),
         };
     }
 
@@ -509,7 +509,7 @@ pub const World = struct {
 
     /// Levels.txt area monster level for a level at a difficulty (MonLvlNEx).
     pub fn monLvl(self: *World, level_id: u16, diff: Difficulty) i64 {
-        if (self.ctx.act.level(level_id)) |lv| return lv.monlvl[@intFromEnum(diff)];
+        if (self.ctx.act.level(level_id)) |lv| return lv.monlvl[@backingInt(diff)];
         return 0;
     }
 
@@ -573,7 +573,7 @@ pub const World = struct {
     /// (e.g. Mephisto Hell = MaxHP(H) = 1471). The engine rolls uniformly in [minHP,maxHP] and
     /// then applies the /players multiplier; with min==max the roll is a no-op.
     pub fn monMaxHp(self: *World, class_id: i32) i32 {
-        const d: usize = @intCast(@intFromEnum(self.difficulty));
+        const d: usize = @intCast(@backingInt(self.difficulty));
         if (self.montbl.stat(class_id)) |ms| return ms.max_hp[d];
         return 0;
     }
@@ -589,32 +589,32 @@ pub const World = struct {
     /// AREA monster level — pass World.monLvl(level_id, diff) (Levels.txt MonLvlEx) for the
     /// level the monster spawned in. no_ratio summons return their raw MonStats HP.
     pub fn monScaledHp(self: *World, class_id: i32, mon_level: i32) ?[2]i32 {
-        return self.montbl.scaledHp(class_id, mon_level, @intCast(@intFromEnum(self.difficulty)));
+        return self.montbl.scaledHp(class_id, mon_level, @intCast(@backingInt(self.difficulty)));
     }
 
     /// The MonLvl-scaled HP for a class using its MonStats Level column as the monster level
     /// (the non-champion default MONSTER_InitStats uses when no area override applies). This
     /// is the correct base HP for ordinary monsters and act bosses whose Level is fixed.
     pub fn monBaseScaledHp(self: *World, class_id: i32) ?[2]i32 {
-        const d: u2 = @intCast(@intFromEnum(self.difficulty));
+        const d: u2 = @intCast(@backingInt(self.difficulty));
         return self.montbl.scaledHp(class_id, self.montbl.monLevelDefault(class_id, d), d);
     }
 
     /// Deterministic final (non-<<8) HP a monster rolls off `seed` at `mon_level` and this
     /// world's difficulty, with `player_mult` = the /players multiplier (100 for 1 player).
     pub fn monRollHp(self: *World, class_id: i32, mon_level: i32, seed: *realdrlg.abi.D2SeedStrc, player_mult: i32) ?i32 {
-        return self.montbl.calcRolledHp(class_id, mon_level, @intCast(@intFromEnum(self.difficulty)), seed, player_mult);
+        return self.montbl.calcRolledHp(class_id, mon_level, @intCast(@backingInt(self.difficulty)), seed, player_mult);
     }
 
     /// MonStats resistances (phys/magic/fire/light/cold/poison percent) for a class at this
     /// world's difficulty. 100 = immune, negatives amplify. Straight from MonStats, no scaling.
     pub fn monResist(self: *World, class_id: i32) ?realdrlg.monpop.MonResist {
-        return self.montbl.resist(class_id, @intCast(@intFromEnum(self.difficulty)));
+        return self.montbl.resist(class_id, @intCast(@backingInt(self.difficulty)));
     }
 
     /// Levels.txt DrlgType for a level id (0 if unknown).
     fn drlgType(self: *World, level_id: u16) i32 {
-        if (self.ctx.act.level(level_id)) |lv| return @intFromEnum(lv.drlg_type);
+        if (self.ctx.act.level(level_id)) |lv| return @backingInt(lv.drlg_type);
         return 0;
     }
 
@@ -634,7 +634,7 @@ pub const World = struct {
         if (self.acts.get(act_no)) |ad| return ad;
         const ad = try self.gpa.create(ActData);
         errdefer self.gpa.destroy(ad);
-        const diff: realdrlg.Difficulty = @enumFromInt(@intFromEnum(self.difficulty));
+        const diff: realdrlg.Difficulty = @fromBackingInt(@backingInt(self.difficulty));
         // Whole-act room placement (world coords). Generates the act on a private fog pool
         // and returns owned copies.
         var rooms = try realdrlg.generateAct(&self.ctx, self.gpa, act_no, self.seed, diff);
@@ -708,11 +708,11 @@ pub const World = struct {
         const room_slice: []const realdrlg.RoomRect = if (lr) |x| x.rooms else &.{};
 
         // Monster roster for the whole seed; index this level's region out of it.
-        const regions = try realdrlg.monpop.buildAllRegions(gpa, &self.montbl, self.seed, @intCast(@intFromEnum(self.difficulty)));
+        const regions = try realdrlg.monpop.buildAllRegions(gpa, &self.montbl, self.seed, @intCast(@backingInt(self.difficulty)));
         defer gpa.free(regions);
         const lm = self.montbl.levelMon(level_id);
         const has_region = lm != null and level_id < regions.len;
-        const is_not_normal = @intFromEnum(self.difficulty) != 0;
+        const is_not_normal = @backingInt(self.difficulty) != 0;
         var game_seed = realdrlg.abi.D2SeedStrc{ .nSeedLow = @bitCast(self.seed), .nSeedHigh = 0x29a };
         var rg: ?*realdrlg.monpop.Region = null;
         if (has_region) {

@@ -188,7 +188,7 @@ pub fn generateActAutomap(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -199,7 +199,7 @@ pub fn generateActAutomap(
         }
     }
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -222,7 +222,7 @@ pub fn generateActAutomap(
         out.deinit(out_alloc);
     }
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         drlg.InitLevel(pLevel);
         const tlv = ctx.act.level(lid) orelse continue;
         const level_type: i32 = @intCast(tlv.lvl_type);
@@ -529,7 +529,7 @@ pub fn generateActTiles(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -540,7 +540,7 @@ pub fn generateActTiles(
         }
     }
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -585,7 +585,7 @@ pub fn generateActTiles(
     }
     if (dts.items.len == 0) return null;
 
-    const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(target_level_id));
+    const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(target_level_id));
     drlg.InitLevel(pLevel);
 
     // De-dup decoded tiles by (dtIndex, orient, main, sub). `palette` (768 B,G,R)
@@ -642,7 +642,7 @@ pub fn generateActTiles(
         }
     }.f;
 
-    const nLevelType: i32 = @intFromEnum(pLevel.nLevelType);
+    const nLevelType: i32 = @backingInt(pLevel.nLevelType);
     var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
     while (pr) |p| : (pr = p.pRoomExNext) {
         const pmap = roomPMap(p) orelse {
@@ -987,7 +987,7 @@ pub fn generateActTilesAll(
     defer act.deinit(ctx.gpa);
 
     var pDrlg: abi.D2DrlgStrc = undefined;
-    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(diff));
+    _ = drlg.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(diff));
 
     var ids: std.ArrayListUnmanaged(i32) = .empty;
     defer ids.deinit(out_alloc);
@@ -998,7 +998,7 @@ pub fn generateActTilesAll(
         }
     }
     for (ids.items) |lid| {
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -1114,9 +1114,9 @@ pub fn generateActTilesAll(
             if (dt1.parse(out_alloc, rec)) |cd| try cdts.append(out_alloc, cd) else |_| {}
         }
 
-        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         drlg.InitLevel(pLevel);
-        const nLevelType: i32 = @intFromEnum(pLevel.nLevelType);
+        const nLevelType: i32 = @backingInt(pLevel.nLevelType);
 
         var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
         while (pr) |p| : (pr = p.pRoomExNext) {

@@ -165,15 +165,15 @@ test "tiling restarts at a NUL, not at the end" {
 }
 
 test "a blob is a header plus whole blocks" {
-    try testing.expect(plausible(&[_]u8{0} ** (8 + 0x40)));
-    try testing.expect(plausible(&[_]u8{0} ** (8 + 0x80)));
-    try testing.expect(!plausible(&[_]u8{0} ** 8));
-    try testing.expect(!plausible(&[_]u8{0} ** (8 + 0x3f)));
+    try testing.expect(plausible(&@as([8 + 0x40]u8, @splat(0))));
+    try testing.expect(plausible(&@as([8 + 0x80]u8, @splat(0))));
+    try testing.expect(!plausible(&@as([8]u8, @splat(0))));
+    try testing.expect(!plausible(&@as([8 + 0x3f]u8, @splat(0))));
 }
 
 test "products name the members the installer writes" {
-    try testing.expectEqual(@as(u8, 24), @intFromEnum(Product.classic));
-    try testing.expectEqual(@as(u8, 25), @intFromEnum(Product.expansion));
+    try testing.expectEqual(@as(u8, 24), @backingInt(Product.classic));
+    try testing.expectEqual(@as(u8, 25), @backingInt(Product.expansion));
     try testing.expect(std.mem.endsWith(u8, Product.classic.member(), "wavindx.wav"));
     try testing.expect(std.mem.endsWith(u8, Product.expansion.member(), "amblxbow.cof"));
 }
@@ -255,7 +255,7 @@ test "the keystore hash matches the game, on a block that isolates the rounds" {
     // vector tests the rounds, the constants and the starting state and nothing else. Captured
     // from Bnclient.dll 1.09b under wine. A correct standard compression answers 92b404e5 here.
     var h: Hash = .{};
-    h.block(&[_]u8{0} ** 64);
+    h.block(&@as([64]u8, @splat(0)));
     try testing.expectEqualSlices(u8, &.{
         0xd4, 0x0b, 0xe5, 0x96, 0x94, 0xf9, 0xf4, 0x09, 0x96, 0xc1,
         0xa6, 0x7c, 0x60, 0x32, 0x41, 0xf3, 0xe3, 0x83, 0x9d, 0x0f,
@@ -286,7 +286,7 @@ test "the round shifts smear the sign rather than rotating" {
 test "the expansion carries no rotation" {
     // Reproduce the first expanded word by hand for an all-zero block plus one set word, and
     // check it against what a rotating expansion would have produced.
-    var data = [_]u8{0} ** 64;
+    var data: [64]u8 = @splat(0);
     std.mem.writeInt(u32, data[0..4], 1, .little); // w[0] = 1
     var w: [17]u32 = undefined;
     for (0..16) |i| w[i] = std.mem.readInt(u32, data[i * 4 ..][0..4], .little);

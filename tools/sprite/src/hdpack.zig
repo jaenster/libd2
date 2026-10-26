@@ -195,7 +195,7 @@ fn readIndexed(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !pngx.Index
 
 /// The manifest's key (hex, "" for none) against the one the PNG gives.
 fn keyAgrees(gpa: std.mem.Allocator, want: []const u8, got: u64, png: []const u8) !bool {
-    const have = if (got == 0) "" else try std.fmt.allocPrint(gpa, "{x:0>16}", .{got});
+    const have = if (got == 0) "" else try gpa.print("{x:0>16}", .{got});
     if (std.mem.eql(u8, want, have)) return true;
     std.debug.print("sprite: {s}: key {s}, the manifest says {s}\n", .{ png, have, want });
     return false;
@@ -299,7 +299,7 @@ test "a wall block cut from a 2x wall image is the block's own box, scaled" {
     const a = arena.allocator();
     // Two blocks; the second has art only in its right half, rows 4..27.
     var b0: [32 * 32]u8 = undefined;
-    var b1 = [_]u8{0} ** (32 * 32);
+    var b1: [32 * 32]u8 = @splat(0);
     for (&b0, 0..) |*p, i| p.* = @intCast(i % 31 + 1);
     for (4..28) |y| for (16..32) |x| {
         b1[y * 32 + x] = @intCast((x * 3 + y) % 200 + 40);
@@ -330,6 +330,6 @@ test "a wall block cut from a 2x wall image is the block's own box, scaled" {
         try std.testing.expectEqual(v +% @as(u8, @intCast((y % s) * 2 + x % s)), im.pixels[y * im.bw * s + x]);
     };
     // An empty block has no entry.
-    var empty = [_]u8{0} ** (64 * 32);
+    var empty: [64 * 32]u8 = @splat(0);
     try std.testing.expect(try blockImage(a, &empty, 64, 32, &empty, .{ .x = 32, .y = 0 }, 1) == null);
 }

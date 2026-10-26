@@ -79,7 +79,7 @@ fn walk(gpa: std.mem.Allocator, io: std.Io, game: []const u8, reveal: bool) !voi
 
     var seen: usize = 0;
     for (keystore.search_order) |name| {
-        const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ game, name });
+        const path = try gpa.print("{s}/{s}", .{ game, name });
         defer gpa.free(path);
         const bytes = readFile(gpa, io, path) catch continue;
         defer gpa.free(bytes);

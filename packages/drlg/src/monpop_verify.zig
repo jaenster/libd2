@@ -64,7 +64,7 @@ test "monpop position verify: Den of Evil leaders match the engine golden (seed 
     var ctx = try lib.Ctx.init(gpa);
     defer ctx.deinit();
     const level_id: i32 = 8;
-    const lvl = try lib.generate(&ctx, 1, @enumFromInt(level_id), .hell, .{ .x = 0, .y = 0, .w = 64, .h = 64 });
+    const lvl = try lib.generate(&ctx, 1, @fromBackingInt(level_id), .hell, .{ .x = 0, .y = 0, .w = 64, .h = 64 });
     defer lvl.deinit();
 
     var tbl = try monpop.Tables.load(gpa);

@@ -3,7 +3,7 @@ const std = @import("std");
 // d2-itemdraw: an item drawn as 1.14d draws it, the inventory icon, the hover tooltip and the two
 // together, into RGBA or PNG. The art comes from the caller (archives or loose files); the text from
 // d2-item over the d2-data tables.
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -42,9 +42,9 @@ pub fn build(b: *std.Build) void {
     // -Dupdate-golden rewrites testdata/itemdraw/ from what the code produces now, for review in the diff
     opts.addOption(bool, "update_golden", b.option(bool, "update-golden", "Rewrite the golden files instead of comparing") orelse false);
     // the repository's shared test data; lazy, so a package fetched as a dependency never needs it
-    const td = b.lazyDependency("libd2_testdata", .{});
-    opts.addOption([]const u8, "testdata", if (td) |d| d.path("itemdraw").getPath(b) else "");
-    if (td) |d| tests.root_module.addImport("libd2-testdata", d.module("libd2-testdata"));
+    const td = try b.dependencyLazy("libd2_testdata", .{});
+    opts.addOptionPathDirectory("testdata", td.path("itemdraw"));
+    tests.root_module.addImport("libd2-testdata", td.module("libd2-testdata"));
     tests.root_module.addOptions("build_options", opts);
     tests.root_module.addImport("d2-save", save);
     const run_tests = b.addRunArtifact(tests);
@@ -60,7 +60,7 @@ pub fn build(b: *std.Build) void {
     }) });
     fixtures.root_module.addOptions("build_options", opts);
     fixtures.root_module.addImport("d2-save", save);
-    if (td) |d| fixtures.root_module.addImport("libd2-testdata", d.module("libd2-testdata"));
+    fixtures.root_module.addImport("libd2-testdata", td.module("libd2-testdata"));
     const run_fixtures = b.addRunArtifact(fixtures);
     run_fixtures.has_side_effects = true;
     b.step("fixtures", "Write the binding fixtures to testdata/itemdraw/bindings").dependOn(&run_fixtures.step);
@@ -76,14 +76,14 @@ pub fn build(b: *std.Build) void {
         }) });
         b.installArtifact(exe);
         const run = b.addRunArtifact(exe);
-        if (b.args) |args| run.addArgs(args);
+        run.addPassthruArgs();
         b.step("run", "Draw the items of a save or record file to PNGs").dependOn(&run.step);
     }
 
     // The C ABI, as the other packages ship it: a module the combined wasm links, and native libs.
     const capi = b.option(bool, "capi", "Build the C-ABI shim (libs / wasm)") orelse true;
     if (capi) {
-        const capi_optimize = if (optimize == .Debug) .ReleaseFast else optimize;
+        const capi_optimize = if (optimize == .debug) .fast else optimize;
         _ = b.addModule("d2itemdraw-capi", .{
             .root_source_file = b.path("src/capi.zig"),
             .target = target,
@@ -94,14 +94,14 @@ pub fn build(b: *std.Build) void {
             const wasm = b.addExecutable(.{ .name = "d2itemdraw", .root_module = b.createModule(.{
                 .root_source_file = b.path("src/capi.zig"),
                 .target = target,
-                .optimize = if (b.args == null) .ReleaseSmall else optimize,
+                .optimize = .small,
                 .imports = imports,
             }) });
             wasm.entry = .disabled;
             wasm.rdynamic = true;
             b.installArtifact(wasm);
         } else {
-            for ([_]std.builtin.LinkMode{ .static, .dynamic }) |linkage| {
+            for ([_]std.lang.LinkMode{ .static, .dynamic }) |linkage| {
                 const lib = b.addLibrary(.{ .name = "d2itemdraw", .linkage = linkage, .root_module = b.createModule(.{
                     .root_source_file = b.path("src/capi.zig"),
                     .target = target,

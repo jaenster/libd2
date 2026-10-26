@@ -204,14 +204,14 @@ pub fn loadPalette(c: *Ctx) !Palette {
     const is_file = std.mem.endsWith(u8, spec, ".dat") and (Dir.cwd().statFile(c.io, spec, .{}) catch null) != null;
     if (is_file) {
         const bytes = try source.readFile(c.gpa, c.io, spec);
-        const pl2_path = try std.fmt.allocPrint(c.gpa, "{s}.pl2", .{spec[0 .. spec.len - 4]});
+        const pl2_path = try c.gpa.print("{s}.pl2", .{spec[0 .. spec.len - 4]});
         const pl2 = source.readFile(c.gpa, c.io, pl2_path) catch null;
         return Palette.fromBgr(try formats.palette.parseDat(bytes), pl2);
     }
     const s = try c.source_();
-    const dat = try std.fmt.allocPrint(c.gpa, "data/global/palette/{s}/pal.dat", .{spec});
+    const dat = try c.gpa.print("data/global/palette/{s}/pal.dat", .{spec});
     const bytes = s.read(c.gpa, dat) catch return fail("no palette '{s}' ({s})", .{ spec, dat });
-    const pl2_name = try std.fmt.allocPrint(c.gpa, "data/global/palette/{s}/pal.pl2", .{spec});
+    const pl2_name = try c.gpa.print("data/global/palette/{s}/pal.pl2", .{spec});
     const pl2 = s.read(c.gpa, pl2_name) catch null;
     return Palette.fromBgr(try formats.palette.parseDat(bytes), pl2);
 }

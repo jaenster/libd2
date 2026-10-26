@@ -44,7 +44,7 @@ const DIFF_SUFFIX = [3][]const u8{ "", " (N)", " (H)" };
 /// A row in the comptime-built table: the monster Id and its three difficulty bands.
 const MonPropRow = struct {
     id: []const u8,
-    /// Indexed by @intFromEnum(Difficulty): [normal, nightmare, hell].
+    /// Indexed by @backingInt(Difficulty): [normal, nightmare, hell].
     props: [3][]const MonPropEntry,
 };
 
@@ -145,7 +145,7 @@ const TABLE: []const MonPropRow = blk: {
 /// for this difficulty.  The returned slice is comptime-constant — no allocation.
 pub fn propsFor(monster_id: []const u8, diff: Difficulty) []const MonPropEntry {
     for (TABLE) |row| {
-        if (std.mem.eql(u8, row.id, monster_id)) return row.props[@intFromEnum(diff)];
+        if (std.mem.eql(u8, row.id, monster_id)) return row.props[@backingInt(diff)];
     }
     return &[_]MonPropEntry{};
 }

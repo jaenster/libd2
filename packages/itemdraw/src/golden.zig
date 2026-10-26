@@ -107,7 +107,7 @@ fn writeFile(io: std.Io, path: []const u8, bytes: []const u8) !void {
 }
 
 fn compareOrUpdate(io: std.Io, a: std.mem.Allocator, name: []const u8, got: []const u8) !void {
-    const path = try std.fmt.allocPrint(a, "{s}/{s}", .{ build_options.testdata, name });
+    const path = try a.print("{s}/{s}", .{ build_options.testdata, name });
     if (build_options.update_golden) return writeFile(io, path, got);
     const want = try readFile(io, a, path);
     if (!std.mem.eql(u8, want, got)) {
@@ -169,7 +169,7 @@ test "every item of the golden characters draws as frozen (needs -Dd2dir)" {
     var assets = itemdraw.Assets.init(gpa);
     defer assets.deinit();
     for ([_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" }) |m| {
-        const bytes = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}", .{ build_options.d2dir, m }));
+        const bytes = try readFile(io, a, try a.print("{s}/{s}", .{ build_options.d2dir, m }));
         try assets.addArchive(bytes);
     }
     const drawer = try itemdraw.Drawer.init(gpa, &assets, .{});
@@ -197,7 +197,7 @@ test "every item of the golden characters draws as frozen (needs -Dd2dir)" {
                 if (build_options.out.len != 0) {
                     const png = try itemdraw.png(gpa, &p);
                     defer gpa.free(png);
-                    try writeFile(io, try std.fmt.allocPrint(a, "{s}/{s}-{d:0>2}-{s}-{s}.png", .{ build_options.out, c.file, i, g.records[0].codeSlice(), k }), png);
+                    try writeFile(io, try a.print("{s}/{s}-{d:0>2}-{s}-{s}.png", .{ build_options.out, c.file, i, g.records[0].codeSlice(), k }), png);
                 }
             }
         }
@@ -244,16 +244,16 @@ test "the binding fixtures: records and the C ABI's text for them, written for t
         const g = gs[b.index];
         const neutral = try capiText(ctx, a, g.bytes, null);
         const seen = try capiText(ctx, a, g.bytes, &binding_viewer);
-        const base = try std.fmt.allocPrint(a, "{s}/bindings/{s}", .{ build_options.testdata, b.name });
-        try writeFile(io, try std.fmt.allocPrint(a, "{s}.items", .{base}), g.bytes);
-        try writeFile(io, try std.fmt.allocPrint(a, "{s}.txt", .{base}), neutral);
-        try writeFile(io, try std.fmt.allocPrint(a, "{s}.viewer.txt", .{base}), seen);
+        const base = try a.print("{s}/bindings/{s}", .{ build_options.testdata, b.name });
+        try writeFile(io, try a.print("{s}.items", .{base}), g.bytes);
+        try writeFile(io, try a.print("{s}.txt", .{base}), neutral);
+        try writeFile(io, try a.print("{s}.viewer.txt", .{base}), seen);
     }
 }
 
 fn archiveDrawer(gpa: std.mem.Allocator, a: std.mem.Allocator, io: std.Io, assets: *itemdraw.Assets) !*itemdraw.Drawer {
     for ([_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" }) |m| {
-        const bytes = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}", .{ build_options.d2dir, m }));
+        const bytes = try readFile(io, a, try a.print("{s}/{s}", .{ build_options.d2dir, m }));
         try assets.addArchive(bytes);
     }
     return itemdraw.Drawer.init(gpa, assets, .{});
@@ -277,7 +277,7 @@ test "the display lists of the binding items as JSON, and their text from the sa
         defer l.deinit();
         const js = try l.json(gpa);
         defer gpa.free(js);
-        try compareOrUpdate(io, a, try std.fmt.allocPrint(a, "layouts/{s}.json", .{b.name}), js);
+        try compareOrUpdate(io, a, try a.print("layouts/{s}.json", .{b.name}), js);
         // the alt text is the layout's lines, the same as the description read top down
         const t = try l.text(gpa, 0);
         defer gpa.free(t);
@@ -371,7 +371,7 @@ test "custom providers draw into the same layout at scale 2 and 4 (needs -Dd2dir
         if (build_options.out.len != 0) {
             const png = try itemdraw.png(gpa, &img);
             defer gpa.free(png);
-            try writeFile(io, try std.fmt.allocPrint(a, "{s}/custom-provider-x{d}.png", .{ build_options.out, scale }), png);
+            try writeFile(io, try a.print("{s}/custom-provider-x{d}.png", .{ build_options.out, scale }), png);
         }
     }
     // drawing does not touch the layout
@@ -401,7 +401,7 @@ test "the C ABI's layout, text and callback providers (needs -Dd2dir)" {
     const ctx = capi.d2itemdraw_create() orelse return error.NoContext;
     defer capi.d2itemdraw_destroy(ctx);
     for ([_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" }) |m| {
-        const bytes = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}", .{ build_options.d2dir, m }));
+        const bytes = try readFile(io, a, try a.print("{s}/{s}", .{ build_options.d2dir, m }));
         try std.testing.expectEqual(@as(i32, 0), capi.d2itemdraw_add_archive(ctx, bytes.ptr, bytes.len));
     }
     const g = (try groups(a, (try chars())[1].bytes))[20];
@@ -441,7 +441,7 @@ test "a padded glyph provider gets the cell plus its pad on every side (needs -D
     const ctx = capi.d2itemdraw_create() orelse return error.NoContext;
     defer capi.d2itemdraw_destroy(ctx);
     for ([_][]const u8{ "Patch_D2.mpq", "d2exp.mpq", "d2data.mpq" }) |m| {
-        const bytes = try readFile(io, a, try std.fmt.allocPrint(a, "{s}/{s}", .{ build_options.d2dir, m }));
+        const bytes = try readFile(io, a, try a.print("{s}/{s}", .{ build_options.d2dir, m }));
         _ = capi.d2itemdraw_add_archive(ctx, bytes.ptr, bytes.len);
     }
     const g = (try groups(a, (try chars())[1].bytes))[8];

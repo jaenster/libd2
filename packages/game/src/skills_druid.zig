@@ -20,8 +20,8 @@ pub fn shapeshiftAuraStat(skills: *const Skills, book: SkillBook, form_name: []c
     const id = skills.idByName(form_name) orelse return .{};
     var col_buf: [16]u8 = undefined;
     var calc_buf: [24]u8 = undefined;
-    const stat_col = std.fmt.bufPrint(&col_buf, "aurastat{d}", .{slot}) catch return .{};
-    const calc_col = std.fmt.bufPrint(&calc_buf, "aurastatcalc{d}", .{slot}) catch return .{};
+    const stat_col = std.mem.print(&col_buf, "aurastat{d}", .{slot}) catch return .{};
+    const calc_col = std.mem.print(&calc_buf, "aurastatcalc{d}", .{slot}) catch return .{};
     const row = skills.rowById(id) orelse return .{};
     const stat = skills.table.get(row, stat_col);
     if (stat.len == 0) return .{};

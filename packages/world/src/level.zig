@@ -536,7 +536,7 @@ const MASK = collision.Colmask.player_path;
 test "the tracer stops on the first blocking cell and reports it" {
     const alloc = std.testing.allocator;
     // Open 9x9 with a vertical wall at x = 4.
-    var cells = [_]u16{0} ** (9 * 9);
+    var cells: [9 * 9]u16 = @splat(0);
     for (0..9) |y| cells[y * 9 + 4] = collision.Colbit.wall;
     var lv = try Level.initBare(alloc, 9, 9, try alloc.dupe(u16, &cells));
     defer lv.deinit();
@@ -558,7 +558,7 @@ test "the tracer stops on the first blocking cell and reports it" {
 
 test "an open grid traces clear in every direction, and leaving it blocks" {
     const alloc = std.testing.allocator;
-    var open = [_]u16{0} ** (9 * 9);
+    var open: [9 * 9]u16 = @splat(0);
     var lv = try Level.initBare(alloc, 9, 9, try alloc.dupe(u16, &open));
     defer lv.deinit();
 
@@ -582,7 +582,7 @@ test "line of sight is direction-dependent, as it is in the engine" {
     // the other. TestCollision (0x64e260) has exactly this property, and the direction the server
     // uses is TARGET -> CASTER: SKILLS_HasLineOfSightToUnit (0x645950) puts the aim point in ptSrc
     // and the unit's own position in ptDest.
-    var cells = [_]u16{0} ** (9 * 9);
+    var cells: [9 * 9]u16 = @splat(0);
     cells[3 * 9 + 6] = collision.Colbit.wall;
     var lv = try Level.initBare(alloc, 9, 9, try alloc.dupe(u16, &cells));
     defer lv.deinit();
@@ -602,7 +602,7 @@ test "line of sight is direction-dependent, as it is in the engine" {
 
 test "a mask decides what a trace is stopped by" {
     const alloc = std.testing.allocator;
-    var cells = [_]u16{0} ** (9 * 9);
+    var cells: [9 * 9]u16 = @splat(0);
     cells[4 * 9 + 4] = collision.Colbit.object;
     var lv = try Level.initBare(alloc, 9, 9, try alloc.dupe(u16, &cells));
     defer lv.deinit();
@@ -623,7 +623,7 @@ test "a mask decides what a trace is stopped by" {
 
 test "freeCoordinates returns the spot itself when it is already free" {
     const alloc = std.testing.allocator;
-    var open = [_]u16{0} ** (11 * 11);
+    var open: [11 * 11]u16 = @splat(0);
     var lv = try Level.initBare(alloc, 11, 11, try alloc.dupe(u16, &open));
     defer lv.deinit();
     const got = lv.freeCoordinates(.{ .x = 5, .y = 5 }, .point, MASK, .{}).?;
@@ -636,7 +636,7 @@ test "freeCoordinates takes the best Manhattan cell of the first ring, not the f
     // Block the centre. In the 3x3 ring the four orthogonal neighbours are Manhattan 1 and the four
     // diagonals are 2; the scan meets a diagonal first, so returning it would prove we had copied a
     // first-hit search instead of the engine's.
-    var cells = [_]u16{0} ** (11 * 11);
+    var cells: [11 * 11]u16 = @splat(0);
     cells[5 * 11 + 5] = collision.Colbit.wall;
     var lv = try Level.initBare(alloc, 11, 11, try alloc.dupe(u16, &cells));
     defer lv.deinit();
@@ -648,7 +648,7 @@ test "freeCoordinates takes the best Manhattan cell of the first ring, not the f
 test "freeCoordinates spirals past a blocked ring and respects max_distance" {
     const alloc = std.testing.allocator;
     // Everything solid except one cell four to the left, so rings 1..3 are all blocked.
-    var cells = [_]u16{collision.Colbit.wall} ** (11 * 11);
+    var cells: [11 * 11]u16 = @splat(collision.Colbit.wall);
     cells[5 * 11 + 1] = 0;
     var lv = try Level.initBare(alloc, 11, 11, try alloc.dupe(u16, &cells));
     defer lv.deinit();
@@ -668,7 +668,7 @@ test "freeCoordinates honours the footprint the unit occupies" {
     const alloc = std.testing.allocator;
     // A one-subtile slot in a solid field: a point-sized unit fits, a cross does not (its arms
     // reach into the wall), so the two sizes must give different answers to the same request.
-    var cells = [_]u16{collision.Colbit.wall} ** (21 * 21);
+    var cells: [21 * 21]u16 = @splat(collision.Colbit.wall);
     cells[10 * 21 + 10] = 0;
     var lv = try Level.initBare(alloc, 21, 21, try alloc.dupe(u16, &cells));
     defer lv.deinit();
@@ -681,7 +681,7 @@ test "freeCoordinates honours the footprint the unit occupies" {
 
 test "a unit stamped on the level is seen by trace and by freeCoordinates alike" {
     const alloc = std.testing.allocator;
-    var open = [_]u16{0} ** (21 * 21);
+    var open: [21 * 21]u16 = @splat(0);
     var lv = try Level.initBare(alloc, 21, 21, try alloc.dupe(u16, &open));
     defer lv.deinit();
 
@@ -706,7 +706,7 @@ test "a unit stamped on the level is seen by trace and by freeCoordinates alike"
 
 test "stepUnit walks a unit and refuses geometry" {
     const alloc = std.testing.allocator;
-    var cells = [_]u16{0} ** (21 * 21);
+    var cells: [21 * 21]u16 = @splat(0);
     cells[10 * 21 + 14] = collision.Colbit.wall;
     var lv = try Level.initBare(alloc, 21, 21, try alloc.dupe(u16, &cells));
     defer lv.deinit();

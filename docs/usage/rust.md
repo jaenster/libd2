@@ -6,7 +6,7 @@ cargo add libd2
 
 The crate ships no binaries. A crate is source, and cargo already knows the target it is
 building for, so the build script compiles the engine for exactly that one and links it
-statically. That means `zig` 0.16+ has to be on PATH to build, and nothing at all is needed at
+statically. That means `zig` 0.17+ has to be on PATH to build, and nothing at all is needed at
 run time. Cross-compiling needs no extra toolchain:
 
 ```sh

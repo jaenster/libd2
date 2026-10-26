@@ -50,7 +50,7 @@ pub fn build(b: *std.Build) void {
         // the same name, so `libd2.module("d2-drlg")` keeps resolving for a dependent that wants
         // exactly one layer — the umbrella is the new front door, not a replacement.
         const mod = dep.module(e.mod);
-        b.modules.put(b.graph.arena, b.dupe(e.mod), mod) catch @panic("OOM");
+        b.modules.put(b.graph.arena, b.graph.dupeString(e.mod), mod) catch @panic("OOM");
         umbrella.addImport(e.mod, mod);
     }
 
@@ -64,7 +64,7 @@ pub fn build(b: *std.Build) void {
     b.step("test-umbrella", "Check the umbrella module resolves every package").dependOn(&b.addRunArtifact(umbrella_tests).step);
 
     for (packages) |name| {
-        const sub = b.addSystemCommand(&.{ "zig", "build", "test" });
+        const sub = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test" });
         sub.setCwd(b.path(b.fmt("packages/{s}", .{name})));
         sub.setName(b.fmt("test:{s}", .{name}));
 
@@ -77,22 +77,22 @@ pub fn build(b: *std.Build) void {
     // captured engine data. They run under `test` like everything else, but are worth a step of
     // their own: they are the gate a generation change has to clear, and the slowest thing here.
     const verify_step = b.step("verify", "Run the golden verification gates (drlg)");
-    const verify_sub = b.addSystemCommand(&.{ "zig", "build", "verify" });
+    const verify_sub = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "verify" });
     verify_sub.setCwd(b.path("packages/drlg"));
     verify_sub.setName("verify:drlg");
     verify_step.dependOn(&verify_sub.step);
 
     // The raw language bindings are generated from the C headers (tools/bindgen): `bindings` rewrites
     // them, `check-bindings` fails when a header or a capi.zig changed and they were not regenerated.
-    const root = b.path(".").getPath(b);
-    const gen = b.addSystemCommand(&.{ "zig", "build", "run", "--" });
+    const gen = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "run", "--" });
     gen.setCwd(b.path("tools/bindgen"));
-    gen.addArg(root);
+    gen.addDirectoryArg2(b.path("."), .{ .make_absolute = true });
     gen.setName("bindgen");
     b.step("bindings", "Regenerate the raw Rust, Go, .NET and TypeScript bindings").dependOn(&gen.step);
-    const check = b.addSystemCommand(&.{ "zig", "build", "run", "--" });
+    const check = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "run", "--" });
     check.setCwd(b.path("tools/bindgen"));
-    check.addArgs(&.{ root, "--check" });
+    check.addDirectoryArg2(b.path("."), .{ .make_absolute = true });
+    check.addArg("--check");
     check.setName("check-bindings");
     b.step("check-bindings", "Fail when the generated bindings are out of date").dependOn(&check.step);
 }

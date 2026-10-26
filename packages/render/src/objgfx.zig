@@ -80,7 +80,7 @@ pub fn loadObjects(alloc: std.mem.Allocator, txt: []const u8) !Objects {
         if (token.len == 0) continue;
         const id = std.fmt.parseInt(u32, std.mem.trim(u8, cols[2], " \t"), 10) catch continue;
 
-        var fc: [8]u32 = .{0} ** 8;
+        var fc: [8]u32 = @splat(0);
         for (0..8) |m| fc[m] = std.fmt.parseInt(u32, std.mem.trim(u8, cols[20 + m], " \t"), 10) catch 0;
 
         try rows.append(alloc, .{
@@ -136,7 +136,7 @@ pub fn composite(
     const tok_up = upperInto(&upper, token);
 
     // COF: objects/<TOK>/COF/<TOK><MODE><WCLASS>.cof
-    const cof_path = try std.fmt.allocPrint(alloc, "{s}/objects/{s}/COF/{s}{s}{s}.cof", .{ assets_dir, tok_up, tok_up, mode, wclass });
+    const cof_path = try alloc.print("{s}/objects/{s}/COF/{s}{s}{s}.cof", .{ assets_dir, tok_up, tok_up, mode, wclass });
     defer alloc.free(cof_path);
     const cof_bytes = readFile(alloc, cof_path) catch return error.CofNotFound;
     defer alloc.free(cof_bytes);
@@ -219,7 +219,7 @@ fn decodeLayer(
     dir: usize,
     frame: usize,
 ) !?LayerImg {
-    const comp_dir = try std.fmt.allocPrint(alloc, "{s}/objects/{s}/{s}", .{ assets_dir, tok_up, comp });
+    const comp_dir = try alloc.print("{s}/objects/{s}/{s}", .{ assets_dir, tok_up, comp });
     defer alloc.free(comp_dir);
 
     // Match <token><comp>*<mode><wclass> case-insensitively, e.g. "wptr" + ... + "nuhth".
@@ -227,8 +227,8 @@ fn decodeLayer(
     var pfx_buf: [32]u8 = undefined;
     var sfx_src: [32]u8 = undefined;
     var sfx_buf: [32]u8 = undefined;
-    const pfx = lowerInto(&pfx_buf, try std.fmt.bufPrint(&pfx_src, "{s}{s}", .{ token, comp }));
-    const sfx = lowerInto(&sfx_buf, try std.fmt.bufPrint(&sfx_src, "{s}{s}", .{ mode, wclass }));
+    const pfx = lowerInto(&pfx_buf, try std.mem.print(&pfx_src, "{s}{s}", .{ token, comp }));
+    const sfx = lowerInto(&sfx_buf, try std.mem.print(&sfx_src, "{s}{s}", .{ mode, wclass }));
 
     var threaded = std.Io.Threaded.init_single_threaded;
     const io = threaded.io();
@@ -255,7 +255,7 @@ fn decodeLayer(
     const cname = chosen orelse return error.LayerFileNotFound;
     defer alloc.free(cname);
 
-    const fpath = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ comp_dir, cname });
+    const fpath = try alloc.print("{s}/{s}", .{ comp_dir, cname });
     defer alloc.free(fpath);
     const bytes = try readFile(alloc, fpath);
     defer alloc.free(bytes);
@@ -331,7 +331,7 @@ test "layers drawn solid onto the canvas are the index composite mapped through 
     }
     defer for (layers) |l| gpa.free(l);
     // index space first, then the palette
-    var idx = [_]u8{0} ** (W * H);
+    var idx: [W * H]u8 = @splat(0);
     for (layers, pos) |l, p| for (0..@intCast(p[3])) |y| for (0..@intCast(p[2])) |x| {
         const v = l[y * @as(usize, @intCast(p[2])) + x];
         if (v != 0) idx[(@as(usize, @intCast(p[1])) + y) * W + @as(usize, @intCast(p[0])) + x] = v;

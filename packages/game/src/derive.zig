@@ -109,7 +109,7 @@ fn buildCharStats() [CLASS_NAME.len]CharStats {
 }
 
 pub fn charStats(class: Class) CharStats {
-    return CHAR_STATS[@intFromEnum(class)];
+    return CHAR_STATS[@backingInt(class)];
 }
 
 pub const Derived = struct {

@@ -1,6 +1,6 @@
 # Building libd2 from source
 
-Requires Zig `0.16.0`.
+Requires Zig `0.17.0`.
 
 ```sh
 zig build test            # run every package's test suite

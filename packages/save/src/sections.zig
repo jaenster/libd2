@@ -51,11 +51,11 @@ pub const ParseError = error{
 /// "Woo!" — the quest section. `head` is the 6-byte section header (06 00 00 00 2a 01 on every
 /// save seen); each difficulty gets a 96-byte block of per-quest flag words.
 pub const Quests = struct {
-    head: [6]u8 = [_]u8{0} ** 6,
-    blocks: [3][96]u8 = [_][96]u8{[_]u8{0} ** 96} ** 3,
+    head: [6]u8 = @splat(0),
+    blocks: [3][96]u8 = @splat(@splat(0)),
 
     pub fn block(self: *const Quests, diff: Difficulty) *const [96]u8 {
-        return &self.blocks[@intFromEnum(diff)];
+        return &self.blocks[@backingInt(diff)];
     }
 };
 
@@ -64,19 +64,19 @@ pub const Quests = struct {
 pub const Waypoints = struct {
     version: u32 = 0,
     size: u16 = 0,
-    blocks: [3][24]u8 = [_][24]u8{[_]u8{0} ** 24} ** 3,
+    blocks: [3][24]u8 = @splat(@splat(0)),
     tail: u8 = 0,
 
     /// True when waypoint `idx` (0..38, act order) is activated on `diff`.
     pub fn isSet(self: *const Waypoints, diff: Difficulty, idx: u6) bool {
         if (idx >= 39) return false;
-        const bits = self.blocks[@intFromEnum(diff)][2..7];
+        const bits = self.blocks[@backingInt(diff)][2..7];
         return bits[idx >> 3] & (@as(u8, 1) << @intCast(idx & 7)) != 0;
     }
 
     pub fn set(self: *Waypoints, diff: Difficulty, idx: u6, on: bool) void {
         if (idx >= 39) return;
-        const bits = self.blocks[@intFromEnum(diff)][2..7];
+        const bits = self.blocks[@backingInt(diff)][2..7];
         const mask = @as(u8, 1) << @intCast(idx & 7);
         if (on) bits[idx >> 3] |= mask else bits[idx >> 3] &= ~mask;
     }
@@ -84,13 +84,13 @@ pub const Waypoints = struct {
 
 /// "w4" — the NPC intro/greeting bitfields. Not field-decoded yet; carried verbatim.
 pub const Npcs = struct {
-    body: [npc_len - npc_marker.len]u8 = [_]u8{0} ** (npc_len - npc_marker.len),
+    body: [npc_len - npc_marker.len]u8 = @splat(0),
 };
 
 /// "if" — 30 skill levels in class-relative order (the class's first skill id is the header's
 /// class row in the engine's skill table).
 pub const Skills = struct {
-    levels: [skill_len - skill_marker.len]u8 = [_]u8{0} ** (skill_len - skill_marker.len),
+    levels: [skill_len - skill_marker.len]u8 = @splat(0),
 };
 
 /// The raw item tail: the player's "JM" list header onward, through the corpse, mercenary and

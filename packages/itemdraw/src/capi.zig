@@ -430,7 +430,7 @@ const Bridge = struct {
             .frame = s.ref.frame,
             .colormap_set = if (s.ref.colormap) |c| c.set else -1,
             .colormap_row = if (s.ref.colormap) |c| c.row else -1,
-            .role = @intFromEnum(s.ref.role),
+            .role = @backingInt(s.ref.role),
             .ethereal = @intFromBool(s.ethereal),
             .rect = .{ .x = s.rect.x, .y = s.rect.y, .w = s.rect.w, .h = s.rect.h },
         };

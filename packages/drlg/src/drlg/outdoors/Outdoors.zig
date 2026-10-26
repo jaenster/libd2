@@ -158,7 +158,7 @@ pub fn simplifyOutdoorPoints(pMemory: ?*s.D2PoolManagerStrc, ppHead: *?*s.D2Drlg
 pub fn createOutdoorRoomExGrid(pLevel: [*c]s.D2DrlgLevelStrc) void {
     const pData: *W = @ptrCast(@alignCast(pLevel.*.pDrlgLevelData.?));
     var outdoorRoomStyle: i32 = 0;
-    switch (@intFromEnum(pLevel.*.nLevelType)) {
+    switch (@backingInt(pLevel.*.nLevelType)) {
         2 => outdoorRoomStyle = 0x44103,
         0x10, 0x16, 0x1b, 0x1c => outdoorRoomStyle = 1,
         0x15 => outdoorRoomStyle = 4,

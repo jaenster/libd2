@@ -1,7 +1,7 @@
 .{
     .name = .libd2,
     .version = "0.6.5",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0x5edb35b5ed14bac1,
 
     // The root package re-exports each sub-package's public module so an EXTERNAL

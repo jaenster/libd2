@@ -37,14 +37,14 @@ too (see below); the umbrella is the surface, not the structure.
 
 ## build.zig.zon
 
-Add libd2 as a path dependency. In Zig 0.16 the `.path` must be **relative to
+Add libd2 as a path dependency. In Zig 0.17 the `.path` must be **relative to
 your build root** (absolute paths are rejected):
 
 ```zig
 .{
     .name = .my_project,
     .version = "0.0.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0x0, // zig prints the correct value on first build
 
     .dependencies = .{
@@ -79,7 +79,7 @@ const std = @import("std");
 const libd2 = @import("libd2");
 
 pub fn main() !void {
-    var dbg = std.heap.DebugAllocator(.{}).init;
+    var dbg: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
     defer _ = dbg.deinit();
     const alloc = dbg.allocator();
 
@@ -104,9 +104,16 @@ pub fn main() !void {
 Skills.txt rows=357, FireBolt mana=5
 ```
 
-## Zig 0.16 gotchas
+## Zig 0.17 gotchas
 
-- `std.heap.GeneralPurposeAllocator` is **gone** — use `std.heap.DebugAllocator(.{})`
-  or `std.testing.allocator` in tests.
-- `std.mem.trimRight` → `std.mem.trimEnd`.
+- `std.heap.DebugAllocator` is deprecated — use `std.heap.SafeAllocator`
+  (`.init(backing, .{})`; `deinit()` returns the leak count) or `std.testing.allocator` in tests.
+- `a ** n` is gone — an array of one repeated value is `@splat(value)` with the type on the
+  left: `var buf: [64]u8 = @splat(0);`.
+- `@intFromEnum`/`@enumFromInt` are deprecated for `@backingInt`/`@fromBackingInt`, and the
+  latter takes exactly the backing integer type: widen or narrow it with `@intCast` first.
+- `@typeInfo` containers are struct-of-arrays: `.field_names`/`.field_types`/`.field_values`,
+  `.decl_names`. `@hasDecl` only sees `pub` declarations.
+- `std.fmt.allocPrint(a, ...)` → `a.print(...)`; `std.fmt.bufPrint` → `std.mem.print`.
+- In build.zig, `if (b.args) |args| run.addArgs(args);` → `run.addPassthruArgs();`.
 - `.zon` path dependencies must be **relative** to the build root.

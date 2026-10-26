@@ -16,7 +16,7 @@ const hdpack = lib.hdpack;
 /// On Windows a failed safety check traps. The default handler prints a stack trace, which pulls
 /// std's PDB reader and some sixty ntdll imports into the archive, and a Debug or ReleaseSafe
 /// build would then no longer link into a mingw DLL. Release builds have no safety checks.
-pub const panic = if (builtin.os.tag == .windows) std.debug.no_panic else std.debug.FullPanic(std.debug.defaultPanic);
+pub const panic = if (builtin.target.os.tag == .windows) std.debug.no_panic else std.debug.FullPanic(std.debug.defaultPanic);
 
 /// Bumped on any incompatible change to d2util.h.
 const ABI_VERSION: i32 = 1;
@@ -208,7 +208,7 @@ test "argument errors" {
 }
 
 test "d2_frame_key agrees with lib.framekey" {
-    var px = [_]u8{0} ** (6 * 5);
+    var px: [6 * 5]u8 = @splat(0);
     px[1 * 6 + 2] = 5;
     px[3 * 6 + 4] = 6;
     var key: u64 = 1;
@@ -218,7 +218,7 @@ test "d2_frame_key agrees with lib.framekey" {
     try std.testing.expectEqual(want.key, key);
     try std.testing.expectEqual([4]i32{ 2, 1, 3, 3 }, box);
 
-    const z = [_]u8{0} ** 4;
+    const z: [4]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, 0), d2_frame_key(&z, 2, 2, 2, &key, &box));
     try std.testing.expectEqual(@as(u64, 0), key);
     try std.testing.expectEqual([4]i32{ 0, 0, 0, 0 }, box);

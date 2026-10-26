@@ -129,11 +129,11 @@ pub fn main() !void {
     var it = set.keyIterator();
     while (it.next()) |k| {
         const invfile = k.*;
-        const member = try std.fmt.allocPrintSentinel(gpa, "data\\global\\items\\{s}.dc6", .{invfile}, 0);
+        const member = try gpa.printSentinel("data\\global\\items\\{s}.dc6", .{invfile}, 0);
         defer gpa.free(member);
         if (readAny(mpqs.items, member.ptr)) |dc6| {
             defer gpa.free(dc6);
-            const out = try std.fmt.allocPrint(gpa, "assets/items/{s}.dc6", .{invfile});
+            const out = try gpa.print("assets/items/{s}.dc6", .{invfile});
             defer gpa.free(out);
             try cwd.writeFile(io, .{ .sub_path = out, .data = dc6 });
             ok += 1;

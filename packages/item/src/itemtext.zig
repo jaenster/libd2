@@ -209,7 +209,7 @@ pub const Describer = struct {
         } else if (!it.identified() and quality != .normal and quality != .low and quality != .superior) {
             // unidentified: the base name only
             color = .white;
-        } else switch (@intFromEnum(quality)) {
+        } else switch (@backingInt(quality)) {
             1 => {
                 const lq = self.t.low_quality_items.str(@min(it.file_index, 3), "Name");
                 name = try self.format(arena, 0x6b0, &.{ .{ .s = self.s.get(lq) }, .{ .s = base_name } });
@@ -267,7 +267,7 @@ pub const Describer = struct {
         var personalized: ?[]const u8 = null;
         if (it.ownerSlice().len != 0 and it.flags & wire.flag.BODYPART == 0) {
             personalized = try arena.dupe(u8, it.ownerSlice());
-            name = try std.fmt.allocPrint(arena, "{s}'s {s}", .{ personalized.?, name });
+            name = try arena.print("{s}'s {s}", .{ personalized.?, name });
         }
 
         // children
@@ -319,7 +319,7 @@ pub const Describer = struct {
         if (it.ethereal()) try lines.append(arena, .{ .text = trimLine(strings.byId(0x58d9) orelse "Ethereal (Cannot be Repaired)") });
         if (it.identified() or it.compact or quality == .normal) try self.propertyLines(arena, &lines, entries.items, opts, .blue);
         if (it.flags & wire.flag.SOCKETED != 0 and it.sockets > 0)
-            try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} ({d})", .{ trimLine(self.s.get("Socketable")), it.sockets }) });
+            try lines.append(arena, .{ .text = try arena.print("{s} ({d})", .{ trimLine(self.s.get("Socketable")), it.sockets }) });
 
         var bonus: std.ArrayListUnmanaged(Line) = .empty;
         for (&set_entries) |*se| try self.propertyLines(arena, &bonus, se.items, opts, .green);
@@ -485,7 +485,7 @@ pub const Describer = struct {
             const ed = sum(entries, 16);
             const flat = sum(entries, 31);
             const total = @divTrunc(base_ac * (100 + ed), 100) + flat;
-            try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d}", .{ self.s.get("ItemStats1h"), total }), .color = if (ed != 0 or flat != 0 or eth) .blue else .white });
+            try lines.append(arena, .{ .text = try arena.print("{s} {d}", .{ self.s.get("ItemStats1h"), total }), .color = if (ed != 0 or flat != 0 or eth) .blue else .white });
         }
         // INV_FormatDurabilityText 0x00484e90 skips throwing weapons
         const throwable = blk: {
@@ -498,9 +498,9 @@ pub const Describer = struct {
             const ofs = if (self.s.find("ItemStats1j")) |_| "of" else "of";
             // the maximum includes item_maxdurability_percent of the base (op 13)
             const shown_max = max_dur + @divTrunc(max_dur * sum(entries, 75), 100);
-            try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d} {s} {d}", .{ self.s.get("ItemStats1d"), cur_dur, ofs, shown_max }), .color = .white });
+            try lines.append(arena, .{ .text = try arena.print("{s} {d} {s} {d}", .{ self.s.get("ItemStats1d"), cur_dur, ofs, shown_max }), .color = .white });
         }
-        if (it.quantity > 0) try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d}", .{ self.s.get("ItemStats1i"), it.quantity }), .color = .white });
+        if (it.quantity > 0) try lines.append(arena, .{ .text = try arena.print("{s} {d}", .{ self.s.get("ItemStats1i"), it.quantity }), .color = .white });
 
         // requirements
         const req_pct = sum(entries, 91);
@@ -526,9 +526,9 @@ pub const Describer = struct {
                 rl = @max(rl, self.t.itemTable(kr.table).int(kr.row, "levelreq"));
             };
         }
-        if (rd > 0) try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d}", .{ self.s.get("ItemStats1f"), rd }), .color = .white });
-        if (rs > 0) try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d}", .{ self.s.get("ItemStats1e"), rs }), .color = .white });
-        if (rl > 1) try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d}", .{ self.s.get("ItemStats1p"), rl }), .color = .white });
+        if (rd > 0) try lines.append(arena, .{ .text = try arena.print("{s} {d}", .{ self.s.get("ItemStats1f"), rd }), .color = .white });
+        if (rs > 0) try lines.append(arena, .{ .text = try arena.print("{s} {d}", .{ self.s.get("ItemStats1e"), rs }), .color = .white });
+        if (rl > 1) try lines.append(arena, .{ .text = try arena.print("{s} {d}", .{ self.s.get("ItemStats1p"), rl }), .color = .white });
     }
 
     fn damageLine(self: *const Describer, arena: std.mem.Allocator, lines: *std.ArrayListUnmanaged(Line), key: []const u8, bmin: i64, bmax: i64, fmin: i32, fmax: i32, ed: i32, eth: bool, mod: bool) !void {
@@ -542,7 +542,7 @@ pub const Describer = struct {
         hi = @divTrunc(hi * (100 + ed), 100) + fmax;
         if (lo < 1) lo = 1;
         if (hi < lo) hi = lo;
-        try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "{s} {d} to {d}", .{ self.s.get(key), lo, hi }), .color = if (mod) .blue else .white });
+        try lines.append(arena, .{ .text = try arena.print("{s} {d} to {d}", .{ self.s.get(key), lo, hi }), .color = if (mod) .blue else .white });
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -640,7 +640,7 @@ pub const Describer = struct {
             consumed[li] = true;
             consumed[hi_i] = true;
             const ed = std.mem.trim(u8, strings.byId(0x2727) orelse "Enhanced Damage", " \r\n");
-            try pend.append(arena, .{ .prio = isc.int(self.iscRow(18).?, "descpriority"), .id = 17, .text = try std.fmt.allocPrint(arena, "{s}{d}% {s}", .{ if (entries[li].value >= 0) "+" else "", entries[li].value, ed }) });
+            try pend.append(arena, .{ .prio = isc.int(self.iscRow(18).?, "descpriority"), .id = 17, .text = try arena.print("{s}{d}% {s}", .{ if (entries[li].value >= 0) "+" else "", entries[li].value, ed }) });
         };
 
         // everything else, through the group columns when a complete equal group exists
@@ -740,17 +740,17 @@ pub const Describer = struct {
                 const cls: usize = @intCast(e.param);
                 if (cls >= 7) return null;
                 const t2 = self.s.get(self.char_stats.str(cls, "StrAllSkills"));
-                return try std.fmt.allocPrint(arena, "+{d} {s}", .{ v, trimLine(t2) });
+                return try arena.print("+{d} {s}", .{ v, trimLine(t2) });
             },
             14 => { // +N to <tab> skills (<class> only)
                 const cls: usize = e.param >> 3;
                 const tab: usize = e.param & 7;
                 if (cls >= 7 or tab > 2) return null;
                 var col_buf: [16]u8 = undefined;
-                const col = std.fmt.bufPrint(&col_buf, "StrSkillTab{d}", .{tab + 1}) catch unreachable;
+                const col = std.mem.print(&col_buf, "StrSkillTab{d}", .{tab + 1}) catch unreachable;
                 const tmpl = self.s.get(self.char_stats.str(cls, col));
                 const body = try cfmt(arena, tmpl, &.{.{ .i = v }});
-                return try std.fmt.allocPrint(arena, "{s} {s}", .{ trimLine(body), trimLine(self.classOnly(cls)) });
+                return try arena.print("{s} {s}", .{ trimLine(body), trimLine(self.classOnly(cls)) });
             },
             15 => { // chance to cast on event
                 const lvl: i64 = e.param & 63;
@@ -767,17 +767,17 @@ pub const Describer = struct {
                 const cur: i64 = v & 0xff;
                 const max: i64 = (v >> 8) & 0xff;
                 const lvl_word = trimLine(strings.byId(0x5301) orelse "Level");
-                return try std.fmt.allocPrint(arena, "{s} {d} {s} {s}", .{ lvl_word, lvl, sk, trimLine(try cfmt(arena, text, &.{ .{ .i = cur }, .{ .i = max } })) });
+                return try arena.print("{s} {d} {s} {s}", .{ lvl_word, lvl, sk, trimLine(try cfmt(arena, text, &.{ .{ .i = cur }, .{ .i = max } })) });
             },
             27 => { // +N to <skill> (<class> only)
                 const sk = self.skillName(e.param) orelse return null;
                 const cls = self.classOfSkill(e.param);
                 const only = if (cls) |c| self.classOnly(c) else "";
-                return try std.fmt.allocPrint(arena, "+{d} to {s} {s}", .{ v, sk, trimLine(only) });
+                return try arena.print("+{d} to {s} {s}", .{ v, sk, trimLine(only) });
             },
             28 => {
                 const sk = self.skillName(e.param) orelse return null;
-                return try std.fmt.allocPrint(arena, "+{d} to {s}", .{ v, sk });
+                return try arena.print("+{d} to {s}", .{ v, sk });
             },
             else => {},
         }
@@ -788,38 +788,38 @@ pub const Describer = struct {
         var tail_str2 = false;
         switch (func) {
             1, 6 => {
-                num = std.fmt.bufPrint(&num_buf, "{s}{d}", .{ if (v >= 0) "+" else "", v }) catch "";
+                num = std.mem.print(&num_buf, "{s}{d}", .{ if (v >= 0) "+" else "", v }) catch "";
                 tail_str2 = func == 6;
             },
-            12 => num = std.fmt.bufPrint(&num_buf, "{s}{d}", .{ if (v >= 0) "+" else "", v }) catch "",
+            12 => num = std.mem.print(&num_buf, "{s}{d}", .{ if (v >= 0) "+" else "", v }) catch "",
             2, 7 => {
-                num = std.fmt.bufPrint(&num_buf, "{d}%", .{v}) catch "";
+                num = std.mem.print(&num_buf, "{d}%", .{v}) catch "";
                 tail_str2 = func == 7;
             },
             3, 9 => {
-                num = std.fmt.bufPrint(&num_buf, "{d}", .{v}) catch "";
+                num = std.mem.print(&num_buf, "{d}", .{v}) catch "";
                 tail_str2 = func == 9;
             },
             4, 8 => {
-                num = std.fmt.bufPrint(&num_buf, "{s}{d}%", .{ if (v >= 0) "+" else "", v }) catch "";
+                num = std.mem.print(&num_buf, "{s}{d}%", .{ if (v >= 0) "+" else "", v }) catch "";
                 tail_str2 = func == 8;
             },
             5, 10 => {
                 const p = @divTrunc(v * 100, 128);
-                num = std.fmt.bufPrint(&num_buf, "{d}%", .{p}) catch "";
+                num = std.mem.print(&num_buf, "{d}%", .{p}) catch "";
                 tail_str2 = func == 10;
             },
             19 => return try cfmt(arena, text, &.{.{ .i = v }}),
-            20 => num = std.fmt.bufPrint(&num_buf, "{d}%", .{-v}) catch "",
+            20 => num = std.mem.print(&num_buf, "{d}%", .{-v}) catch "",
             21 => {
-                num = std.fmt.bufPrint(&num_buf, "{d}", .{-v}) catch "";
+                num = std.mem.print(&num_buf, "{d}", .{-v}) catch "";
                 tail_str2 = true;
             },
-            22 => num = std.fmt.bufPrint(&num_buf, "{d}%", .{v}) catch "",
-            23 => num = std.fmt.bufPrint(&num_buf, "{d}%", .{v}) catch "",
+            22 => num = std.mem.print(&num_buf, "{d}%", .{v}) catch "",
+            23 => num = std.mem.print(&num_buf, "{d}%", .{v}) catch "",
             11 => {
                 const secs: i32 = if (v != 0) @divTrunc(2500, v) else 0;
-                return try std.fmt.allocPrint(arena, "Repairs 1 Durability In {d} Seconds", .{@divTrunc(secs, 25)});
+                return try arena.print("Repairs 1 Durability In {d} Seconds", .{@divTrunc(secs, 25)});
             },
             else => return null,
         }

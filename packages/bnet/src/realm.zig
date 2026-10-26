@@ -35,14 +35,14 @@ const SID_CREATEACCOUNT2 = 0x3d;
 const SID_LOGONREALMEX = 0x3e;
 const SID_QUERYREALMS2 = 0x40;
 
-const MCP_STARTUP = @intFromEnum(mcp.Op.startup);
-const MCP_CHARCREATE = @intFromEnum(mcp.Op.charcreate);
-const MCP_CHARDELETE = @intFromEnum(mcp.Op.chardelete);
-const MCP_CREATEGAME = @intFromEnum(mcp.Op.creategame);
-const MCP_JOINGAME = @intFromEnum(mcp.Op.joingame);
-const MCP_CHARLOGON = @intFromEnum(mcp.Op.charlogon);
-const MCP_CHARLIST2 = @intFromEnum(mcp.Op.charlist2);
-const MCP_GAMELIST = @intFromEnum(mcp.Op.gamelist);
+const MCP_STARTUP = @backingInt(mcp.Op.startup);
+const MCP_CHARCREATE = @backingInt(mcp.Op.charcreate);
+const MCP_CHARDELETE = @backingInt(mcp.Op.chardelete);
+const MCP_CREATEGAME = @backingInt(mcp.Op.creategame);
+const MCP_JOINGAME = @backingInt(mcp.Op.joingame);
+const MCP_CHARLOGON = @backingInt(mcp.Op.charlogon);
+const MCP_CHARLIST2 = @backingInt(mcp.Op.charlist2);
+const MCP_GAMELIST = @backingInt(mcp.Op.gamelist);
 
 const CLIENT_TOKEN: u32 = 0xCAFEBABE;
 
@@ -270,7 +270,7 @@ pub fn Session(comptime T: type) type {
         fn say(self: *const Self, comptime fmt: []const u8, args: anytype) void {
             const sink = self.opts.log orelse return;
             var buf: [512]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, fmt, args) catch buf[0..buf.len];
+            const msg = std.mem.print(&buf, fmt, args) catch buf[0..buf.len];
             sink(msg);
         }
 
@@ -528,7 +528,7 @@ pub fn Session(comptime T: type) type {
             const ip4 = rr[16..20];
             const mport = std.mem.readInt(u16, rr[20..22], .big);
             var ipstr: [20]u8 = undefined;
-            const ipfmt = std.fmt.bufPrint(&ipstr, "{d}.{d}.{d}.{d}", .{ ip4[0], ip4[1], ip4[2], ip4[3] }) catch
+            const ipfmt = std.mem.print(&ipstr, "{d}.{d}.{d}.{d}", .{ ip4[0], ip4[1], ip4[2], ip4[3] }) catch
                 return Error.ShortReply;
             // Real bnet answers with the char server's PRIVATE (NATed) address, unreachable from
             // outside. Falling back to the host we dialled covers the case where the gateway
@@ -605,7 +605,7 @@ pub fn Session(comptime T: type) type {
             var mb: [1024]u8 = undefined;
             const ccr = try self.mcpRecv(MCP_CHARCREATE, &mb);
             const raw = if (ccr.len >= 4) std.mem.readInt(u32, ccr[0..4], .little) else 0xffffffff;
-            const res: CharCreateResult = @enumFromInt(raw);
+            const res: CharCreateResult = @fromBackingInt(raw);
             self.say("[MCP_CHARCREATE] \"{s}\" class={d} => {s}\n", .{ name, class, res.describe() });
             if (res.succeeded()) {
                 self.character = .{ .class = class, .expansion = expansion };
@@ -698,7 +698,7 @@ pub fn Session(comptime T: type) type {
         pub fn createGame(self: *Self, game: GameOptions) !CreateResult {
             var b: [256]u8 = undefined;
             std.mem.writeInt(u16, b[0..2], 1, .little); // request id
-            std.mem.writeInt(u32, b[2..6], @intFromEnum(game.difficulty), .little);
+            std.mem.writeInt(u32, b[2..6], @backingInt(game.difficulty), .little);
             b[6] = 1; // unknown, always 1
             b[7] = 0; // player difficulty
             b[8] = game.max_players;
@@ -712,7 +712,7 @@ pub fn Session(comptime T: type) type {
             try self.mcpSend(MCP_CREATEGAME, b[0..w]);
             var mb: [1024]u8 = undefined;
             const r = try self.mcpRecv(MCP_CREATEGAME, &mb);
-            const res: CreateResult = @enumFromInt(if (r.len >= 10) std.mem.readInt(u32, r[6..10], .little) else 0xffffffff);
+            const res: CreateResult = @fromBackingInt(if (r.len >= 10) std.mem.readInt(u32, r[6..10], .little) else 0xffffffff);
             self.say("[MCP_CREATEGAME] \"{s}\" => {s}\n", .{ game.name, res.describe() });
             return res;
         }
@@ -746,12 +746,12 @@ pub fn Session(comptime T: type) type {
             // server is too.
             const unspecified = std.mem.allEqual(u8, &ticket.gs_ip, 0);
             const host = if (unspecified)
-                std.fmt.bufPrint(&ticket.gs_host_buf, "{s}", .{self.gateway}) catch return Error.ShortReply
+                std.mem.print(&ticket.gs_host_buf, "{s}", .{self.gateway}) catch return Error.ShortReply
             else
-                std.fmt.bufPrint(&ticket.gs_host_buf, "{d}.{d}.{d}.{d}", .{ r[6], r[7], r[8], r[9] }) catch return Error.ShortReply;
+                std.mem.print(&ticket.gs_host_buf, "{d}.{d}.{d}.{d}", .{ r[6], r[7], r[8], r[9] }) catch return Error.ShortReply;
             ticket.gs_host_len = host.len;
 
-            const res: JoinResult = @enumFromInt(std.mem.readInt(u32, r[14..18], .little));
+            const res: JoinResult = @fromBackingInt(std.mem.readInt(u32, r[14..18], .little));
             self.say("[MCP_JOINGAME] token=0x{x} gs={s} => {s}\n", .{ ticket.token, ticket.gsHost(), res.describe() });
             if (!res.succeeded()) return Error.JoinFailed;
             return ticket;

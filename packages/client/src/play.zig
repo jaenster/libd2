@@ -114,7 +114,7 @@ pub const Actor = struct {
     /// Interact with a unit — open a door, take a waypoint, talk to an NPC, enter a portal.
     pub fn interact(_: *const Actor, unit_type: UnitType, guid: u32, out: []u8) []u8 {
         return clt.InteractWithEntity.encode(
-            .{ .unit_type = @intFromEnum(unit_type), .guid = guid },
+            .{ .unit_type = @backingInt(unit_type), .guid = guid },
             out,
         );
     }
@@ -122,7 +122,7 @@ pub const Actor = struct {
     /// Attack a unit with the left-hand skill.
     pub fn attack(_: *const Actor, unit_type: UnitType, guid: u32, out: []u8) []u8 {
         return clt.LeftSkillOnEntity.encode(
-            .{ .unit_type = @intFromEnum(unit_type), .unit_guid = guid },
+            .{ .unit_type = @backingInt(unit_type), .unit_guid = guid },
             out,
         );
     }
@@ -149,7 +149,7 @@ pub const Actor = struct {
     /// what a pickup wants: the item lands on the cursor and the caller decides where it goes.
     pub fn pickUp(_: *const Actor, guid: u32, out: []u8) []u8 {
         return (clt.InteractWithEntityEx{
-            .unit_type = @intFromEnum(UnitType.item),
+            .unit_type = @backingInt(UnitType.item),
             .target_guid = guid,
             .param = 0,
         }).encode(out);
@@ -183,7 +183,7 @@ test "a step is clamped per-axis, the way the server's gate measures" {
 test "moveToward emits a real command until it arrives, then stops" {
     var w = World.init(testing.allocator);
     defer w.deinit();
-    var mk = [_]u8{0} ** 26;
+    var mk: [26]u8 = @splat(0);
     mk[0] = 0x59;
     std.mem.writeInt(u32, mk[1..5], 0x10, .little);
     std.mem.writeInt(u16, mk[22..24], 1000, .little);
@@ -226,7 +226,7 @@ test "every action encodes to its own opcode and names the unit it means" {
     const grab = actor.pickUp(0x9abc, &buf);
     const decoded = try clt.InteractWithEntityEx.decode(grab);
     try testing.expectEqual(clt.InteractWithEntityEx.OPCODE, grab[0]);
-    try testing.expectEqual(@as(u32, @intFromEnum(UnitType.item)), decoded.unit_type);
+    try testing.expectEqual(@as(u32, @backingInt(UnitType.item)), decoded.unit_type);
     try testing.expectEqual(@as(u32, 0x9abc), decoded.target_guid);
 
     // A waypoint names two things: which stone we are standing at, and which level to go to.

@@ -307,7 +307,7 @@ pub const NearTileIndex = struct {
 };
 
 /// The engine's type-10 fallback entry: a real tile with an all-zero collision block.
-const zero_coll_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 0, .rarity = 1, .flags = [_]u8{0} ** 25 };
+const zero_coll_tile: dt1.Tile = .{ .orientation = 10, .main = 0, .sub = 0, .rarity = 1, .flags = @splat(0) };
 pub fn zeroCollisionTile() *const dt1.Tile {
     return &zero_coll_tile;
 }
@@ -624,7 +624,7 @@ fn processTile(nFlags_in: i32, pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nPar
                 // Barricade Snow) fall through — their orient-8/9 preset markers are
                 // real tower walls, processed as normal cells. Everywhere else:
                 // Preset::CreatesPresets — preset spawn, no base collision tile.
-                const lvl: i32 = @intFromEnum(pRoom.*.pLevel.?.eD2LevelId);
+                const lvl: i32 = @backingInt(pRoom.*.pLevel.?.eD2LevelId);
                 if (lvl < 0x6f or (lvl > 0x70 and lvl != 0x75)) {
                     g_ctx.markSpecial(nX, nY);
                     // Preset::CreatesPresets — the spawn is collision-neutral,
@@ -1073,7 +1073,7 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
     var drlg = std.mem.zeroes(s.D2DrlgStrc);
     var level = std.mem.zeroes(s.D2DrlgLevelStrc);
     level.pDrlg = win.real_drlg orelse &drlg;
-    level.eD2LevelId = @enumFromInt(win.level_id);
+    level.eD2LevelId = @fromBackingInt(win.level_id);
 
     var room = std.mem.zeroes(s.D2RoomExStrc);
     room.pLevel = &level;
@@ -1754,7 +1754,7 @@ pub fn materializeOutdoorFloorRoom(
     var drlg = std.mem.zeroes(s.D2DrlgStrc);
     var level = std.mem.zeroes(s.D2DrlgLevelStrc);
     level.pDrlg = &drlg;
-    level.eD2LevelId = @enumFromInt(level_id);
+    level.eD2LevelId = @fromBackingInt(level_id);
 
     var room = std.mem.zeroes(s.D2RoomExStrc);
     room.pLevel = &level;
@@ -1821,7 +1821,7 @@ pub fn materializeOutdoorFloorRoom(
         pg.*.pRoofTiles = @ptrCast(arr.ptr);
         pg.*.nRoofTilesMax = @intCast(n);
     }
-    const pDef = dtables.levelDefsGetLine(@enumFromInt(level_id));
+    const pDef = dtables.levelDefsGetLine(@fromBackingInt(level_id));
     if (nWaypointCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubWaypoint, 0, nWaypointCount);
     if (nShrineCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubShrine, 0, nShrineCount);
     applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, nSubType, nSubTheme, nSubThemePicked);
@@ -1964,7 +1964,7 @@ pub fn outdoorFloorRoomTiles(
     var drlg = std.mem.zeroes(s.D2DrlgStrc);
     var level = std.mem.zeroes(s.D2DrlgLevelStrc);
     level.pDrlg = &drlg;
-    level.eD2LevelId = @enumFromInt(level_id);
+    level.eD2LevelId = @fromBackingInt(level_id);
 
     var room = std.mem.zeroes(s.D2RoomExStrc);
     room.pLevel = &level;
@@ -2220,7 +2220,7 @@ test "materialize: InitRoomTiles reproduces collision.zig for several maze/prese
             w = @intCast(tlv.size_x);
             h = @intCast(tlv.size_y);
         }
-        const lvl = lib.generate(&ctx, seed, @enumFromInt(L.id), .normal, .{ .x = 0, .y = 0, .w = w, .h = h }) catch |e| {
+        const lvl = lib.generate(&ctx, seed, @fromBackingInt(L.id), .normal, .{ .x = 0, .y = 0, .w = w, .h = h }) catch |e| {
             vprint("[materialize] {s}: generate failed ({any})\n", .{ L.name, e });
             continue;
         };
@@ -2332,7 +2332,7 @@ fn blitInto(dst: *collision.CollisionGrid, src: *const collision.CollisionGrid, 
 /// grid. Runs inside the act's pool (rooms still live). Returns false to skip.
 fn checkWildernessLevel(a: std.mem.Allocator, ctx: *lib.Ctx, idx: *const dt1blob.Index, pLevel: *s.D2DrlgLevelStrc, level_id: i32, name: []const u8) !void {
     const tlv = ctx.act.level(level_id) orelse return;
-    const nLevelType: i32 = @intFromEnum(pLevel.nLevelType);
+    const nLevelType: i32 = @backingInt(pLevel.nLevelType);
     const lvlPos = pLevel.sCoordinatesAndSize.WorldPosition;
     const lw = pLevel.sCoordinatesAndSize.WorldSize.x;
     const lh = pLevel.sCoordinatesAndSize.WorldSize.y;
@@ -2481,7 +2481,7 @@ test "materialize: wilderness floor cells + preset borders → non-empty plausib
     defer act.deinit(a);
 
     var pDrlg: s.D2DrlgStrc = undefined;
-    _ = drlgmod.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @intFromEnum(lib.Difficulty.normal));
+    _ = drlgmod.allocDrlgActMisc(&pDrlg, 1, seed, .None, 0, @backingInt(lib.Difficulty.normal));
 
     // Act-I level ids.
     var ids: std.ArrayListUnmanaged(i32) = .empty;
@@ -2495,7 +2495,7 @@ test "materialize: wilderness floor cells + preset borders → non-empty plausib
 
     // Pass 1: real world coords before orths.
     for (ids.items) |lid| {
-        const pLevel = drlgmod.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlgmod.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         const c = act.coords(&ctx.act, lid);
         pLevel.sCoordinatesAndSize = .{
             .WorldPosition = .{ .x = c.x, .y = c.y },
@@ -2516,7 +2516,7 @@ test "materialize: wilderness floor cells + preset borders → non-empty plausib
     vprint("\n", .{});
     // Pass 2: generate every level (as generateAct); materialize the targets live.
     for (ids.items) |lid| {
-        const pLevel = drlgmod.GetLevelAndAlloc(&pDrlg, @enumFromInt(lid));
+        const pLevel = drlgmod.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
         drlgmod.InitLevel(pLevel);
         for (targets) |t| {
             if (t.id == lid) try checkWildernessLevel(a, &ctx, &idx, pLevel, lid, t.name);

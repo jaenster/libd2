@@ -45,10 +45,10 @@ inline fn roomData(pRoomEx: [*c]s.D2RoomExStrc) [*c]s.D2DrlgPresetRoomStrc {
     return @ptrCast(@alignCast(pRoomEx.*.pRoomExData));
 }
 pub inline fn getDef(pRoomEx: [*c]s.D2RoomExStrc) i32 {
-    return @intFromEnum(roomData(pRoomEx).*.nLevelPrest);
+    return @backingInt(roomData(pRoomEx).*.nLevelPrest);
 }
 pub inline fn setDef(pRoomEx: [*c]s.D2RoomExStrc, v: i32) void {
-    roomData(pRoomEx).*.nLevelPrest = @enumFromInt(v);
+    roomData(pRoomEx).*.nLevelPrest = @fromBackingInt(v);
 }
 pub inline fn getVariant(pRoomEx: [*c]s.D2RoomExStrc) i32 {
     return roomData(pRoomEx).*.nPickedFile;
@@ -532,7 +532,7 @@ pub fn ReplaceRoom(pDrlgReplaceRoom: [*c]s.D2DrlgReplaceRoomStrc, pLevel: [*c]s.
         @import("std").debug.print("PORT barracks_replace roomEx={d} seedLo=0x{x:0>8}\n", .{ pLevel.*.nRoomExCount, @as(u32, @bitCast(pLevel.*.sSeed.nSeedLow)) });
     }
     var pRoomEx: [*c]s.D2RoomExStrc = pLevel.*.pRoomExFirst;
-    const nDestPresetId = @intFromEnum(pDrlgReplaceRoom.*.nDestLevelPrestId);
+    const nDestPresetId = @backingInt(pDrlgReplaceRoom.*.nDestLevelPrestId);
     const nDestPickedFile = pDrlgReplaceRoom.*.nDestPickedFile;
     while (true) {
         if (pRoomEx == null) {
@@ -540,7 +540,7 @@ pub fn ReplaceRoom(pDrlgReplaceRoom: [*c]s.D2DrlgReplaceRoomStrc, pLevel: [*c]s.
             advanceRoll(pRoll);
             return;
         }
-        if (!hasMapDs1(pRoomEx) and getDef(pRoomEx) == @intFromEnum(pDrlgReplaceRoom.*.nSourceLevelPrestId)) {
+        if (!hasMapDs1(pRoomEx) and getDef(pRoomEx) == @backingInt(pDrlgReplaceRoom.*.nSourceLevelPrestId)) {
             setFlags(pRoomEx, getFlags(pRoomEx) | 2);
             setDef(pRoomEx, nDestPresetId);
             setVariant(pRoomEx, nDestPickedFile);
@@ -689,7 +689,7 @@ pub fn selectRandomPresetFile(nPresetFile: i32, pLevel: [*c]s.D2DrlgLevelStrc, p
     }
     const pLvlPrest = tables.lvlPrestGetLine(pDrlgMap.*.nNumber);
     const nFirstFile = pLvlPrest.*.Def; // *(int*)pState[2]
-    const nLevelType = @intFromEnum(pLevel.*.nLevelType);
+    const nLevelType = @backingInt(pLevel.*.nLevelType);
     if (nLevelType - 3 >= 0x21) return nLevelType - 3;
     const caseVal = gaMazeLevelTypeCaseTable[@intCast(nLevelType + 1)];
     const base = mazePresetBaseForCase(caseVal) orelse return 0;
@@ -962,7 +962,7 @@ pub fn RollArcaneTypePath(pLevel: [*c]s.D2DrlgLevelStrc) void {
     pLevel.*.sSeed = seedRoll;
 
     // 4 arms x 15 room slots (matches the engine's 60-pointer stack array).
-    var slots = [_][*c]s.D2RoomExStrc{null} ** 60;
+    var slots: [60][*c]s.D2RoomExStrc = @splat(null);
 
     var arm: i32 = 0;
     while (arm < 4) : (arm += 1) {

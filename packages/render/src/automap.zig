@@ -122,7 +122,7 @@ fn resolveLevelType(lvl_types: *const txt.Table, level_name: []const u8) ?i32 {
     if (act.len == 0 or rest.len == 0) return null;
 
     var buf: [64]u8 = undefined;
-    const want = std.fmt.bufPrint(&buf, "Act {s} - {s}", .{ act, rest }) catch return null;
+    const want = std.mem.print(&buf, "Act {s} - {s}", .{ act, rest }) catch return null;
 
     // Exact match first.
     var i: usize = 0;

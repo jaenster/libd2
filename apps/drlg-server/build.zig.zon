@@ -1,7 +1,7 @@
 .{
     .name = .d2_drlg_server,
     .version = "0.1.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0x21fa62ea9766a4f9,
 
     // Native speed-focused HTTP server that serves the DeadlyBossMods-shaped map JSON.

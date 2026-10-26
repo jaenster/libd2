@@ -140,11 +140,11 @@ const rogue_layout = [64]u8{
 const Placement = struct {
     seed: rng.Seed,
     nodes: []const Node,
-    coords: [MAX_NODES]Coords = [_]Coords{.{}} ** MAX_NODES,
-    initial_dir: [MAX_NODES]i32 = [_]i32{-1} ** MAX_NODES,
-    cur_dir: [MAX_NODES]i32 = [_]i32{-1} ** MAX_NODES,
-    flip: [MAX_NODES]i32 = [_]i32{-1} ** MAX_NODES, // aFlipState: rolled once, fixes cycle end
-    step: [MAX_NODES]i32 = [_]i32{-1} ** MAX_NODES, // aStepCounter: alternates 0/1 each re-dispatch
+    coords: [MAX_NODES]Coords = @splat(.{}),
+    initial_dir: [MAX_NODES]i32 = @splat(-1),
+    cur_dir: [MAX_NODES]i32 = @splat(-1),
+    flip: [MAX_NODES]i32 = @splat(-1), // aFlipState: rolled once, fixes cycle end
+    step: [MAX_NODES]i32 = @splat(-1), // aStepCounter: alternates 0/1 each re-dispatch
     cur: usize = 0,
 
     fn prevCoords(self: *Placement, node: usize) *Coords {
@@ -932,9 +932,9 @@ test "derived origins match the engine across all five acts (deep goldens)" {
     var tb = try tables.Tables.load(testing.allocator);
     defer tb.deinit();
 
-    var match = [_]usize{0} ** 5;
-    var total = [_]usize{0} ** 5;
-    var deferred = [_]usize{0} ** 5;
+    var match: [5]usize = @splat(0);
+    var total: [5]usize = @splat(0);
+    var deferred: [5]usize = @splat(0);
     var ok = true;
 
     for (deep_cases) |gc| {

@@ -89,7 +89,7 @@ pub fn Crypt(pLevel: [*c]s.D2DrlgLevelStrc) void {
     rr(pLevel, &gaDrlgCryptReplacements_A, &nRoll);
     if (pLevel.*.eD2LevelId == .Crypt) rr(pLevel, &gaDrlgCryptReplacements_B, &nRoll);
     if (pLevel.*.eD2LevelId == .Mausoleum or pLevel.*.eD2LevelId == .MatronsDen) rr(pLevel, &gaDrlgCryptReplacements_C, &nRoll);
-    if (!(0x14 < @intFromEnum(pLevel.*.eD2LevelId) and @intFromEnum(pLevel.*.eD2LevelId) < 0x19)) return;
+    if (!(0x14 < @backingInt(pLevel.*.eD2LevelId) and @backingInt(pLevel.*.eD2LevelId) < 0x19)) return;
     rr(pLevel, &gaDrlgCryptReplacements_D, &nRoll);
 }
 

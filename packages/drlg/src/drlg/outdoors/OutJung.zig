@@ -70,7 +70,7 @@ inline fn div32(v: i32) i32 {
 // gnOutJungPresetOffsetByLevel @0x6f2240 — reachable indices only (the function
 // returns for any other level id). Real ROM values.
 inline fn jungPresetOffset(nLevelId: eD2LevelId) i32 {
-    return switch (@intFromEnum(nLevelId)) {
+    return switch (@backingInt(nLevelId)) {
         0x4c => 0,
         0x4d => 10,
         0x4e => 20,
@@ -770,7 +770,7 @@ pub fn FixDrlgLevelForSpiderForest(pLevel: [*c]s.D2DrlgLevelStrc) [*c]s.D2DrlgLe
         {
             var lvl_i: i32 = 0;
             while (lvl_i < 3) : (lvl_i += 1) {
-                pSubLevelRet = drlg_mod.GetLevelAndAlloc(pDrlg, @enumFromInt(lvl_i + 0x4c));
+                pSubLevelRet = drlg_mod.GetLevelAndAlloc(pDrlg, @fromBackingInt(lvl_i + 0x4c));
                 pSubLevelRet.*.pAutomapEx = epdata[@intCast(lvl_i)];
                 pSubLevelRet.*.nUnknown_1B8 = @bitCast(enspec[@intCast(lvl_i)]);
                 pSubLevelRet.*.sCoordinatesAndSize.WorldPosition.x = ex[@intCast(lvl_i)];
@@ -794,7 +794,7 @@ pub fn FixDrlgLevelForSpiderForest(pLevel: [*c]s.D2DrlgLevelStrc) [*c]s.D2DrlgLe
 // are shifted by the per-jungle offset and assigned a seed-picked file variant.
 pub fn BuildJungle(pLevel: [*c]s.D2DrlgLevelStrc) void {
     const eLevelId = pLevel.*.eD2LevelId;
-    if (@as(u32, @bitCast(@intFromEnum(eLevelId) - @intFromEnum(LEVEL_SpiderForest))) >= 3) return;
+    if (@as(u32, @bitCast(@backingInt(eLevelId) - @backingInt(LEVEL_SpiderForest))) >= 3) return;
 
     // Binary 0x0067e983: seed draw happens BEFORE the null check at 0x0067e98a.
     const pDefs = tables.levelDefsGetLine(LEVEL_SpiderForest);
@@ -1133,17 +1133,17 @@ fn FixDrlgLevelForLowerKurast(pLevel: [*c]s.D2DrlgLevelStrc) [*c]s.D2DrlgLevelSt
 
     var nYOffset: i32 = 0;
     var pSubLevel: [*c]s.D2DrlgLevelStrc = null;
-    var eLevel: i32 = @intFromEnum(eD2LevelId.LowerKurast); // 0x4f
+    var eLevel: i32 = @backingInt(eD2LevelId.LowerKurast); // 0x4f
     var nSubLevelCount: i32 = 5;
     while (true) {
-        const pDefs = tables.levelDefsGetLine(@enumFromInt(eLevel));
+        const pDefs = tables.levelDefsGetLine(@fromBackingInt(eLevel));
         const szy: [3]i32 = pDefs.*.SizeY;
         const szx: [3]i32 = pDefs.*.SizeX;
         const nSubSizeY: i32 = szy[byDifficulty];
         const nSubSizeX: i32 = szx[byDifficulty];
         nYOffset -= nSubSizeY;
-        pSubLevel = drlg_mod.GetLevelAndAlloc(pDrlgActMisc, @enumFromInt(eLevel));
-        eLevel += @intFromEnum(eD2LevelId.RogueEncampment); // +1
+        pSubLevel = drlg_mod.GetLevelAndAlloc(pDrlgActMisc, @fromBackingInt(eLevel));
+        eLevel += @backingInt(eD2LevelId.RogueEncampment); // +1
         pSubLevel.*.sCoordinatesAndSize.WorldPosition.x =
             (@divTrunc(nParentSizeX, 2) - @divTrunc(nSubSizeX, 2)) + parentX;
         pSubLevel.*.sCoordinatesAndSize.WorldPosition.y = parentY + nYOffset;

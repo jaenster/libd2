@@ -29,11 +29,11 @@ const lib = @import("lib.zig");
 /// Peak resident set size in bytes. `ru_maxrss` is BYTES on Darwin and KIBIBYTES on Linux and the
 /// BSDs — getting that wrong puts the budget out by 1024x, so it is converted here, once.
 pub fn peakRssBytes() ?u64 {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.cpu.arch.isWasm()) return null;
+    if (builtin.target.os.tag == .windows or builtin.target.os.tag == .wasi or builtin.target.cpu.arch.isWasm()) return null;
     const ru = std.posix.getrusage(std.posix.rusage.SELF);
     if (ru.maxrss <= 0) return null;
     const raw: u64 = @intCast(ru.maxrss);
-    return if (builtin.os.tag.isDarwin()) raw else raw * 1024;
+    return if (builtin.target.os.tag.isDarwin()) raw else raw * 1024;
 }
 
 /// Growth allowed across the measured batch. Post-warm-up growth is a few MB of DS1 cache for
@@ -124,8 +124,8 @@ pub fn run(gpa: std.mem.Allocator, acts: usize, traced: bool) u8 {
     // an allocator-visible leak and the RSS growth no allocator can see. `--traced` is the same
     // allocator with `std.testing.allocator`'s 10-frame capture, which is what made act generation
     // cost ~85 MB per act; it exists so this check can be demonstrated to fail.
-    var plain: std.heap.DebugAllocator(.{ .stack_trace_frames = 0 }) = .init;
-    var stacky: std.heap.DebugAllocator(.{ .stack_trace_frames = 10, .resize_stack_traces = true }) = .init;
+    var plain: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{ .stack_trace_frames = 0 });
+    var stacky: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{ .stack_trace_frames = 10 });
     const out = if (traced) stacky.allocator() else plain.allocator();
 
     std.debug.print("memcheck: {d}-act batches{s}\n", .{ acts, if (traced) " (--traced: stack-trace-capturing allocator)" else "" });
@@ -133,7 +133,7 @@ pub fn run(gpa: std.mem.Allocator, acts: usize, traced: bool) u8 {
     if (!checkPath(&ctx, out, .act_full, acts)) ok = false;
 
     const leaked = if (traced) stacky.deinit() else plain.deinit();
-    if (leaked == .leak) {
+    if (leaked != 0) {
         std.debug.print("memcheck: FAIL — the generation allocator reports surviving allocations\n", .{});
         ok = false;
     }

@@ -106,7 +106,7 @@ pub fn hashString(name: []const u8, ty: HashType) u32 {
     var s2: u32 = 0xEEEE_EEEE;
     for (name) |raw| {
         const c: u32 = normalize(raw);
-        s1 = crypt_table[(@intFromEnum(ty) << 8) + c] ^ (s1 +% s2);
+        s1 = crypt_table[(@backingInt(ty) << 8) + c] ^ (s1 +% s2);
         s2 = c +% s1 +% s2 +% (s2 << 5) +% 3;
     }
     return s1;
@@ -941,7 +941,7 @@ test "archive: an appended header is found at its 512-byte boundary" {
 
 test "archive: rejects bytes that are not an archive" {
     const gpa = testing.allocator;
-    try testing.expectError(Error.NotAnArchive, Archive.open(gpa, &[_]u8{0} ** 64));
+    try testing.expectError(Error.NotAnArchive, Archive.open(gpa, &@as([64]u8, @splat(0))));
     try testing.expectError(Error.NotAnArchive, Archive.open(gpa, "MPQ"));
     try testing.expectError(Error.Truncated, Header.parse("MPQ\x1a"));
 }

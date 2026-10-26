@@ -23,7 +23,7 @@ pub const RESIST_PENALTY = blk: {
 
 /// The all-resist penalty subtracted from a character's summed resist at this difficulty.
 pub fn resistPenalty(diff: Difficulty) i32 {
-    return RESIST_PENALTY[@intFromEnum(diff)];
+    return RESIST_PENALTY[@backingInt(diff)];
 }
 
 /// DifficultyLevels.txt StaticFieldMin per difficulty (Normal 0 / Nightmare 33 / Hell 50) — the
@@ -42,7 +42,7 @@ pub const STATIC_FIELD_MIN = blk: {
 /// The Static Field life floor (% of max life) at this difficulty — Static Field won't take a
 /// monster below `staticFieldMin(diff)`% of its max life.
 pub fn staticFieldMin(diff: Difficulty) i32 {
-    return STATIC_FIELD_MIN[@intFromEnum(diff)];
+    return STATIC_FIELD_MIN[@backingInt(diff)];
 }
 
 /// DifficultyLevels.txt Life/Mana-StealDivisor (Normal 1 / Nightmare 2 / Hell 3): life & mana leech
@@ -62,10 +62,10 @@ fn stealDivisor(comptime col: []const u8) [3]i32 {
 }
 
 pub fn lifeStealDivisor(diff: Difficulty) i32 {
-    return LIFE_STEAL_DIVISOR[@intFromEnum(diff)];
+    return LIFE_STEAL_DIVISOR[@backingInt(diff)];
 }
 pub fn manaStealDivisor(diff: Difficulty) i32 {
-    return MANA_STEAL_DIVISOR[@intFromEnum(diff)];
+    return MANA_STEAL_DIVISOR[@backingInt(diff)];
 }
 
 const testing = std.testing;
