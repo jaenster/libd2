@@ -1596,6 +1596,34 @@ fn applySubTileFloor(
             }
         }
     }
+    copyPresetUnitsFromSubTxt(pRoom, baseX, baseY, pSubstGroup, pSubTxt);
+}
+
+// DRLGOUTDOOR_CopyPresetUnitsFromSubTxt (1.14d 0x66fa10), the tail of ApplyLvlSubTileData:
+// every preset unit of the sub DS1 that lies strictly inside the placed group's box becomes a
+// preset unit of the room, at its offset in the box plus the placement base, in room-relative
+// subtiles. This is how an outdoor waypoint (and a shrine or well) gets onto its room.
+fn copyPresetUnitsFromSubTxt(
+    pRoom: *s.D2RoomExStrc,
+    baseX: i32,
+    baseY: i32,
+    pSubstGroup: *const s.D2DrlgSubstGroupStrc,
+    pSubTxt: *dtables.D2LvlSubTxt,
+) void {
+    const pFile = pSubTxt.pDrlgFile orelse return;
+    const roomX = baseX * SUBTILES;
+    const roomY = baseY * SUBTILES;
+    const rectX = pSubstGroup.tBox.nPosX * SUBTILES;
+    const rectY = pSubstGroup.tBox.nPosY * SUBTILES;
+    const rectW = pSubstGroup.tBox.nWidth * SUBTILES;
+    const rectH = pSubstGroup.tBox.nHeight * SUBTILES;
+    var pUnit: ?*s.D2PresetUnitStrc = pFile.pPresetUnit;
+    while (pUnit) |u| : (pUnit = u.pPresetUnitNext) {
+        if (u.nPosX <= rectX or u.nPosY <= rectY) continue;
+        if (u.nPosX >= rectW + rectX or u.nPosY >= rectH + rectY) continue;
+        const pNew = DrlgRoom.AllocPresetUnit(pRoom, null, u.eType, u.nClassId, u.nMode, u.nPosX - rectX + roomX, u.nPosY - rectY + roomY);
+        pNew.*.nDbmCode = u.nDbmCode;
+    }
 }
 
 // DoNotCheckAll (1.14d 0x670170): seeded sub-tile placement — picks a random substitution
@@ -1742,6 +1770,7 @@ pub fn materializeOutdoorFloorRoom(
     nWaypointCount: i32,
     nShrineCount: i32,
     near: ?NearRooms,
+    preset_room: ?*s.D2RoomExStrc,
 ) !MaterializeResult {
     const ar = roomScratch(&scratch_outdoor_room);
 
@@ -1825,6 +1854,20 @@ pub fn materializeOutdoorFloorRoom(
     if (nWaypointCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubWaypoint, 0, nWaypointCount);
     if (nShrineCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubShrine, 0, nShrineCount);
     applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, nSubType, nSubTheme, nSubThemePicked);
+    // The sub passes gave the room its preset units (CopyPresetUnitsFromSubTxt). This room is
+    // a stand-in for the generated one, so hand them to that room, where the engine has them;
+    // with no room to hand them to, give the memory back.
+    {
+        var pUnit: ?*s.D2PresetUnitStrc = room.pPresetUnit;
+        room.pPresetUnit = null;
+        while (pUnit) |u| {
+            pUnit = u.pPresetUnitNext;
+            if (preset_room) |pr| {
+                u.pPresetUnitNext = pr.pPresetUnit;
+                pr.pPresetUnit = u;
+            } else dpool.FreeServerMemory(null, u, null, 0, 0);
+        }
+    }
 
     // OR the level-type fill flag into cells with no terrain bits (OrFlag / op 0).
     const nGridFlag = outdoorFillFlag(nLevelType, level_id);
@@ -2404,10 +2447,10 @@ fn checkWildernessLevel(a: std.mem.Allocator, ctx: *lib.Ctx, idx: *const dt1blob
             preset_rooms += 1;
         } else if (p.eRoomExFlags.noLos) {
             // FLOOR cell — the M2b path. Baseline (no overlay) + overlay pass.
-            var rb = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, null, -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), null) catch continue;
+            var rb = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, null, -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), null, null) catch continue;
             defer rb.deinit(a);
             blitInto(&level_base, &rb.coll, ox, oy);
-            var rc = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, outdoorOverlayFor(pLevel, p), -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), null) catch continue;
+            var rc = materializeOutdoorFloorRoom(a, dts.items, p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, level_id, p.nSeed, outdoorOverlayFor(pLevel, p), -1, 0, 0, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), null, null) catch continue;
             defer rc.deinit(a);
             floor_tiles += @intCast(rc.n_floors);
             blitInto(&level_over, &rc.coll, ox, oy);

@@ -551,8 +551,6 @@ fn collectLevelFull(
     const lpos = pLevel.sCoordinatesAndSize.WorldPosition;
     const lsize = pLevel.sCoordinatesAndSize.WorldSize;
 
-    const presets = try out_alloc.dupe(PresetUnit, try collectLevelPresets(sa, pLevel));
-    errdefer out_alloc.free(presets);
     const adjacents = try out_alloc.dupe(LevelAdjacent, try collectLevelAdjacents(sa, pLevel));
     errdefer out_alloc.free(adjacents);
     prof.end(.collect, t_collect);
@@ -560,6 +558,13 @@ fn collectLevelFull(
     const coll = try deflateLevelColl(out_alloc, sa, raw_alloc, ctx, idx, pLevel, lid, deflate_fn, want_walk);
     errdefer if (coll.deflated.len != 0) out_alloc.free(coll.deflated);
     errdefer if (coll.walk_deflated.len != 0) out_alloc.free(coll.walk_deflated);
+
+    // After the rooms are materialized: that is when an outdoor room takes the preset units
+    // of its LvlSub files (the waypoint), as the engine's room build does.
+    const t_presets = prof.begin();
+    const presets = try out_alloc.dupe(PresetUnit, try collectLevelPresets(sa, pLevel));
+    errdefer out_alloc.free(presets);
+    prof.end(.collect, t_presets);
 
     return .{
         .meta = .{
@@ -1883,6 +1888,8 @@ fn buildLevelRoomColl(
                     }
                     break :t .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
                 };
+                // The live room takes the preset units its sub files carry (the outdoor
+                // waypoint); a level built a second time keeps the first set.
                 var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), .{
                         .index = &near_tiles,
                         .alloc = out_alloc,
@@ -1890,7 +1897,7 @@ fn buildLevelRoomColl(
                         .wy = p.sCoords.WorldPosition.y,
                         .w = p.sCoords.WorldSize.x,
                         .h = p.sCoords.WorldSize.y,
-                    }) catch continue;
+                    }, if (p.pPresetUnit == null) p else null) catch continue;
                 defer mr.deinit(out_alloc);
                 break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
             } else continue;
@@ -2930,8 +2937,17 @@ pub fn generateLevelPresets(
     var result: []PresetUnit = &.{};
     for (ids.items) |lid| {
         const pLevel = drlg.GetLevelAndAlloc(&pDrlg, @fromBackingInt(lid));
-        drlg.InitLevel(pLevel);
-        if (lid == level_id) result = try collectLevelPresets(out_alloc, pLevel);
+        // Guarded as in generateActFull: building a level's rooms can init its warp
+        // destinations early, and a second InitLevel would regenerate them.
+        if (pLevel.pRoomExFirst == null) drlg.InitLevel(pLevel);
+        if (lid == level_id) {
+            // Build the level's rooms first: an outdoor room takes the preset units of its
+            // LvlSub files (the waypoint) only when it is materialized.
+            var arena = std.heap.ArenaAllocator.init(ctx.gpa);
+            defer arena.deinit();
+            _ = try materializeLevelColl(arena.allocator(), ctx, dt1Index(), pLevel, lid);
+            result = try collectLevelPresets(out_alloc, pLevel);
+        }
     }
     return result;
 }
@@ -3019,6 +3035,23 @@ fn collectLevelPresets(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelStr
     try appendOutdoorShrines(pLevel, &shrines, out_alloc);
     for (shrines.items) |sh|
         try Emit.add(out_alloc, &out, &seen, 2, sh.class_id, sh.x - ox, sh.y - oy, bw, bh);
+
+    // Preset units an outdoor room took from its LvlSub files (CopyPresetUnitsFromSubTxt,
+    // run when the room is materialized): the outdoor waypoint. Room-relative subtiles, as
+    // FindWaypointRoomAndCoords reads them (pos/5 + room position).
+    pr = pLevel.pRoomExFirst;
+    while (pr) |p| : (pr = p.pRoomExNext) {
+        if (roomPMap(p) != null) continue;
+        const rx = p.sCoords.WorldPosition.x * SUB - ox;
+        const ry = p.sCoords.WorldPosition.y * SUB - oy;
+        var pu: ?*abi.D2PresetUnitStrc = p.pPresetUnit;
+        while (pu) |u| : (pu = u.pPresetUnitNext) {
+            const et: i32 = u.eType;
+            if (et != 1 and et != 2) continue;
+            const code: i32 = if (et == 1 and u.nDbmCode >= 0) u.nDbmCode else u.nClassId;
+            try Emit.add(out_alloc, &out, &seen, et, code, rx + u.nPosX, ry + u.nPosY, bw, bh);
+        }
+    }
 
     return out.toOwnedSlice(out_alloc);
 }
@@ -3398,6 +3431,55 @@ test "lib: Cold Plains adjacents reproduce the DBM cross-seam bridge staircase" 
     }
     try std.testing.expectEqual(@as(usize, 1), stony_at_260);
     try std.testing.expectEqual(@as(usize, 3), stony_at_60);
+}
+
+// The outdoor waypoints of Acts I and II come from the waypoint LvlSub file placed into a room
+// by InitGridCells, not from a LvlPrest map, so they only exist once the room is materialized
+// (CopyPresetUnitsFromSubTxt). Positions are level-local subtiles, the frame of every preset.
+const OutdoorWaypoint = struct { level: i32, class: i32, x: i32, y: i32 };
+const outdoor_waypoints_4294967295 = [_]OutdoorWaypoint{
+    .{ .level = 3, .class = 119, .x = 114, .y = 349 }, // Cold Plains
+    .{ .level = 4, .class = 119, .x = 179, .y = 139 }, // Stony Field
+    .{ .level = 5, .class = 119, .x = 99, .y = 299 }, // Dark Wood
+    .{ .level = 6, .class = 119, .x = 299, .y = 139 }, // Black Marsh
+    .{ .level = 42, .class = 156, .x = 59, .y = 339 }, // Dry Hills
+    .{ .level = 43, .class = 156, .x = 339, .y = 219 }, // Far Oasis
+    .{ .level = 44, .class = 156, .x = 259, .y = 99 }, // Lost City
+};
+
+fn expectOneWaypoint(presets: []const PresetUnit, want: OutdoorWaypoint) !void {
+    var found: usize = 0;
+    for (presets) |p| {
+        if (p.etype != 2 or p.txt_file_no != want.class) continue;
+        found += 1;
+        try std.testing.expectEqual(want.x, p.x);
+        try std.testing.expectEqual(want.y, p.y);
+    }
+    try std.testing.expectEqual(@as(usize, 1), found);
+}
+
+test "lib: outdoor waypoints of Acts I and II are presets (seed 4294967295)" {
+    const gpa = std.testing.allocator;
+    defer dpool.allocator = dpool.default_allocator;
+    var ctx = try Ctx.init(gpa);
+    defer ctx.deinit();
+
+    for ([_]i32{ 0, 1 }) |act_no| {
+        var result = try generateActFull(&ctx, gpa, act_no, 4294967295, .normal, .{});
+        defer result.deinit(gpa);
+        for (outdoor_waypoints_4294967295) |want| {
+            if ((want.level < 40) != (act_no == 0)) continue;
+            const lf = for (result.levels) |l| {
+                if (l.meta.level_id == want.level) break l;
+            } else return error.LevelMissing;
+            try expectOneWaypoint(lf.presets, want);
+        }
+    }
+
+    // The per-level accessor reaches the same waypoint as the whole-act render.
+    const presets = try generateLevelPresets(&ctx, gpa, 0, 4294967295, .normal, 3);
+    defer gpa.free(presets);
+    try expectOneWaypoint(presets, outdoor_waypoints_4294967295[0]);
 }
 
 test "lib: walk grid derives cell-for-cell from the raw CollMap (Cold Plains, seed 0)" {
