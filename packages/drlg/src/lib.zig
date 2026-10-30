@@ -1852,7 +1852,11 @@ fn buildLevelRoomColl(
         const tiles: []materialize.CollTile = blk: {
             if (roomPMap(p)) |pmap| {
                 const d = preset.cachedDs1(preset.presetDs1Path(pmap) orelse continue) orelse continue;
-                var mr = materialize.materializeDs1(out_alloc, d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), roomWindow(p, pmap), .{
+                // The live room takes the preset units its tiles mark (wall torches, tomb shrines);
+                // a level built a second time keeps the first set.
+                var win = roomWindow(p, pmap);
+                win.preset_room = if (p.pPresetUnit == null) p else null;
+                var mr = materialize.materializeDs1(out_alloc, d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), win, .{
                     .index = &near_tiles,
                     .alloc = out_alloc,
                     .wx = p.sCoords.WorldPosition.x,
@@ -2754,6 +2758,10 @@ const SHRINE_VARIANTS = [4]struct { groups: u32, box: i32, classes: [2]i32 }{
 /// d2mapapi oracle for all 30 objects across Act-1 wilderness levels 2-7.
 fn appendOutdoorShrines(pLevel: *abi.D2DrlgLevelStrc, out: *std.ArrayListUnmanaged(OutdoorShrine), a: std.mem.Allocator) !void {
     if (pLevel.eDrlgType != .wilderness) return;
+    // SHRINE_VARIANTS models the Act I shrine files (LvlSub Type 5) only. Act II rooms take
+    // their own shrine files (Type 8: other boxes, other objects), so the Act I classes
+    // must not be rolled there.
+    if (dtables.levelDefsGetLine(pLevel.eD2LevelId).*.SubShrine != 5) return;
     var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
     while (pr) |p| : (pr = p.pRoomExNext) {
         const bits: u32 = (@as(u32, @bitCast(p.eRoomExFlags.raw())) >> 0xc) & 0xf;
@@ -2883,8 +2891,9 @@ pub const PresetUnit = struct { etype: i32, txt_file_no: i32, x: i32, y: i32 };
 ///      re-run the seed-dependent copy-filter (bCopy) — for Cold Plains none of the
 ///      units are in the filtered classId set, so the set is identical; other levels may
 ///      over-include the (rare) filtered place-group/object classes.
-///   3. Seeded outdoor shrines/wells (SpawnAct12Shrines) — folded in as eType 2 objects,
-///      since DBM lists them in the same `presets` array.
+///   3. The units a room takes when it is materialized: those of its outdoor LvlSub
+///      files (the waypoint, the Act I shrines and wells) and those its tiles mark
+///      (wall torches, tomb shrines), in room-relative subtiles.
 /// Caller owns the slice.
 pub fn generateLevelPresets(
     ctx: *Ctx,
@@ -3029,19 +3038,12 @@ fn collectLevelPresets(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelStr
         }
     }
 
-    // Seeded outdoor shrines/wells (SpawnAct12Shrines) — DBM lists them as presets.
-    var shrines: std.ArrayListUnmanaged(OutdoorShrine) = .empty;
-    defer shrines.deinit(out_alloc);
-    try appendOutdoorShrines(pLevel, &shrines, out_alloc);
-    for (shrines.items) |sh|
-        try Emit.add(out_alloc, &out, &seen, 2, sh.class_id, sh.x - ox, sh.y - oy, bw, bh);
-
-    // Preset units an outdoor room took from its LvlSub files (CopyPresetUnitsFromSubTxt,
-    // run when the room is materialized): the outdoor waypoint. Room-relative subtiles, as
-    // FindWaypointRoomAndCoords reads them (pos/5 + room position).
+    // Preset units a room took when it was materialized: the units of its outdoor LvlSub
+    // files (CopyPresetUnitsFromSubTxt: the waypoint, the Act I shrines and wells) and the
+    // ones its tiles mark (CreatesPresets: wall torches, tomb shrines). Room-relative
+    // subtiles, as FindWaypointRoomAndCoords reads them (pos/5 + room position).
     pr = pLevel.pRoomExFirst;
     while (pr) |p| : (pr = p.pRoomExNext) {
-        if (roomPMap(p) != null) continue;
         const rx = p.sCoords.WorldPosition.x * SUB - ox;
         const ry = p.sCoords.WorldPosition.y * SUB - oy;
         var pu: ?*abi.D2PresetUnitStrc = p.pPresetUnit;
@@ -3447,6 +3449,35 @@ const outdoor_waypoints_4294967295 = [_]OutdoorWaypoint{
     .{ .level = 44, .class = 156, .x = 259, .y = 99 }, // Lost City
 };
 
+// Objects the 1.14d game server has in these rooms for seed 4294967295 (its own room
+// preset lists, level-local subtiles) that the port once left out or replaced: the Act II
+// shrines and wells of the shrine LvlSub files, and the units Act I maze and preset tiles
+// mark (CreatesPresets), including those a room takes over its seam with a neighbour.
+const engine_objects_4294967295 = [_]OutdoorWaypoint{
+    .{ .level = 42, .class = 166, .x = 339, .y = 189 }, // Dry Hills: shrine
+    .{ .level = 42, .class = 322, .x = 214, .y = 184 }, // Dry Hills: well
+    .{ .level = 42, .class = 172, .x = 109, .y = 94 },
+    .{ .level = 42, .class = 135, .x = 59, .y = 94 },
+    .{ .level = 42, .class = 86, .x = 269, .y = 54 },
+    .{ .level = 26, .class = 27, .x = 140, .y = 78 }, // Monastery Gate, over a room seam
+    .{ .level = 26, .class = 24, .x = 141, .y = 2 },
+    .{ .level = 28, .class = 15, .x = 100, .y = 105 }, // Barracks, over a room seam
+    .{ .level = 28, .class = 15, .x = 100, .y = 175 },
+    .{ .level = 28, .class = 16, .x = 75, .y = 200 },
+    .{ .level = 29, .class = 13, .x = 235, .y = 160 }, // Jail 1
+    .{ .level = 29, .class = 14, .x = 205, .y = 150 },
+};
+
+fn levelPresets(levels: []const LevelFull, level: i32) ?[]const PresetUnit {
+    for (levels) |l| if (l.meta.level_id == level) return l.presets;
+    return null;
+}
+
+fn hasObject(presets: []const PresetUnit, want: OutdoorWaypoint) bool {
+    for (presets) |p| if (p.etype == 2 and p.txt_file_no == want.class and p.x == want.x and p.y == want.y) return true;
+    return false;
+}
+
 fn expectOneWaypoint(presets: []const PresetUnit, want: OutdoorWaypoint) !void {
     var found: usize = 0;
     for (presets) |p| {
@@ -3458,7 +3489,7 @@ fn expectOneWaypoint(presets: []const PresetUnit, want: OutdoorWaypoint) !void {
     try std.testing.expectEqual(@as(usize, 1), found);
 }
 
-test "lib: outdoor waypoints of Acts I and II are presets (seed 4294967295)" {
+test "lib: presets of seed 4294967295 match the engine (outdoor waypoints, Act II shrines, tile presets)" {
     const gpa = std.testing.allocator;
     defer dpool.allocator = dpool.default_allocator;
     var ctx = try Ctx.init(gpa);
@@ -3469,11 +3500,23 @@ test "lib: outdoor waypoints of Acts I and II are presets (seed 4294967295)" {
         defer result.deinit(gpa);
         for (outdoor_waypoints_4294967295) |want| {
             if ((want.level < 40) != (act_no == 0)) continue;
-            const lf = for (result.levels) |l| {
-                if (l.meta.level_id == want.level) break l;
-            } else return error.LevelMissing;
-            try expectOneWaypoint(lf.presets, want);
+            try expectOneWaypoint(levelPresets(result.levels, want.level) orelse return error.LevelMissing, want);
         }
+        for (engine_objects_4294967295) |want| {
+            if ((want.level < 40) != (act_no == 0)) continue;
+            const presets = levelPresets(result.levels, want.level) orelse return error.LevelMissing;
+            if (!hasObject(presets, want)) {
+                std.debug.print("level {d}: object {d} at {d},{d} missing\n", .{ want.level, want.class, want.x, want.y });
+                return error.ObjectMissing;
+            }
+        }
+        // Act II shrines and wells come from the Act II shrine files: none of the Act I
+        // shrine/well classes (the Act I files) may show up there.
+        if (act_no == 1) for (result.levels) |l| {
+            if (l.meta.level_id < 41 or l.meta.level_id > 44) continue;
+            for (l.presets) |p| if (p.etype == 2) for ([_]i32{ 2, 81, 83, 84, 130 }) |c|
+                try std.testing.expect(p.txt_file_no != c);
+        };
     }
 
     // The per-level accessor reaches the same waypoint as the whole-act render.

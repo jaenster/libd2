@@ -143,6 +143,8 @@ pub const NearTileIndex = struct {
     /// the caller can apply it to the owner's already-collected tile list.
     blank_replaced: std.HashMapUnmanaged(u64, Swap, TileKeyContext, 80) = .empty,
     patch_alloc: std.mem.Allocator = undefined,
+    /// The owner tile the last successful `find` matched (see Hit).
+    hit: ?Hit = null,
 
     pub const Entry = struct { n_tile_type: i32, n_flags: i32, ox: i32, oy: i32, ow: i32, oh: i32, is_blank: bool = false, owner_idx: usize = 0 };
 
@@ -300,10 +302,17 @@ pub const NearTileIndex = struct {
         }
         if (e.n_tile_type == 4) return false;
         if (e.n_tile_type != 0xd and (gf & CELLFLAGS_0x8000000) != 0) return false;
-        if ((e.n_flags & 0x1c000) == 0) return true;
-        const owner_layer = (@as(u32, @bitCast(e.n_flags)) >> 0xe & 7) -% 1;
-        return owner_layer == (@as(u32, @bitCast(gf)) >> 0x12 & 3);
+        if ((e.n_flags & 0x1c000) != 0) {
+            const owner_layer = (@as(u32, @bitCast(e.n_flags)) >> 0xe & 7) -% 1;
+            if (owner_layer != (@as(u32, @bitCast(gf)) >> 0x12 & 3)) return false;
+        }
+        @constCast(self).hit = .{ .entry = ep, .final = resolveLayer(n_tile_type, e.n_tile_type, e.n_flags, gf, searcher, e.ox, e.oy, wx, wy) };
+        return true;
     }
+
+    /// A matched owner tile and the type UpdateTileType leaves it with (null when it
+    /// returns early).
+    pub const Hit = struct { entry: *Entry, final: ?i32 };
 };
 
 /// The engine's type-10 fallback entry: a real tile with an all-zero collision block.
@@ -348,6 +357,11 @@ const MatCtx = struct {
     /// into pRoomTiles->pMapLinks, and therefore the only ones FindTileAtPosition can
     /// ever return. Published to the level index once the room is finished.
     linked: std.ArrayListUnmanaged(LinkedTile) = .empty,
+    /// The +1 column / row of wall layer 0 this port leaves out although the engine
+    /// visits it (an interior seam, see Ds1RoomWindow.kill_x): only the preset spawns
+    /// the engine makes there are replayed (seamPresetCell).
+    seam_ring_x: bool = false,
+    seam_ring_y: bool = false,
 
     fn markSpecial(self: *MatCtx, nX: i32, nY: i32) void {
         self.special_count += 1;
@@ -627,10 +641,9 @@ fn processTile(nFlags_in: i32, pRoom: [*c]s.D2RoomExStrc, nX: i32, nY: i32, nPar
                 const lvl: i32 = @backingInt(pRoom.*.pLevel.?.eD2LevelId);
                 if (lvl < 0x6f or (lvl > 0x70 and lvl != 0x75)) {
                     g_ctx.markSpecial(nX, nY);
-                    // Preset::CreatesPresets — the spawn is collision-neutral,
-                    // but tomb shrine markers (object ids 0x5b/0x5c) consume a
-                    // room-seed roll; nSub = (marker type == 9).
-                    tilegen.createsPresetsRoll(pRoom, @bitCast(nFlags), nX, nY, nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x01));
+                    // Preset::CreatesPresets — the marker's unit goes on the room;
+                    // nSub = (marker type == 9).
+                    tilegen.createsPresets(pRoom, @bitCast(nFlags), nX, nY, nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x01), null);
                     return;
                 }
             },
@@ -712,6 +725,7 @@ fn updateOrAddTile(pRoom: [*c]s.D2RoomExStrc, nTileType: i32, nX: i32, nY: i32, 
     if (g_ctx.near) |near| {
         if (near.find(g_ctx.room_wx + nX, g_ctx.room_wy + nY, nTileType, nFlags, g_ctx.room_rect)) {
             g_ctx.transition_updated += 1;
+            seamHitPreset(pRoom, near, nFlags, nX, nY);
             return;
         }
     }
@@ -798,9 +812,72 @@ fn InitRoomTiles(pRoomEx: [*c]s.D2RoomExStrc, pGrid: [*c]s.D2DrlgGridStrc, pOthe
                 if (!(nColIdx < nXMax)) break;
             }
         }
+        if (g_ctx.seam_ring_x) seamPresetCell(pRoomEx, pGrid, pOtherGrid, nXMax, nY);
         nY += 1;
         if (!(nY < maxTile)) break;
     }
+    if (g_ctx.seam_ring_y) {
+        const nRingXMax = nXMax + @intFromBool(g_ctx.seam_ring_x);
+        var nX: i32 = 0;
+        while (nX < nRingXMax) : (nX += 1) seamPresetCell(pRoomEx, pGrid, pOtherGrid, nX, maxTile);
+    }
+}
+
+/// UpdateTileType (0x66e740) ends in SetWallTileFlags(ownerTile, type, visiting room):
+/// a seam tile it leaves as wall type 8/9 puts its preset on the VISITING room, at most
+/// once per tile (the 0x20 the spawn sets on the owner's tile).
+fn seamHitPreset(pRoom: [*c]s.D2RoomExStrc, near: *const NearTileIndex, nFlags: i32, nX: i32, nY: i32) void {
+    const h = near.hit orelse return;
+    const final = h.final orelse return;
+    if (final != 8 and final != 9) return;
+    var td = std.mem.zeroes(s.D2DrlgTileDataStrc);
+    td.nFlags = h.entry.n_flags;
+    td.nTileType = final;
+    tilegen.createsPresets(pRoom, @bitCast(nFlags), nX, nY, final == 9, &td);
+    h.entry.n_flags |= td.nFlags & 0x20;
+}
+
+/// The preset spawn of one wall-layer cell the engine's ProcessTile (0x66e9b0) visits
+/// and this port does not materialize. The cell's tile itself belongs to the neighbour
+/// (UpdateOrAddTile), so only what reaches CreatesPresets is replayed, in the engine's
+/// cell order (a tomb shrine marker rolls the room seed):
+///   - a preset marker (0x80000000, cell type 8/9): CreatesPresets, no tile;
+///   - a seam wall (0x04): a matched neighbour tile left as type 8/9 spawns on this room
+///     (UpdateTileType -> SetWallTileFlags), an unmatched one is this room's to add
+///     (AddTileData -> CreateWallTileData);
+///   - any other wall of type 8/9: CreateWallTileData.
+fn seamPresetCell(pRoom: [*c]s.D2RoomExStrc, pGrid: [*c]s.D2DrlgGridStrc, pOtherGrid: [*c]s.D2DrlgGridStrc, nX: i32, nY: i32) void {
+    var nFlags = DrlgGrid.GetGridFlags(pGrid, nX, nY);
+    const nOtherFlags: i32 = if (pOtherGrid == null) CELLFLAGS_NONE else DrlgGrid.GetGridFlags(pOtherGrid, nX, nY);
+    const nMainIndex: u8 = @as(u8, @truncate(@as(u32, @bitCast(nFlags)) >> 0x14)) & 0x3f;
+    if ((nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x02 | CELLFLAGS_0x01) or nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x02)) and 7 < nMainIndex) return;
+    const nOrientation: u8 = @truncate(@as(u32, @bitCast(nFlags >> 8)));
+    if (nOtherFlags == CELLFLAGS_NONE and nMainIndex == 0x1e and (nOrientation == 0 or nOrientation == 1)) nFlags |= CELLFLAGS_0x80000000;
+    const bWall89 = nOtherFlags == CELLFLAGS_0x08 or nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x01);
+    if ((nFlags & CELLFLAGS_0x80000000) != CELLFLAGS_NONE) {
+        if (nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x02) or nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x02 | CELLFLAGS_0x01)) return;
+        if (bWall89) {
+            const lvl: i32 = @backingInt(pRoom.*.pLevel.?.eD2LevelId);
+            if (lvl < 0x6f or (lvl > 0x70 and lvl != 0x75)) {
+                tilegen.createsPresets(pRoom, @bitCast(nFlags), nX, nY, nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x01), null);
+                return;
+            }
+        }
+    }
+    if ((nFlags & CELLFLAGS_0x01) == CELLFLAGS_NONE) return;
+    if ((nFlags & CELLFLAGS_0x04) != CELLFLAGS_NONE) {
+        if ((nFlags & CELLFLAGS_0x02) != CELLFLAGS_NONE) return;
+        if (g_ctx.near) |near| {
+            if (near.find(g_ctx.room_wx + nX, g_ctx.room_wy + nY, nOtherFlags, nFlags, g_ctx.room_rect)) {
+                seamHitPreset(pRoom, near, nFlags, nX, nY);
+                return;
+            }
+        }
+    }
+    if (!bWall89) return;
+    var td = std.mem.zeroes(s.D2DrlgTileDataStrc);
+    td.nTileType = nOtherFlags;
+    tilegen.createsPresets(pRoom, @bitCast(nFlags), nX, nY, nOtherFlags == (CELLFLAGS_0x08 | CELLFLAGS_0x01), &td);
 }
 
 // ===========================================================================
@@ -903,6 +980,9 @@ pub const Ds1RoomWindow = struct {
     /// (per-act warp id overrides, e.g. the true-tomb ids) before the LevelDefs
     /// Warp fallback.
     real_drlg: ?*s.D2DrlgStrc = null,
+    /// The generated room the materialized room's preset units go to (the units a
+    /// tile or a sub file puts on it); null drops them.
+    preset_room: ?*s.D2RoomExStrc = null,
     /// Kill flags for WALL LAYERS >= 1, which follow the raw engine rule
     /// (InitializePresetRoom 0x666ac0: kill only when LvlPrest KillEdge is set AND
     /// the room touches the pMap far edge on that axis). The primary kill_x/kill_y
@@ -1160,15 +1240,26 @@ pub fn materializeDs1(a: std.mem.Allocator, d: *const ds1.Ds1, dts: []const dt1.
 
     for (floor_grids, 0..) |*g, li|
         InitRoomTiles(pRoom, &g.grid, null, if (li == 0) win.fill_blanks else 0, win.kill_x, win.kill_y);
-    for (wall_grids, 0..) |*g, li| InitRoomTiles(
-        pRoom,
-        &g.grid,
-        &orient_grids[li].grid,
-        0,
-        if (li == 0) win.kill_x else win.kill1_x,
-        if (li == 0) win.kill_y else win.kill1_y,
-    );
+    for (wall_grids, 0..) |*g, li| {
+        // Wall layer 0 leaves out the interior seam the engine still visits (kill_x
+        // where the literal rule, kill1_x, keeps it): replay its preset spawns.
+        ctx.seam_ring_x = li == 0 and win.kill_x != 0 and win.kill1_x == 0;
+        ctx.seam_ring_y = li == 0 and win.kill_y != 0 and win.kill1_y == 0;
+        defer {
+            ctx.seam_ring_x = false;
+            ctx.seam_ring_y = false;
+        }
+        InitRoomTiles(
+            pRoom,
+            &g.grid,
+            &orient_grids[li].grid,
+            0,
+            if (li == 0) win.kill_x else win.kill1_x,
+            if (li == 0) win.kill_y else win.kill1_y,
+        );
+    }
     InitRoomTiles(pRoom, &shadow_grid.grid, null, 0, win.kill_x, win.kill_y);
+    handOverPresetUnits(&room, win.preset_room);
 
     // ── Rasterize floor + wall tile-data (exclude roof array + companions). ──
     // The engine's per-room CollMap is dwSizeGameX/Y = WorldSize*5 (NO +1): the +1
@@ -1599,6 +1690,21 @@ fn applySubTileFloor(
     copyPresetUnitsFromSubTxt(pRoom, baseX, baseY, pSubstGroup, pSubTxt);
 }
 
+// The room a materialization builds is a stand-in for the generated one: the preset units
+// its tiles and sub files put on it (CreatesPresets, CopyPresetUnitsFromSubTxt) go to that
+// room, where the engine has them. With no room to take them, the memory goes back.
+fn handOverPresetUnits(room: *s.D2RoomExStrc, target: ?*s.D2RoomExStrc) void {
+    var pUnit: ?*s.D2PresetUnitStrc = room.pPresetUnit;
+    room.pPresetUnit = null;
+    while (pUnit) |u| {
+        pUnit = u.pPresetUnitNext;
+        if (target) |t| {
+            u.pPresetUnitNext = t.pPresetUnit;
+            t.pPresetUnit = u;
+        } else dpool.FreeServerMemory(null, u, null, 0, 0);
+    }
+}
+
 // DRLGOUTDOOR_CopyPresetUnitsFromSubTxt (1.14d 0x66fa10), the tail of ApplyLvlSubTileData:
 // every preset unit of the sub DS1 that lies strictly inside the placed group's box becomes a
 // preset unit of the room, at its offset in the box plus the placement base, in room-relative
@@ -1854,20 +1960,6 @@ pub fn materializeOutdoorFloorRoom(
     if (nWaypointCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubWaypoint, 0, nWaypointCount);
     if (nShrineCount != 0) applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, pDef.*.SubShrine, 0, nShrineCount);
     applySubThemeTerrain(&room, &fg.grid, &wg.grid, &og.grid, nSubType, nSubTheme, nSubThemePicked);
-    // The sub passes gave the room its preset units (CopyPresetUnitsFromSubTxt). This room is
-    // a stand-in for the generated one, so hand them to that room, where the engine has them;
-    // with no room to hand them to, give the memory back.
-    {
-        var pUnit: ?*s.D2PresetUnitStrc = room.pPresetUnit;
-        room.pPresetUnit = null;
-        while (pUnit) |u| {
-            pUnit = u.pPresetUnitNext;
-            if (preset_room) |pr| {
-                u.pPresetUnitNext = pr.pPresetUnit;
-                pr.pPresetUnit = u;
-            } else dpool.FreeServerMemory(null, u, null, 0, 0);
-        }
-    }
 
     // OR the level-type fill flag into cells with no terrain bits (OrFlag / op 0).
     const nGridFlag = outdoorFillFlag(nLevelType, level_id);
@@ -1924,6 +2016,7 @@ pub fn materializeOutdoorFloorRoom(
     InitRoomTiles(pRoom, &fg.grid, null, 0, 0, 0);
     // Materialize the sub-theme wall grid (orient grid as pOtherGrid), as InitGridCells does.
     InitRoomTiles(pRoom, &wg.grid, &og.grid, 0, 0, 0);
+    handOverPresetUnits(&room, preset_room);
 
     // ── Rasterize floor + wall collision (room-local, 8x8 tile footprint). ──
     const cw: usize = @intCast(ws_x);

@@ -32,6 +32,8 @@ const s = @import("structs.zig");
 const rng = @import("rng.zig");
 const Transform = @import("Transform.zig");
 const dt1 = @import("d2-formats").dt1;
+const DrlgRoom = @import("DrlgRoom.zig");
+const presettables = @import("presettables.zig");
 
 /// Diagnostic counters (single-threaded, test/tooling only): how often
 /// getTileLibraryEntry falls back to a type-10 tile or fails to resolve at all.
@@ -389,14 +391,14 @@ fn findPresetTypeIndex(nLevelId: i32, nGridFlags: u32, nSub: u32) i32 {
     return -1;
 }
 
-/// Preset::CreatesPresets 0x66d9e0 — the preset-unit spawn itself (monster or
-/// object) is collision-neutral in the tiles-only golden, but for object ids
-/// 0x5b/0x5c (the tomb shrines, rows 19/20) the engine consumes a ROOM SEED
-/// roll (UNIT_GetModuloFromSeed(sSeed, 3); result 0 = 1-in-3 no-spawn). The
-/// port replicates the gates and the roll only. Called for type-8/9 walls
-/// (SetWallTileFlags top) and for the orient-8/9 preset markers (ProcessTile);
-/// nSub = (nTileType == 9).
-pub fn createsPresetsRoll(pRoomEx: [*c]s.D2RoomExStrc, nGridFlags: u32, nWorldX: i32, nWorldY: i32, bSub9: bool) void {
+/// Preset::CreatesPresets 0x66d9e0 — a tile that marks a preset (a wall torch, a tomb
+/// shrine, a barricade tower, ...) puts that unit on the room, at the tile in
+/// room-relative subtiles plus the row's offset. Object ids 0x5b/0x5c (the tomb
+/// shrines) first roll the room seed: 0 of 3 spawns nothing. Called for type-8/9 walls
+/// (SetWallTileFlags, with the wall tile, whose nFlags 0x20 marks it spent) and for the
+/// orient-8/9 preset markers (ProcessTile, no tile); nSub = (tile type == 9).
+pub fn createsPresets(pRoomEx: [*c]s.D2RoomExStrc, nGridFlags: u32, nWorldX: i32, nWorldY: i32, bSub9: bool, pTile: ?*s.D2DrlgTileDataStrc) void {
+    if (pTile) |t| if (t.nFlags & 0x20 != 0) return;
     const lvl: i32 = @backingInt(pRoomEx.*.pLevel.?.eD2LevelId);
     const idx = findPresetTypeIndex(lvl, nGridFlags, @intFromBool(bSub9));
     if (idx < 0) return;
@@ -409,9 +411,19 @@ pub fn createsPresetsRoll(pRoomEx: [*c]s.D2RoomExStrc, nGridFlags: u32, nWorldX:
     if (rx < 0 or ry < 0) return;
     if (rx >= pRoomEx.*.sCoords.WorldSize.x * 5) return;
     if (ry >= pRoomEx.*.sCoords.WorldSize.y * 5) return;
-    if (row.ut == 2 and row.id > 0x5a and row.id < 0x5d) {
-        _ = rng.getModuloFromSeed(&pRoomEx.*.sSeed, 3);
+    var nClassId: i32 = row.id;
+    var bUseMonStats: i32 = 0;
+    if (row.ut == 1) {
+        // D2Client CheckMonStatId 0x4e6c50: an id past MonStats becomes -1.
+        _ = presettables.ensureLoaded();
+        if (nClassId < 0 or nClassId >= presettables.mon_size) nClassId = -1;
+        bUseMonStats = 1;
+    } else if (row.ut == 2 and nClassId > 0x5a and nClassId < 0x5d and rng.getModuloFromSeed(&pRoomEx.*.sSeed, 3) == 0) {
+        if (pTile) |t| t.nFlags |= 0x20;
+        return;
     }
+    _ = DrlgRoom.AllocPresetUnit(pRoomEx, null, row.ut, nClassId, bUseMonStats, rx, ry);
+    if (pTile) |t| t.nFlags |= 0x20;
 }
 
 /// DRLGROOMTILE_SetWallTileFlags (Drlg.cpp:1451, 1.14d 0066db20).
@@ -466,9 +478,9 @@ pub fn createWallTileData(pRoomEx: [*c]s.D2RoomExStrc, ppTileHead: ?*?*s.D2DrlgT
     pTileData.nRed = 0xff;
     pTileData.nTileType = nTileType;
     // Engine SetWallTileFlags 0x66db20 runs CreatesPresets FIRST for type-8/9
-    // walls (barricade towers, tomb shrine walls, ...) — roll semantics only.
+    // walls (barricade towers, tomb shrine walls, wall torches).
     if (nTileType == 8 or nTileType == 9) {
-        createsPresetsRoll(pRoomEx, nGridFlags, nPosX, nPosY, nTileType == 9);
+        createsPresets(pRoomEx, nGridFlags, nPosX, nPosY, nTileType == 9, pTileData);
     }
     setWallTileFlags(pTileData, nTileType, nGridFlags);
     if (nTileType != 3) return pTileData;
