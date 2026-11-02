@@ -491,6 +491,25 @@ fn buildPresetUnits(pMemory: ?*s.D2PoolManagerStrc, pDrlgFile: *s.D2DrlgFileStrc
                 nClassId = presettables.monsterClassId(act_id, o.id);
                 nDbmCode = presettables.dbmMonsterCode(act_id, o.id);
                 nMode = 1;
+                // ParsePresetsOfDrlgFile (0x665950): a few MonPreset entries are objects in
+                // the game. Act III: MonStats 0x129 -> object 0x17e, 0x16e -> 0x194. Act V:
+                // 0x202 -> 0x1cd, 0x219..0x21b -> 0x3f5 - id. (The engine gates this on DS1
+                // version > 4; the DS1 blob keeps no version, and like the object table
+                // lookup below this assumes the version every shipped DS1 has.)
+                if (nClassId < g_nTxtMonStatsSize) {
+                    var nObject: i32 = -1;
+                    if (act_id == 2) {
+                        if (nClassId == 0x129) nObject = 0x17e else if (nClassId == 0x16e) nObject = 0x194;
+                    } else if (act_id == 4 and nClassId >= 0) {
+                        if (nClassId == 0x202) nObject = 0x1cd else if (nClassId >= 0x219 and nClassId <= 0x21b) nObject = 0x3f5 - nClassId;
+                    }
+                    if (nObject >= 0) {
+                        eType = UNIT_OBJECT;
+                        nClassId = nObject;
+                        nDbmCode = -1;
+                        nMode = 0;
+                    }
+                }
             },
             2 => {
                 eType = UNIT_OBJECT;
@@ -829,4 +848,132 @@ test "AllocDrlgFile on a real LvlSub border DS1 populates nSubstGroups" {
     // real border DS1 must carry at least one substitution group.
     try t.expect(pFile.?.nSubstGroups >= 1);
     try t.expect(pFile.?.nWallLayers >= 1);
+}
+
+// DRLGPRESET_CreateMonsterPresets (1.14d 0x667890), run by InitRoomEx before the room's
+// grids are built. A map whose generation did not load its DS1 (BuildPresetArea's
+// Scan==0 && Pops==0 gate) loads it now and copies its units through the seed-dependent
+// filter of AddPresetUnitToDrlgMap, rolled on THIS room's seed (so whichever room of the
+// map is built first decides). A map BuildPresetArea marked bInited then gets its
+// generated presets once: the Blood Moor camp monster (LvlPrest 4..7 on level 2 with
+// file 3). Marks the room's presets added (eRoomExFlags 0x2000000).
+pub fn createMonsterPresets(pRoomEx: *s.D2RoomExStrc, pDrlgMap: *s.D2DrlgMapStrc) void {
+    if (pDrlgMap.pDrlgFile == null) {
+        if (presetDs1Path(pDrlgMap)) |rel| {
+            AllocDrlgFile(&pDrlgMap.pDrlgFile, null, rel);
+            addPresetUnitToDrlgMap(null, pDrlgMap, &pRoomEx.sSeed);
+        }
+    }
+    defer pRoomEx.eRoomExFlags.presetsAdded = true;
+    if (pDrlgMap.bInited != 1) return;
+    pDrlgMap.bInited = 0;
+    const nLvlPrestId = pDrlgMap.nNumber;
+    if (nLvlPrestId < 8) {
+        if (3 < nLvlPrestId) {
+            if (pRoomEx.pLevel.?.eD2LevelId == .BloodMoor and pDrlgMap.nRandomMapFileSelector == 3) createMonsterPreset(pDrlgMap);
+            return;
+        }
+        if (nLvlPrestId != 1 and nLvlPrestId != 3) return;
+    } else if (nLvlPrestId < 0x1a or (0x1c < nLvlPrestId and nLvlPrestId != 300)) {
+        return;
+    }
+    // CreateObjectPresetsForMap (0x6663c0) for a mapReveal room: the river and bridge
+    // object rows. Not reached by the levels the oracle covers (no class 0x28-0x2a or
+    // 0x41 unit in any of its room lists), so not ported.
+}
+
+// CreateMonsterPreset (1.14d 0x6664a0): one monster (MonStats 0x10a, or -1 past the
+// table) at the map's centre, on the map's preset list.
+fn createMonsterPreset(pDrlgMap: *s.D2DrlgMapStrc) void {
+    var nX = @divTrunc(pDrlgMap.nSizeX, 2) + pDrlgMap.nRealOffsetX;
+    var nY = @divTrunc(pDrlgMap.nSizeY, 2) + pDrlgMap.nRealOffsetY;
+    Transform.CoordsRoomToWorld(&nX, &nY);
+    const nClassId: i32 = if (0x10a < g_nTxtMonStatsSize) 0x10a else -1;
+    const pPreset = DrlgRoom.AllocPresetUnit(null, null, UNIT_MONSTER, nClassId, 1, nX, nY);
+    pPreset.*.pPresetUnitNext = pDrlgMap.pPresetUnit;
+    pDrlgMap.pPresetUnit = pPreset;
+}
+
+// DRLGPRESET_AddAndSetPresetUnits (1.14d 0x666710), the end of InitGridsFromDS1File: every
+// unit of the map's list that lies inside this room (world subtiles) moves to the room's
+// list, room-relative. The rest stays with the map for its other rooms.
+pub fn addAndSetPresetUnits(pRoomEx: *s.D2RoomExStrc, pDrlgMap: *s.D2DrlgMapStrc) void {
+    var roomCoords = pRoomEx.sCoords;
+    Transform.CoordsRoomToWorld(&roomCoords.WorldPosition.x, &roomCoords.WorldPosition.y);
+    Transform.CoordsRoomToWorld(&roomCoords.WorldSize.x, &roomCoords.WorldSize.y);
+    const nOffsetX = pRoomEx.sCoords.WorldPosition.x * 5;
+    const nOffsetY = pRoomEx.sCoords.WorldPosition.y * 5;
+    var pPrev: ?*s.D2PresetUnitStrc = null;
+    var pNext: ?*s.D2PresetUnitStrc = pDrlgMap.pPresetUnit;
+    while (pNext) |pCurrent| {
+        if (DrlgRoom.AreXYInsideCoordinates(&roomCoords, pCurrent.nPosX, pCurrent.nPosY) == 0) {
+            pNext = pCurrent.pPresetUnitNext;
+            pPrev = pCurrent;
+            continue;
+        }
+        pCurrent.nPosX -= nOffsetX;
+        pCurrent.nPosY -= nOffsetY;
+        if (pPrev) |pp| pp.pPresetUnitNext = pCurrent.pPresetUnitNext else pDrlgMap.pPresetUnit = pCurrent.pPresetUnitNext;
+        pCurrent.pPresetUnitNext = pRoomEx.pPresetUnit;
+        pRoomEx.pPresetUnit = pCurrent;
+        pNext = if (pPrev) |pp| pp.pPresetUnitNext else pDrlgMap.pPresetUnit;
+    }
+}
+
+// The rooms DefineRoomsNear (1.14d 0x66bc20) puts in a room's near list: every room of the
+// level within 5 tiles on both axes (the room itself included), in ReorderNearRoomList's
+// bubble order (a room wholly left of or above its predecessor moves ahead). The rooms
+// LinkNearRoomsByVis adds from other levels are left out.
+fn nearRoomsInOrder(pRoomEx: *s.D2RoomExStrc, buf: []*s.D2RoomExStrc) []*s.D2RoomExStrc {
+    var n: usize = 0;
+    var it: ?*s.D2RoomExStrc = pRoomEx.pLevel.?.pRoomExFirst;
+    while (it) |o| : (it = o.pRoomExNext) {
+        const a = pRoomEx.sCoords;
+        const b = o.sCoords;
+        const gx = if (a.WorldPosition.x < b.WorldPosition.x) b.WorldPosition.x - a.WorldSize.x - a.WorldPosition.x else a.WorldPosition.x - b.WorldSize.x - b.WorldPosition.x;
+        const gy = if (a.WorldPosition.y < b.WorldPosition.y) b.WorldPosition.y - a.WorldSize.y - a.WorldPosition.y else a.WorldPosition.y - b.WorldSize.y - b.WorldPosition.y;
+        if (gx < 6 and gy < 6 and n < buf.len) {
+            buf[n] = o;
+            n += 1;
+        }
+    }
+    if (n > 1) {
+        var pass: usize = n - 1;
+        while (pass > 0) : (pass -= 1) {
+            var i: usize = 0;
+            while (i < n - 1) : (i += 1) {
+                const nx = buf[i + 1].sCoords;
+                const cur = buf[i].sCoords;
+                if (nx.WorldSize.x + nx.WorldPosition.x <= cur.WorldPosition.x or nx.WorldSize.y + nx.WorldPosition.y <= cur.WorldPosition.y) {
+                    const t = buf[i];
+                    buf[i] = buf[i + 1];
+                    buf[i + 1] = t;
+                }
+            }
+        }
+    }
+    return buf[0..n];
+}
+
+// The order in which building every room of a level (AddRoomData on each room, in the
+// level's room order, as a map dump does) first reaches each room's presets, and what it
+// does there. AddRoomDataActual (0x61b490) -> InitNearRooms (0x61b390) walks the near
+// list twice deep: for each near room N, every room in N's near list gets activation
+// handler 3, DRLGROOMEX_InitTileDataAndPresets (0x61b320), which runs
+// CreateMonsterPresets once per room. The first room of a map reached so loads a gated
+// map with its own seed (see createMonsterPresets). Handlers 2 and 1 add no presets.
+pub fn touchPresetsInBuildOrder(pLevel: *s.D2DrlgLevelStrc) void {
+    var near1: [64]*s.D2RoomExStrc = undefined;
+    var near2: [64]*s.D2RoomExStrc = undefined;
+    var it: ?*s.D2RoomExStrc = pLevel.pRoomExFirst;
+    while (it) |room| : (it = room.pRoomExNext) {
+        for (nearRoomsInOrder(room, &near1)) |n| {
+            for (nearRoomsInOrder(n, &near2)) |m| {
+                if (m.nPresetType != 2 or m.eRoomExFlags.presetsAdded) continue;
+                const rd: *s.D2DrlgPresetRoomStrc = @ptrCast(@alignCast(m.pRoomExData orelse continue));
+                const pMap = rd.pMap orelse continue;
+                createMonsterPresets(m, pMap);
+            }
+        }
+    }
 }

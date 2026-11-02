@@ -1846,16 +1846,29 @@ fn buildLevelRoomColl(
     defer near_tiles.deinit(out_alloc);
 
     const t_rooms = prof.begin();
+    // Which room of a gated map loads it decides that map's seeded presets: replay the
+    // order a build of every room reaches the rooms' presets.
+    preset.touchPresetsInBuildOrder(pLevel);
     var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
     while (pr) |p| : (pr = p.pRoomExNext) {
         tilegen.probe_cur_room = .{ p.sCoords.WorldPosition.x * SUB, p.sCoords.WorldPosition.y * SUB };
+        // Materializing a room stands in for its InitRoomEx, which runs once per room
+        // (tilesLoaded, 0x1000000): only the first build gives the room its preset units,
+        // so a level built a second time keeps the first set.
+        const first_build = !p.eRoomExFlags.tilesLoaded;
+        p.eRoomExFlags.tilesLoaded = true;
         const tiles: []materialize.CollTile = blk: {
             if (roomPMap(p)) |pmap| {
                 const d = preset.cachedDs1(preset.presetDs1Path(pmap) orelse continue) orelse continue;
-                // The live room takes the preset units its tiles mark (wall torches, tomb shrines);
-                // a level built a second time keeps the first set.
+                // InitRoomEx order: CreateMonsterPresets, then InitGridCells, whose
+                // InitGridsFromDS1File ends in AddAndSetPresetUnits, then the tiles (whose
+                // marked presets the materialization hands to the live room).
+                if (first_build) {
+                    if (!p.eRoomExFlags.presetsAdded) preset.createMonsterPresets(p, pmap);
+                    preset.addAndSetPresetUnits(p, pmap);
+                }
                 var win = roomWindow(p, pmap);
-                win.preset_room = if (p.pPresetUnit == null) p else null;
+                win.preset_room = if (first_build) p else null;
                 var mr = materialize.materializeDs1(out_alloc, d, roomDts(dts.items, dts_bits.items, pmap, &room_dts_buf), win, .{
                     .index = &near_tiles,
                     .alloc = out_alloc,
@@ -1893,7 +1906,7 @@ fn buildLevelRoomColl(
                     break :t .{ @as(i32, -1), @as(i32, 0), @as(i32, 0) };
                 };
                 // The live room takes the preset units its sub files carry (the outdoor
-                // waypoint); a level built a second time keeps the first set.
+                // waypoint, the Act I shrines and wells).
                 var mr = materialize.materializeOutdoorFloorRoom(out_alloc, maskDts(dts.items, dts_bits.items, @bitCast(p.nDT1Mask), &room_dts_buf), p.sCoords.WorldSize.x, p.sCoords.WorldSize.y, nLevelType, lid, p.nSeed, materialize.outdoorOverlayFor(pLevel, p), sub_type2, sub_theme2, sub_picked2, @intCast(@as(u8, p.eRoomExFlags.waypoint)), @intCast(@as(u8, p.eRoomExFlags.shrineRows)), .{
                         .index = &near_tiles,
                         .alloc = out_alloc,
@@ -1901,7 +1914,7 @@ fn buildLevelRoomColl(
                         .wy = p.sCoords.WorldPosition.y,
                         .w = p.sCoords.WorldSize.x,
                         .h = p.sCoords.WorldSize.y,
-                    }, if (p.pPresetUnit == null) p else null) catch continue;
+                    }, if (first_build) p else null) catch continue;
                 defer mr.deinit(out_alloc);
                 break :blk try out_alloc.dupe(materialize.CollTile, mr.tiles);
             } else continue;
@@ -2878,22 +2891,15 @@ pub const PresetUnit = struct { etype: i32, txt_file_no: i32, x: i32, y: i32 };
 /// DBM shape: level-local subtile coords (clipped to the level rect), deduped by
 /// (etype,txt,x,y). Same whole-act setup as generateLevelShrines.
 ///
-/// UNIT SOURCES, per generated preset DrlgMap of the target level (deduped by pointer):
-///   1. pMap.pPresetUnit — the engine-populated chain (already world-coord, with the
-///      seed-dependent AddPresetUnitToDrlgMap copy-filter applied). Used for preset
-///      areas (town/cathedral/…) where BuildPresetArea's Scan/Pops gate loaded the DS1.
-///   2. DS1-object replay — for wilderness border/camp maps the Scan==0 && Pops==0 gate
-///      (Preset.cpp:1778) returns before AllocDrlgFile, so pMap.pPresetUnit stays empty
-///      even though the DS1 carries objects (Bishibosh camp Fallen, scattered torches).
-///      We recover them by re-parsing the map's DS1 and replaying the same world
-///      transform the engine's CopyPresetUnit would apply (pos + nRealOffset*SUB), with
-///      the same monster/object classId resolution (presettables). This replay does NOT
-///      re-run the seed-dependent copy-filter (bCopy) — for Cold Plains none of the
-///      units are in the filtered classId set, so the set is identical; other levels may
-///      over-include the (rare) filtered place-group/object classes.
-///   3. The units a room takes when it is materialized: those of its outdoor LvlSub
-///      files (the waypoint, the Act I shrines and wells) and those its tiles mark
-///      (wall torches, tomb shrines), in room-relative subtiles.
+/// UNIT SOURCE: the preset list each room of the level holds once it is built, as the
+/// engine's InitRoomEx leaves it (room-relative subtiles):
+///   - CreateMonsterPresets: a map whose DS1 generation did not load (the Scan==0 &&
+///     Pops==0 gate) loads it now and runs AddPresetUnitToDrlgMap's seed-dependent copy
+///     filter on the room's seed;
+///   - AddAndSetPresetUnits: the map's units that lie inside the room move to it (units
+///     inside no room of the map belong to no room);
+///   - the units of its outdoor LvlSub files (the waypoint, the Act I shrines and wells)
+///     and those its tiles mark (wall torches, tomb shrines).
 /// Caller owns the slice.
 pub fn generateLevelPresets(
     ctx: *Ctx,
@@ -2970,8 +2976,6 @@ fn collectLevelPresets(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelStr
     errdefer out.deinit(out_alloc);
     var seen: std.AutoHashMapUnmanaged(u64, void) = .empty;
     defer seen.deinit(out_alloc);
-    var seen_map: std.AutoHashMapUnmanaged(usize, void) = .empty;
-    defer seen_map.deinit(out_alloc);
 
     const lvlPos = pLevel.sCoordinatesAndSize.WorldPosition;
     const ox = lvlPos.x * SUB;
@@ -2992,57 +2996,9 @@ fn collectLevelPresets(out_alloc: std.mem.Allocator, pLevel: *abi.D2DrlgLevelStr
         }
     };
 
-    var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
-    while (pr) |p| : (pr = p.pRoomExNext) {
-        const pmap = roomPMap(p) orelse continue;
-        const mapkey = @intFromPtr(pmap);
-        if ((try seen_map.getOrPut(out_alloc, mapkey)).found_existing) continue;
-
-        if (pmap.pPresetUnit != null) {
-            // Engine-populated chain (world coords, copy-filter already applied).
-            var pu: ?*abi.D2PresetUnitStrc = pmap.pPresetUnit;
-            while (pu) |u| : (pu = u.pPresetUnitNext) {
-                const et: i32 = u.eType;
-                if (et != 1 and et != 2) continue;
-                // Monsters report the DBM/oracle preset code (unambiguous SU/MonPlace
-                // numbering carried on the unit); objects keep the Objects.txt row.
-                const code: i32 = if (et == 1 and u.nDbmCode >= 0) u.nDbmCode else u.nClassId;
-                try Emit.add(out_alloc, &out, &seen, et, code, u.nPosX - ox, u.nPosY - oy, bw, bh);
-            }
-        } else {
-            // Gated wilderness map: replay the DS1 objects through the engine's
-            // world transform (CopyPresetUnit: pos + nRealOffset*SUB).
-            const rel = preset.presetDs1Path(pmap) orelse continue;
-            var d = preset.unpackDs1(out_alloc, rel) orelse continue;
-            defer d.deinit();
-            const wox = pmap.nRealOffsetX * SUB;
-            const woy = pmap.nRealOffsetY * SUB;
-            for (d.objects) |o| {
-                var et: i32 = undefined;
-                var classId: i32 = undefined;
-                switch (o.kind) {
-                    1 => {
-                        et = 1;
-                        // DBM/oracle preset code (not the folded classId) for monsters.
-                        classId = presettables.dbmMonsterCode(d.act_id, o.id);
-                    },
-                    2 => {
-                        et = 2;
-                        classId = presettables.objectClassId(d.act_id, o.id);
-                    },
-                    else => continue,
-                }
-                if (classId < 0) continue; // recon Preset.cpp:350 — classId < 0 dropped
-                try Emit.add(out_alloc, &out, &seen, et, classId, o.x + wox - ox, o.y + woy - oy, bw, bh);
-            }
-        }
-    }
-
-    // Preset units a room took when it was materialized: the units of its outdoor LvlSub
-    // files (CopyPresetUnitsFromSubTxt: the waypoint, the Act I shrines and wells) and the
-    // ones its tiles mark (CreatesPresets: wall torches, tomb shrines). Room-relative
+    // Each room's preset list as its build left it (see generateLevelPresets): room-relative
     // subtiles, as FindWaypointRoomAndCoords reads them (pos/5 + room position).
-    pr = pLevel.pRoomExFirst;
+    var pr: ?*abi.D2RoomExStrc = pLevel.pRoomExFirst;
     while (pr) |p| : (pr = p.pRoomExNext) {
         const rx = p.sCoords.WorldPosition.x * SUB - ox;
         const ry = p.sCoords.WorldPosition.y * SUB - oy;
@@ -3523,6 +3479,67 @@ test "lib: presets of seed 4294967295 match the engine (outdoor waypoints, Act I
     const presets = try generateLevelPresets(&ctx, gpa, 0, 4294967295, .normal, 3);
     defer gpa.free(presets);
     try expectOneWaypoint(presets, outdoor_waypoints_4294967295[0]);
+}
+
+// How many objects the 1.14d game server's own room preset lists hold per level (Acts
+// I-V, levels 1..136, normal) for seed 4294967295, inside the level rect and counted once
+// per (class, position): the map oracle's dump. Every source of a room's units shows up
+// here — the seeded copy filter of a gated map (which room loads it), the units only the
+// rooms of their map take, objects the engine makes out of monster presets, tile marks.
+const engine_object_counts_4294967295 = [136]u16{
+    25,14,15,29,34,38,26,14,28,58,25,33,11,13,8,12,11,38,59,0,
+    24,10,16,52,45,14,5,53,39,44,46,6,32,46,71,77,94,83,8,35,
+    13,15,13,43,2,17,60,50,69,13,75,46,44,46,20,25,49,59,15,32,
+    1,11,8,7,43,81,53,50,40,23,30,20,44,132,63,71,68,59,188,228,
+    167,19,67,38,41,31,32,32,36,51,41,162,16,15,23,27,37,17,31,63,
+    81,61,45,43,45,98,185,125,40,134,128,70,70,143,80,69,49,114,59,6,
+    16,235,242,116,73,68,73,72,90,90,75,41,18,10,73,83,
+};
+
+// Objects that only come out right when one specific engine step is followed, as the
+// game server has them (seed 4294967295, normal), and objects the port once listed that
+// the engine's rooms do not have.
+const engine_objects_more_4294967295 = [_]OutdoorWaypoint{
+    .{ .level = 75, .class = 382, .x = 221, .y = 111 }, // Kurast Docks: a MonPreset turned object
+    .{ .level = 83, .class = 404, .x = 136, .y = 91 }, // Travincal: the same
+    .{ .level = 109, .class = 461, .x = 76, .y = 126 }, // Harrogath: Act V, after the divider row
+    .{ .level = 120, .class = 474, .x = 58, .y = 77 }, // Arreat Summit statues
+    .{ .level = 120, .class = 475, .x = 37, .y = 77 },
+    .{ .level = 120, .class = 476, .x = 48, .y = 67 },
+};
+const engine_absent_4294967295 = [_]OutdoorWaypoint{
+    .{ .level = 6, .class = 37, .x = 93, .y = 360 }, // a map unit inside none of its rooms
+    .{ .level = 34, .class = 29, .x = 374, .y = 79 },
+    .{ .level = 57, .class = 261, .x = 198, .y = 198 }, // seed-filtered: another room loads the map
+    .{ .level = 74, .class = 196, .x = 688, .y = 453 },
+    .{ .level = 106, .class = 400, .x = 137, .y = 160 },
+};
+
+test "lib: every level's objects match the engine's room lists (seed 4294967295)" {
+    const gpa = std.testing.allocator;
+    defer dpool.allocator = dpool.default_allocator;
+    var ctx = try Ctx.init(gpa);
+    defer ctx.deinit();
+
+    var act_no: i32 = 0;
+    while (act_no < 5) : (act_no += 1) {
+        var result = try generateActFull(&ctx, gpa, act_no, 4294967295, .normal, .{});
+        defer result.deinit(gpa);
+        for (result.levels) |l| {
+            const id = l.meta.level_id;
+            if (id < 1 or id > 136) continue;
+            var n: u16 = 0;
+            for (l.presets) |p| n += @intFromBool(p.etype == 2);
+            if (n != engine_object_counts_4294967295[@intCast(id - 1)]) {
+                std.debug.print("level {d}: {d} objects, the engine has {d}\n", .{ id, n, engine_object_counts_4294967295[@intCast(id - 1)] });
+                return error.ObjectCount;
+            }
+            for (engine_objects_more_4294967295) |want| if (want.level == id)
+                try std.testing.expect(hasObject(l.presets, want));
+            for (engine_absent_4294967295) |want| if (want.level == id)
+                try std.testing.expect(!hasObject(l.presets, want));
+        }
+    }
 }
 
 test "lib: walk grid derives cell-for-cell from the raw CollMap (Cold Plains, seed 0)" {

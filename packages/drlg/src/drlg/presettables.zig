@@ -40,7 +40,7 @@ const superuniques_src = d2data.file("SuperUniques");
 const monplace_src = d2data.file("MonPlace");
 const objtable_bin = @embedFile("../excel/PresetObjectTable.bin");
 
-/// sgptDataTable->nTxtMonStatsSize — the MonStats.txt row count. Set on load.
+/// sgptDataTable->nTxtMonStatsSize — the MonStats game rows (the divider excluded). Set on load.
 pub var mon_size: i32 = 0;
 
 const Tables = struct {
@@ -100,16 +100,17 @@ pub fn ensureLoaded() *const Tables {
     if (g) |*t| return t;
     const a = std.heap.page_allocator;
 
-    const mon_tbl = nameIndexMap(a, monstats_src, "Id");
-    mon_size = @intCast(mon_tbl.t.rowCount());
-    const su = nameIndexMap(a, superuniques_src, "Superunique");
+    // The compiled tables leave out the "Expansion" divider rows of MonStats.txt and
+    // SuperUniques.txt, so the engine's ids (and nTxtMonStatsSize) are game-row
+    // indices: an expansion monster is one below its txt row.
+    const mon_game = gameIndexMap(a, monstats_src, "Id");
+    const su_game = gameIndexMap(a, superuniques_src, "Superunique");
+    mon_size = mon_game.count;
     const mp = nameIndexMap(a, monplace_src, "code");
 
     // DBM/oracle ID space: MonStats game rows (Expansion divider excluded), then
     // SuperUniques game rows, then MonPlace. The two bases below place SuperUniques
     // right after MonStats and MonPlace right after SuperUniques.
-    const mon_game = gameIndexMap(a, monstats_src, "Id");
-    const su_game = gameIndexMap(a, superuniques_src, "Superunique");
     const dbm_su_base: i32 = mon_game.count; // 734: first SuperUnique code
     const dbm_mp_base: i32 = mon_game.count + su_game.count; // 800: first MonPlace code
 
@@ -125,10 +126,10 @@ pub fn ensureLoaded() *const Tables {
         // DATATBLS_LinkerMonsterPreset link order: SuperUniques, MonStats, MonPlace.
         var n_type: i32 = 0;
         var w_place: i32 = 0;
-        if (su.m.get(place)) |idx| {
+        if (su_game.m.get(place)) |idx| {
             n_type = 2;
             w_place = idx;
-        } else if (mon_tbl.m.get(place)) |idx| {
+        } else if (mon_game.m.get(place)) |idx| {
             n_type = 1;
             w_place = idx;
         } else if (mp.m.get(place)) |idx| {
